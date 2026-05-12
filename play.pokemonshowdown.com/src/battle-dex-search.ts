@@ -582,7 +582,7 @@ abstract class BattleTypedSearch<T extends SearchType> {
 
 	protected formatType: 'doubles' | 'bdsp' | 'bdspdoubles' | 'rs' | 'frlg' | 'bw1' | 'letsgo' | 'metronome' | 'natdex' |
 		'nfe' | 'ssdlc1' | 'ssdlc1doubles' | 'predlc' | 'predlcdoubles' | 'predlcnatdex' | 'svdlc1' | 'svdlc1doubles' |
-		'svdlc1natdex' | 'stadium' | 'lc' | 'legendsza' | 'champions' | null = null;
+		'svdlc1natdex' | 'stadium' | 'lc' | 'legendsza' | 'champions' | 'digipen' | null = null;
 	isDoubles = false;
 
 	/**
@@ -728,6 +728,12 @@ abstract class BattleTypedSearch<T extends SearchType> {
 			format = format.slice(9) as ID;
 			if (!format) format = 'ou' as ID;
 		}
+		if (format.includes('digipen')) {
+			this.formatType = 'digipen';
+			this.dex = Dex.mod('gen9digipen' as ID);
+			format = format.replace('digipen', '') as ID;
+			if (!format) format = 'ou' as ID;
+		}
 		this.format = format;
 
 		this.species = '' as ID;
@@ -867,6 +873,9 @@ abstract class BattleTypedSearch<T extends SearchType> {
 		const move = this.dex.moves.get(moveid);
 		if ((this.formatType === 'natdex' || this.formatType === 'legendsza') &&
 			move.isNonstandard && move.isNonstandard !== 'Past') {
+			return false;
+		}
+		if (move.isNonstandard === 'DigiPen' && this.formatType !== 'digipen') {
 			return false;
 		}
 		const gen = this.dex.gen;
@@ -1831,15 +1840,18 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 					) {
 						continue;
 					}
-					if (this.formatType !== 'natdex' && this.formatType !== 'legendsza' && move.isNonstandard === "Past") {
-						continue;
-					}
-					if (
-						this.formatType?.startsWith('dlc1') &&
-						BattleTeambuilderTable['gen8dlc1']?.nonstandardMoves.includes(moveid)
-					) {
-						continue;
-					}
+				if (this.formatType !== 'natdex' && this.formatType !== 'legendsza' && move.isNonstandard === "Past") {
+					continue;
+				}
+				if (move.isNonstandard === 'DigiPen' && this.formatType !== 'digipen') {
+					continue;
+				}
+				if (
+					this.formatType?.startsWith('dlc1') &&
+					BattleTeambuilderTable['gen8dlc1']?.nonstandardMoves.includes(moveid)
+				) {
+					continue;
+				}
 					if (
 						this.formatType?.includes('predlc') && this.formatType !== 'predlcnatdex' &&
 						BattleTeambuilderTable['gen9predlc']?.nonstandardMoves.includes(moveid)
@@ -1864,15 +1876,32 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 			}
 			learnsetid = this.nextLearnsetid(learnsetid, species.id, true);
 		}
+		// For DigiPen formats, merge in DigiPen-specific learnable moves on top of
+		// the base gen9 learnset. The DigiPen learnset table only stores additions
+		// (custom moves) so we loop through it separately to avoid replacing the
+		// full base learnset.
+		if (this.formatType === 'digipen') {
+			let digiLearnsetid = this.firstLearnsetid(species.id);
+			while (digiLearnsetid) {
+				const digiLearnset = (BattleTeambuilderTable as any)['gen9digipen']?.learnsets?.[digiLearnsetid];
+				if (digiLearnset) {
+					for (const moveid in digiLearnset) {
+						if (!moves.includes(moveid)) moves.push(moveid);
+					}
+				}
+				digiLearnsetid = this.nextLearnsetid(digiLearnsetid, species.id, true);
+			}
+		}
 		if (sketch || isHackmons) {
 			if (isHackmons) moves = [];
 			for (let id in BattleMovedex) {
 				if (!format.startsWith('cap') && (id === 'paleowave' || id === 'shadowstrike')) continue;
 				const move = dex.moves.get(id);
 				if (move.gen > dex.gen || !move.exists) continue;
+				if (move.isNonstandard === 'DigiPen' && this.formatType !== 'digipen') continue;
 				if (sketch) {
 					if (move.flags['nosketch'] || move.isMax || move.isZ) continue;
-					if (move.isNonstandard && move.isNonstandard !== 'Past') continue;
+					if (move.isNonstandard && move.isNonstandard !== 'Past' && move.isNonstandard !== 'DigiPen') continue;
 					if (move.isNonstandard === 'Past' && this.formatType !== 'natdex') continue;
 					sketchMoves.push(move.id);
 				} else {

@@ -51,6 +51,21 @@ function requireNoCache(pathSpec) {
 	index = index.concat(Object.keys(Dex.data.Moves).map(x => x + ' move'));
 	index = index.concat(Object.keys(Dex.data.Items).map(x => x + ' item'));
 	index = index.concat(Object.keys(Dex.data.Abilities).map(x => x + ' ability'));
+
+	// DigiPen content not present in the base game
+	const DigiPenDex = Dex.mod('gen9digipen');
+	for (const id in DigiPenDex.data.Pokedex) {
+		if (!Dex.data.Pokedex[id]) index.push(id + ' pokemon');
+	}
+	for (const id in DigiPenDex.data.Moves) {
+		if (!Dex.data.Moves[id]) index.push(id + ' move');
+	}
+	for (const id in DigiPenDex.data.Abilities) {
+		if (!Dex.data.Abilities[id]) index.push(id + ' ability');
+	}
+	for (const id in DigiPenDex.data.Items) {
+		if (!Dex.data.Items[id]) index.push(id + ' item');
+	}
 	index = index.concat(Object.keys(Dex.data.TypeChart).map(x => toID(x) + ' type'));
 	index = index.concat(['physical', 'special', 'status'].map(x => toID(x) + ' category'));
 	index = index.concat([
@@ -139,6 +154,25 @@ function requireNoCache(pathSpec) {
 	for (const id in Dex.data.Abilities) {
 		const name = Dex.data.Abilities[id].name;
 		generateAlias(id, name, 'ability');
+	}
+
+	// Aliases for DigiPen content not in the base game
+	for (const id in DigiPenDex.data.Pokedex) {
+		if (Dex.data.Pokedex[id]) continue;
+		const species = DigiPenDex.species.get(id);
+		generateAlias(id, species.name, 'pokemon');
+	}
+	for (const id in DigiPenDex.data.Moves) {
+		if (Dex.data.Moves[id]) continue;
+		generateAlias(id, DigiPenDex.moves.get(id).name, 'move');
+	}
+	for (const id in DigiPenDex.data.Abilities) {
+		if (Dex.data.Abilities[id]) continue;
+		generateAlias(id, DigiPenDex.abilities.get(id).name, 'ability');
+	}
+	for (const id in DigiPenDex.data.Items) {
+		if (Dex.data.Items[id]) continue;
+		generateAlias(id, DigiPenDex.items.get(id).name, 'item');
 	}
 
 	// hardcode ultra beasts
@@ -262,7 +296,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 	const STADIUM = [2.04, 1.04];
 	const NATDEX = [9.1, 8.1];
 	const OTHER = [
-		9.9, 9.67, 9.6, 9.411, 9.41, 9.401, 9.4, 9.33, 9.2, -9.4, -9.401,
+		9.9, 9.67, 9.66, 9.6, 9.411, 9.41, 9.401, 9.4, 9.33, 9.2, -9.4, -9.401,
 		8.6, 8.4, 8.2, -8.4, -8.6,
 		7.1,
 		5.1,
@@ -286,6 +320,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		const isVGC = ('' + genIdent).endsWith('.5');
 		const isGen9BH = genIdent === 9.9;
 		const isSSB = genIdent === 9.6;
+		const isDigiPen = genIdent === 9.66;
 		const isChampions = genIdent === 9.67;
 		const genNum = Math.floor(isDoubles ? -genIdent : genIdent);
 		const isBW1 = genIdent === 5.1;
@@ -301,6 +336,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			if (isLegendsZA) genStr += 'legendsou';
 			if (isStadium) genStr += 'stadium' + (genNum > 1 ? genNum : '');
 			if (isSSB) genStr += 'ssb';
+			if (isDigiPen) genStr += 'digipen';
 			if (isBW1) genStr += 'bw1';
 			if (isRS) genStr += 'rs';
 			if (isFRLG) genStr += 'frlg';
@@ -309,6 +345,11 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		})();
 		// process.stdout.write("" + gen + (isDoubles ? " doubles" : "") + "... ");
 		const pokemon = Object.keys(Dex.data.Pokedex);
+		if (isDigiPen) {
+			for (const id in Dex.mod('gen9digipen').data.Pokedex) {
+				if (!Dex.data.Pokedex[id]) pokemon.push(id);
+			}
+		}
 		pokemon.sort();
 		const tierTable = {};
 		const overrideTier = {};
@@ -560,6 +601,12 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['gen9ssb'].tiers = tiers;
 			BattleTeambuilderTable['gen9ssb'].overrideTier = overrideTier;
 			BattleTeambuilderTable['gen9ssb'].formatSlices = formatSlices;
+		} else if (isDigiPen) {
+			BattleTeambuilderTable['gen9digipen'] = {};
+			BattleTeambuilderTable['gen9digipen'].learnsets = {};
+			BattleTeambuilderTable['gen9digipen'].tiers = tiers;
+			BattleTeambuilderTable['gen9digipen'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9digipen'].formatSlices = formatSlices;
 		} else if (isLegendsZA) {
 			BattleTeambuilderTable['gen9legendsou'] = {};
 			BattleTeambuilderTable['gen9legendsou'].tiers = tiers;
@@ -1046,6 +1093,27 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['champions'].learnsets[id][moveid] = '9a';
 		}
 	}
+	const DigipenLearnsets = Dex.mod('gen9digipen').data.Learnsets;
+	for (const id in DigipenLearnsets) {
+		const learnset = DigipenLearnsets[id].learnset;
+		if (!learnset) continue;
+
+		// Store in the DigiPen-specific table (used by the DigiPen learnset
+		// merge path in battle-dex-search when formatType === 'digipen').
+		BattleTeambuilderTable['gen9digipen'].learnsets[id] = {};
+		for (const moveid in learnset) {
+			BattleTeambuilderTable['gen9digipen'].learnsets[id][moveid] = '9a';
+		}
+
+		// Also patch into the base gen9 learnset table so that move-based
+		// Pokémon searches (e.g. filtering by "Star Blazing") can find these
+		// Pokémon. The isNonstandard: "DigiPen" marker on each move causes
+		// battle-dex-search to skip them when the format is not DigiPen.
+		if (!BattleTeambuilderTable.learnsets[id]) BattleTeambuilderTable.learnsets[id] = {};
+		for (const moveid in learnset) {
+			BattleTeambuilderTable.learnsets[id][moveid] = '9a';
+		}
+	}
 	const SSDLC1Learnsets = Dex.mod('gen8dlc1').data.Learnsets;
 	for (const id in SSDLC1Learnsets) {
 		const learnset = SSDLC1Learnsets[id].learnset;
@@ -1326,7 +1394,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 	//
 
 	for (const mod of [
-		'gen3rs', 'gen3frlg', 'gen5bw1', 'gen7letsgo', 'gen8bdsp', 'gen9ssb', 'gen9legendsou', 'champions',
+		'gen3rs', 'gen3frlg', 'gen5bw1', 'gen7letsgo', 'gen8bdsp', 'gen9digipen', 'gen9ssb', 'gen9legendsou', 'champions',
 	]) {
 		const modDex = Dex.mod(mod);
 		const modData = modDex.data;
@@ -1411,6 +1479,41 @@ process.stdout.write("Building `data/pokedex.js`... ");
 			if (formatsEntry.unreleasedHidden) entry.unreleasedHidden = formatsEntry.unreleasedHidden;
 		}
 	}
+	// Inject DigiPen-only Pokémon into BattlePokedex so the client can look
+	// them up. isNonstandard: "DigiPen" is set so non-DigiPen formats see them
+	// as Illegal. The entry is built from the mod's compiled pokedex data.
+	const DigiPenModPokedex = Dex.mod('gen9digipen').data.Pokedex;
+	const DigiPenModFormatsData = Dex.mod('gen9digipen').data.FormatsData;
+	for (const id in DigiPenModPokedex) {
+		if (Pokedex[id]) continue; // base-game Pokémon already handled above
+		const species = Dex.mod('gen9digipen').species.get(id);
+		Pokedex[id] = {
+			num: species.num,
+			name: species.name,
+			types: species.types,
+			baseStats: species.baseStats,
+			abilities: { 0: species.abilities[0] },
+			heightm: species.heightm,
+			weightkg: species.weightkg,
+			color: species.color,
+			eggGroups: species.eggGroups,
+			isNonstandard: "DigiPen",
+		};
+		if (species.abilities[1]) Pokedex[id].abilities[1] = species.abilities[1];
+		if (species.abilities.H) Pokedex[id].abilities.H = species.abilities.H;
+		if (species.baseSpecies !== species.name) {
+			Pokedex[id].baseSpecies = species.baseSpecies;
+			Pokedex[id].forme = species.forme;
+		}
+		if (species.prevo) Pokedex[id].prevo = species.prevo;
+		if (species.evos && species.evos.length) Pokedex[id].evos = species.evos;
+		if (species.requiredItem) Pokedex[id].requiredItem = species.requiredItem;
+		if (species.requiredItems) Pokedex[id].requiredItems = species.requiredItems;
+		if (species.otherFormes && species.otherFormes.length) Pokedex[id].otherFormes = species.otherFormes;
+		if (species.formeOrder && species.formeOrder.length) Pokedex[id].formeOrder = species.formeOrder;
+		const formatsEntry = DigiPenModFormatsData[id];
+		if (formatsEntry && formatsEntry.tier) Pokedex[id].tier = formatsEntry.tier;
+	}
 	const buf = 'exports.BattlePokedex = ' + es3stringify(Pokedex) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/pokedex.js', buf);
 	fs.writeFileSync('play.pokemonshowdown.com/data/pokedex.json', JSON.stringify(Pokedex));
@@ -1432,6 +1535,29 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (move.shortDesc) Moves[id].shortDesc = move.shortDesc;
 		if (move.basePowerCallback) Moves[id].basePowerCallback = true;
 	}
+	// Inject DigiPen-only moves into BattleMovedex so the client can display
+	// tooltips and descriptions. isNonstandard: "DigiPen" is set so that
+	// battle-dex-search can filter them out in non-DigiPen formats.
+	const DigipenModDex = Dex.mod('gen9digipen');
+	for (const id in DigipenModDex.data.Moves) {
+		if (Moves[id]) continue; // skip base-game moves that the mod happens to override
+		const move = DigipenModDex.moves.get(id);
+		Moves[id] = {
+			num: move.num,
+			accuracy: move.accuracy,
+			basePower: move.basePower,
+			category: move.category,
+			name: move.name,
+			pp: move.pp,
+			priority: move.priority,
+			flags: move.flags,
+			type: move.type,
+			target: move.target,
+			isNonstandard: "DigiPen",
+		};
+		if (move.desc) Moves[id].desc = move.desc;
+		if (move.shortDesc) Moves[id].shortDesc = move.shortDesc;
+	}
 	const buf = 'exports.BattleMovedex = ' + es3stringify(Moves) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/moves.js', buf);
 	fs.writeFileSync('play.pokemonshowdown.com/data/moves.json', JSON.stringify(Moves));
@@ -1448,6 +1574,17 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (item.desc) Items[id].desc = item.desc;
 		if (item.shortDesc) Items[id].shortDesc = item.shortDesc;
 	}
+	// Inject DigiPen-only items so the client can display tooltips.
+	for (const id in Dex.mod('gen9digipen').data.Items) {
+		if (Items[id]) continue;
+		const item = Dex.mod('gen9digipen').items.get(id);
+		Items[id] = { num: item.num, name: item.name, isNonstandard: "DigiPen" };
+		if (item.desc) Items[id].desc = item.desc;
+		if (item.shortDesc) Items[id].shortDesc = item.shortDesc;
+		if (item.megaStone) Items[id].megaStone = item.megaStone;
+		if (item.megaEvolves) Items[id].megaEvolves = item.megaEvolves;
+		if (item.itemUser) Items[id].itemUser = item.itemUser;
+	}
 	const buf = 'exports.BattleItems = ' + es3stringify(Items) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/items.js', buf);
 }
@@ -1460,6 +1597,14 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 	const Abilities = requireNoCache('../caches/pokemon-showdown/dist/data/abilities.js').Abilities;
 	for (const id in Abilities) {
 		const ability = Dex.abilities.get(Abilities[id].name);
+		if (ability.desc) Abilities[id].desc = ability.desc;
+		if (ability.shortDesc) Abilities[id].shortDesc = ability.shortDesc;
+	}
+	// Inject DigiPen-only abilities so the client can display tooltips.
+	for (const id in Dex.mod('gen9digipen').data.Abilities) {
+		if (Abilities[id]) continue;
+		const ability = Dex.mod('gen9digipen').abilities.get(id);
+		Abilities[id] = { num: ability.num, name: ability.name, isNonstandard: "DigiPen" };
 		if (ability.desc) Abilities[id].desc = ability.desc;
 		if (ability.shortDesc) Abilities[id].shortDesc = ability.shortDesc;
 	}
