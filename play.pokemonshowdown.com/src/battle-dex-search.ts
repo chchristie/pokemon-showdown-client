@@ -882,6 +882,10 @@ abstract class BattleTypedSearch<T extends SearchType> {
 		if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) {
 			return false;
 		}
+		if ((move.isNonstandard === 'DigiPen Past' || move.isNonstandard === 'DigiPen Future') &&
+				!(this.isDigiPen && this.formatType === 'natdex')) {
+			return false;
+		}
 		const gen = this.dex.gen;
 		let genChar = `${gen}`;
 		if (
@@ -1457,7 +1461,20 @@ class BattleItemSearch extends BattleTypedSearch<'item'> {
 	}
 	getDefaultResults(): SearchRow[] {
 		let table = BattleTeambuilderTable;
-		if (this.formatType?.startsWith('bdsp')) {
+		if (this.isDigiPen) {
+			if (this.formatType === 'natdex') {
+				table = table['gen9digipennatdex'] || table;
+			} else if (this.formatType?.includes('doubles')) {
+				// VGC and doubles both set formatType to 'doubles'
+				if (this.format.startsWith('vgc')) {
+					table = table['gen9digipenvgc'] || table;
+				} else {
+					table = table['gen9digipendoubles'] || table;
+				}
+			} else {
+				table = table['gen9digipen'] || table;
+			}
+		} else if (this.formatType?.startsWith('bdsp')) {
 			table = table['gen8bdsp'];
 		} else if (this.formatType === 'bw1') {
 			table = table['gen5bw1'];
@@ -1895,6 +1912,10 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) {
 					continue;
 				}
+				if ((move.isNonstandard === 'DigiPen Past' || move.isNonstandard === 'DigiPen Future') &&
+					!(this.isDigiPen && this.formatType === 'natdex')) {
+					continue;
+				}
 				if (
 					this.formatType?.startsWith('dlc1') &&
 					BattleTeambuilderTable['gen8dlc1']?.nonstandardMoves.includes(moveid)
@@ -1947,10 +1968,12 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				if (!format.startsWith('cap') && (id === 'paleowave' || id === 'shadowstrike')) continue;
 				const move = dex.moves.get(id);
 				if (move.gen > dex.gen || !move.exists) continue;
-				if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) continue;
-				if (sketch) {
-					if (move.flags['nosketch'] || move.isMax || move.isZ) continue;
-					if (move.isNonstandard && move.isNonstandard !== 'Past' && move.isNonstandard !== 'DigiPen') continue;
+			if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) continue;
+			if ((move.isNonstandard === 'DigiPen Past' || move.isNonstandard === 'DigiPen Future') &&
+				!(this.isDigiPen && this.formatType === 'natdex')) continue;
+			if (sketch) {
+				if (move.flags['nosketch'] || move.isMax || move.isZ) continue;
+				if (move.isNonstandard && move.isNonstandard !== 'Past' && move.isNonstandard !== 'DigiPen') continue;
 					if (move.isNonstandard === 'Past' && this.formatType !== 'natdex') continue;
 					sketchMoves.push(move.id);
 				} else {

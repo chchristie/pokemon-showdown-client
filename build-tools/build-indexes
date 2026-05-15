@@ -472,7 +472,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				if (isDoubles && genNum > 4) {
 					return species.doublesTier;
 				}
-				if (isNatDex || (isPreDLC && genNum === 9.41) || (isSVDLC1 && genNum === 9.411)) {
+				if (isNatDex || isDigiPenNatDex || (isPreDLC && genNum === 9.41) || (isSVDLC1 && genNum === 9.411)) {
 					return species.natDexTier;
 				}
 				return species.tier;
@@ -600,11 +600,13 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		} else if (isDigiPenVGC) {
 			BattleTeambuilderTable['gen9digipenvgc'] = {};
 			BattleTeambuilderTable['gen9digipenvgc'].tiers = tiers;
+			BattleTeambuilderTable['gen9digipenvgc'].items = items;
 			BattleTeambuilderTable['gen9digipenvgc'].overrideTier = overrideTier;
 			BattleTeambuilderTable['gen9digipenvgc'].formatSlices = formatSlices;
 		} else if (isDigiPenDoubles) {
 			BattleTeambuilderTable['gen9digipendoubles'] = {};
 			BattleTeambuilderTable['gen9digipendoubles'].tiers = tiers;
+			BattleTeambuilderTable['gen9digipendoubles'].items = items;
 			BattleTeambuilderTable['gen9digipendoubles'].overrideTier = overrideTier;
 			BattleTeambuilderTable['gen9digipendoubles'].formatSlices = formatSlices;
 		} else if (isVGC) {
@@ -634,11 +636,13 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['gen9digipen'] = {};
 			BattleTeambuilderTable['gen9digipen'].learnsets = {};
 			BattleTeambuilderTable['gen9digipen'].tiers = tiers;
+			BattleTeambuilderTable['gen9digipen'].items = items;
 			BattleTeambuilderTable['gen9digipen'].overrideTier = overrideTier;
 			BattleTeambuilderTable['gen9digipen'].formatSlices = formatSlices;
 		} else if (isDigiPenNatDex) {
 			BattleTeambuilderTable['gen9digipennatdex'] = {};
 			BattleTeambuilderTable['gen9digipennatdex'].tiers = tiers;
+			BattleTeambuilderTable['gen9digipennatdex'].items = items;
 			BattleTeambuilderTable['gen9digipennatdex'].overrideTier = overrideTier;
 			BattleTeambuilderTable['gen9digipennatdex'].formatSlices = formatSlices;
 		} else if (isLegendsZA) {
@@ -821,6 +825,11 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		}
 
 		const itemList = Object.keys(Dex.data.Items);
+		if (isDigiPen) {
+			for (const id in Dex.mod('gen9digipen').data.Items) {
+				if (!Dex.data.Items[id]) itemList.push(id);
+			}
+		}
 		itemList.sort();
 
 		const greatItems = [['header', "Popular items"]];
@@ -835,19 +844,21 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			if (item.gen > genNum) {
 				continue;
 			}
-			if (item.isNonstandard && !isMetBattle) {
-				if (isNatDex) {
-					let curItem = item;
-					let curGen = genNum;
-					while (curItem.isNonstandard && curGen >= 7) {
-						curItem = Dex.forGen(curGen).items.get(item.id);
-						curGen--;
-					}
-					if (curItem.isNonstandard) continue;
-				} else if (genNum !== 2) {
-					continue;
+		if (item.isNonstandard && !isMetBattle) {
+			if (isDigiPen && item.isNonstandard === 'DigiPen') {
+				// DigiPen items belong in DigiPen tables — don't skip.
+			} else if (isNatDex) {
+				let curItem = item;
+				let curGen = genNum;
+				while (curItem.isNonstandard && curGen >= 7) {
+					curItem = Dex.forGen(curGen).items.get(item.id);
+					curGen--;
 				}
+				if (curItem.isNonstandard) continue;
+			} else if (genNum !== 2) {
+				continue;
 			}
+		}
 			if (isMetBattle) {
 				const banlist = Dex.formats.getRuleTable(Dex.formats.get(gen + 'metronomebattle'));
 				if (banlist.isBanned('item:' + item.id)) continue;
@@ -1069,8 +1080,8 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 					specificItems.push(id);
 				} else if (item.itemUser) {
 					specificItems.push(id);
-				} else if (item.megaStone) {
-					specificItems.push(id);
+			} else if (item.megaStone) {
+				specificItems.push(id);
 				} else {
 					goodItems.push(id);
 				}
@@ -1426,7 +1437,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 
 	// Client relevant data that should be overridden by past gens and mods
 	const overrideSpeciesKeys = [
-		'abilities', 'baseStats', 'cosmeticFormes', 'isNonstandard', 'requiredItems', 'types', 'unreleasedHidden',
+		'abilities', 'baseStats', 'cosmeticFormes', 'gender', 'isNonstandard', 'requiredItems', 'types', 'unreleasedHidden',
 	];
 	const overrideMoveKeys = [
 		'accuracy', 'basePower', 'category', 'desc', 'flags', 'isNonstandard', 'pp', 'priority', 'shortDesc', 'target', 'type',
@@ -1627,6 +1638,7 @@ process.stdout.write("Building `data/pokedex.js`... ");
 			eggGroups: species.eggGroups,
 			isNonstandard: "DigiPen",
 		};
+		if (species.gender) Pokedex[id].gender = species.gender;
 		if (species.abilities[1]) Pokedex[id].abilities[1] = species.abilities[1];
 		if (species.abilities.H) Pokedex[id].abilities.H = species.abilities.H;
 		if (species.baseSpecies !== species.name) {
@@ -1707,6 +1719,7 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (Items[id]) continue;
 		const item = Dex.mod('gen9digipen').items.get(id);
 		Items[id] = { num: item.num, name: item.name, isNonstandard: "DigiPen" };
+		if (item.spritenum) Items[id].spritenum = item.spritenum;
 		if (item.desc) Items[id].desc = item.desc;
 		if (item.shortDesc) Items[id].shortDesc = item.shortDesc;
 		if (item.megaStone) Items[id].megaStone = item.megaStone;
