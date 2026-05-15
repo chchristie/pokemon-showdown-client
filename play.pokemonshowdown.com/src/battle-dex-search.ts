@@ -582,8 +582,9 @@ abstract class BattleTypedSearch<T extends SearchType> {
 
 	protected formatType: 'doubles' | 'bdsp' | 'bdspdoubles' | 'rs' | 'frlg' | 'bw1' | 'letsgo' | 'metronome' | 'natdex' |
 		'nfe' | 'ssdlc1' | 'ssdlc1doubles' | 'predlc' | 'predlcdoubles' | 'predlcnatdex' | 'svdlc1' | 'svdlc1doubles' |
-		'svdlc1natdex' | 'stadium' | 'lc' | 'legendsza' | 'champions' | 'digipen' | null = null;
+		'svdlc1natdex' | 'stadium' | 'lc' | 'legendsza' | 'champions' | null = null;
 	isDoubles = false;
+	protected isDigiPen = false;
 
 	/**
 	 * Cached copy of what the results list would be with only base filters
@@ -612,6 +613,15 @@ abstract class BattleTypedSearch<T extends SearchType> {
 			this.dex = Dex.forGen(gen);
 		} else if (!format) {
 			this.dex = Dex;
+		}
+
+		// Strip 'digipen' prefix BEFORE any other format detection so that
+		// doubles/natdex/vgc detection below works on the clean base format name.
+		if (format.startsWith('digipen')) {
+			this.isDigiPen = true;
+			this.dex = Dex.mod('gen9digipen' as ID);
+			format = format.slice(7) as ID; // remove 'digipen' (7 chars)
+			if (!format) format = 'ou' as ID;
 		}
 
 		if (format.startsWith('dlc1') && this.dex.gen === 8) {
@@ -726,12 +736,6 @@ abstract class BattleTypedSearch<T extends SearchType> {
 			this.formatType = 'legendsza';
 			this.dex = Dex.mod('gen9legendsou' as ID);
 			format = format.slice(9) as ID;
-			if (!format) format = 'ou' as ID;
-		}
-		if (format.includes('digipen')) {
-			this.formatType = 'digipen';
-			this.dex = Dex.mod('gen9digipen' as ID);
-			format = format.replace('digipen', '') as ID;
 			if (!format) format = 'ou' as ID;
 		}
 		this.format = format;
@@ -875,7 +879,7 @@ abstract class BattleTypedSearch<T extends SearchType> {
 			move.isNonstandard && move.isNonstandard !== 'Past') {
 			return false;
 		}
-		if (move.isNonstandard === 'DigiPen' && this.formatType !== 'digipen') {
+		if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) {
 			return false;
 		}
 		const gen = this.dex.gen;
@@ -948,7 +952,20 @@ abstract class BattleTypedSearch<T extends SearchType> {
 			this.formatType === 'legendsza' ? `gen9legendsou` :
 			this.formatType === 'champions' ? `champions` :
 			`gen${gen}`;
-		if (table?.[tableKey]) {
+		if (this.isDigiPen) {
+			const format = this.format;
+			let digiTableKey: string;
+			if (this.formatType === 'natdex') {
+				digiTableKey = 'gen9digipennatdex';
+			} else if (format.startsWith('vgc')) {
+				digiTableKey = 'gen9digipenvgc';
+			} else if (this.formatType?.includes('doubles') || format.includes('doubles')) {
+				digiTableKey = 'gen9digipendoubles';
+			} else {
+				digiTableKey = 'gen9digipen';
+			}
+			if (table?.[digiTableKey]) table = table[digiTableKey];
+		} else if (table?.[tableKey]) {
 			table = table[tableKey];
 		}
 		if (!table) return pokemon.tier;
@@ -1047,6 +1064,17 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 			table = table[`gen${dex.gen}`];
 		} else if (this.formatType === 'champions') {
 			table = table[`champions`];
+		} else if (this.isDigiPen) {
+			// Select the correct DigiPen table variant before any further narrowing.
+			if (this.formatType === 'natdex') {
+				table = table['gen9digipennatdex'] || table;
+			} else if (isVGCOrBS) {
+				table = table['gen9digipenvgc'] || table;
+			} else if (this.formatType?.includes('doubles') || format.includes('doubles') || isVGCOrBS) {
+				table = table['gen9digipendoubles'] || table;
+			} else {
+				table = table['gen9digipen'] || table;
+			}
 		} else if (isVGCOrBS) {
 			table = table[`gen${dex.gen}vgc`];
 		} else if (dex.gen === 9 && isHackmons && !this.formatType) {
@@ -1121,7 +1149,28 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 		}
 		let tierSet: SearchRow[] = table.tierSet;
 		let slices: { [k: string]: number } = table.formatSlices;
-		if (format === 'ubers' || format === 'uber' || format === 'ubersuu' || format === 'nationaldexdoubles') {
+		if (this.isDigiPen) {
+			// DigiPen formats use their own tier-section slices that interleave
+			// DigiPen-specific headers before the standard tiers.
+			if (isVGCOrBS) {
+				// VGC Reg I shows Restricted+ (no Mythicals); Reg F shows Regular+ (same as standard VGC logic).
+				if (format.endsWith('regi') || format === 'vgc2022' || format.endsWith('regg')) {
+					tierSet = tierSet.slice(slices['DigiPen Restricted'] ?? 0);
+				} else {
+					tierSet = tierSet.slice(slices['DigiPen Regular'] ?? slices.Regular ?? 0);
+				}
+			} else if (format === 'ubers' || format === 'uber' || format === 'doublesubers') {
+				// Ubers shows everything from DigiPen Uber
+				tierSet = tierSet.slice(slices['DigiPen Uber'] ?? slices['DigiPen DUber'] ?? 0);
+			} else if (format === 'lc' || format === 'lc' || format.startsWith('lc') || format.endsWith('lc')) {
+				// LC shows from DigiPen LC
+				tierSet = tierSet.slice(slices['DigiPen LC'] ?? slices.LC ?? 0);
+			} else {
+				// OU, Doubles OU, NatDex OU and similar: start at "DigiPen" tier
+				// (DigiPen Uber and DUber are banned in these formats)
+				tierSet = tierSet.slice(slices['DigiPen'] ?? slices.OU ?? slices.DOU ?? 0);
+			}
+		} else if (format === 'ubers' || format === 'uber' || format === 'ubersuu' || format === 'nationaldexdoubles') {
 			tierSet = tierSet.slice(slices.Uber);
 		} else if (isVGCOrBS || (isHackmons && dex.gen === 9 && !this.formatType)) {
 			if (format.endsWith('series13') || format.endsWith('regj') || isHackmons) {
@@ -1843,7 +1892,7 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				if (this.formatType !== 'natdex' && this.formatType !== 'legendsza' && move.isNonstandard === "Past") {
 					continue;
 				}
-				if (move.isNonstandard === 'DigiPen' && this.formatType !== 'digipen') {
+				if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) {
 					continue;
 				}
 				if (
@@ -1880,7 +1929,7 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 		// the base gen9 learnset. The DigiPen learnset table only stores additions
 		// (custom moves) so we loop through it separately to avoid replacing the
 		// full base learnset.
-		if (this.formatType === 'digipen') {
+		if (this.isDigiPen) {
 			let digiLearnsetid = this.firstLearnsetid(species.id);
 			while (digiLearnsetid) {
 				const digiLearnset = (BattleTeambuilderTable as any)['gen9digipen']?.learnsets?.[digiLearnsetid];
@@ -1898,7 +1947,7 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				if (!format.startsWith('cap') && (id === 'paleowave' || id === 'shadowstrike')) continue;
 				const move = dex.moves.get(id);
 				if (move.gen > dex.gen || !move.exists) continue;
-				if (move.isNonstandard === 'DigiPen' && this.formatType !== 'digipen') continue;
+				if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) continue;
 				if (sketch) {
 					if (move.flags['nosketch'] || move.isMax || move.isZ) continue;
 					if (move.isNonstandard && move.isNonstandard !== 'Past' && move.isNonstandard !== 'DigiPen') continue;

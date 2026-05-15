@@ -296,7 +296,8 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 	const STADIUM = [2.04, 1.04];
 	const NATDEX = [9.1, 8.1];
 	const OTHER = [
-		9.9, 9.67, 9.66, 9.6, 9.411, 9.41, 9.401, 9.4, 9.33, 9.2, -9.4, -9.401,
+		9.9, 9.67, 9.6, 9.411, 9.41, 9.401, 9.4, 9.33, 9.2, -9.4, -9.401,
+		9.66, 9.661, -9.65, -9.66, // DigiPen
 		8.6, 8.4, 8.2, -8.4, -8.6,
 		7.1,
 		5.1,
@@ -320,7 +321,11 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		const isVGC = ('' + genIdent).endsWith('.5');
 		const isGen9BH = genIdent === 9.9;
 		const isSSB = genIdent === 9.6;
-		const isDigiPen = genIdent === 9.66;
+		const isDigiPenSingles = genIdent === 9.66;
+		const isDigiPenNatDex = genIdent === 9.661;
+		const isDigiPenVGC = genIdent === -9.65;
+		const isDigiPenDoubles = genIdent === -9.66;
+		const isDigiPen = isDigiPenSingles || isDigiPenNatDex || isDigiPenVGC || isDigiPenDoubles;
 		const isChampions = genIdent === 9.67;
 		const genNum = Math.floor(isDoubles ? -genIdent : genIdent);
 		const isBW1 = genIdent === 5.1;
@@ -336,7 +341,10 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			if (isLegendsZA) genStr += 'legendsou';
 			if (isStadium) genStr += 'stadium' + (genNum > 1 ? genNum : '');
 			if (isSSB) genStr += 'ssb';
-			if (isDigiPen) genStr += 'digipen';
+			if (isDigiPenSingles) genStr += 'digipen';
+			if (isDigiPenNatDex) genStr += 'digipennatdex';
+			if (isDigiPenVGC) genStr += 'digipenvgc';
+			if (isDigiPenDoubles) genStr += 'digipendoubles';
 			if (isBW1) genStr += 'bw1';
 			if (isRS) genStr += 'rs';
 			if (isFRLG) genStr += 'frlg';
@@ -355,9 +363,12 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		const overrideTier = {};
 		const metagameBans = {};
 		const nonstandardMoves = [];
+		// All DigiPen variants share the same mod for species data; only their
+		// tier ordering and table names differ.
+		const speciesMod = isDigiPen ? 'gen9digipen' : gen;
 		for (const id of pokemon) {
-			const species = Dex.mod(gen).species.get(id);
-			const baseSpecies = Dex.mod(gen).species.get(species.baseSpecies);
+			const species = Dex.mod(speciesMod).species.get(id);
+			const baseSpecies = Dex.mod(speciesMod).species.get(species.baseSpecies);
 			if (species.gen > genNum) continue;
 			const speciesTier = (() => {
 				if (isMetBattle) {
@@ -413,14 +424,22 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 					if (species.name === 'Pikachu-Alola') return 'Illegal';
 					return species.tier;
 				}
-				if (isVGC) {
-					if (species.isNonstandard && species.isNonstandard !== 'Gigantamax') return 'Illegal';
-					if (baseSpecies.tags.includes('Mythical')) return 'Mythical';
-					if (baseSpecies.tags.includes('Restricted Legendary')) return 'Restricted';
-					if (species.tier === 'NFE') return 'NFE';
-					if (species.tier === 'LC') return 'LC';
-					return 'Regular';
+			if (isVGC || isDigiPenVGC) {
+				if (isDigiPenVGC && species.isNonstandard === 'DigiPen') {
+					// DigiPen Pokemon use tag-based VGC classification with "DigiPen" prefix.
+					if (baseSpecies.tags.includes('Mythical')) return 'DigiPen Mythical';
+					if (baseSpecies.tags.includes('Restricted Legendary')) return 'DigiPen Restricted';
+					if (species.tier === 'NFE' || species.tier === 'DigiPen NFE') return 'DigiPen NFE';
+					if (species.tier === 'LC' || species.tier === 'DigiPen LC') return 'DigiPen LC';
+					return 'DigiPen Regular';
 				}
+				if (species.isNonstandard && species.isNonstandard !== 'Gigantamax') return 'Illegal';
+				if (baseSpecies.tags.includes('Mythical')) return 'Mythical';
+				if (baseSpecies.tags.includes('Restricted Legendary')) return 'Restricted';
+				if (species.tier === 'NFE') return 'NFE';
+				if (species.tier === 'LC') return 'LC';
+				return 'Regular';
+			}
 				if (isRS) {
 					if (species.isNonstandard) {
 						if (species.isNonstandard === 'Unobtainable') return 'Unreleased';
@@ -578,6 +597,16 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['champions'].items = items;
 			BattleTeambuilderTable['champions'].overrideTier = overrideTier;
 			BattleTeambuilderTable['champions'].formatSlices = formatSlices;
+		} else if (isDigiPenVGC) {
+			BattleTeambuilderTable['gen9digipenvgc'] = {};
+			BattleTeambuilderTable['gen9digipenvgc'].tiers = tiers;
+			BattleTeambuilderTable['gen9digipenvgc'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9digipenvgc'].formatSlices = formatSlices;
+		} else if (isDigiPenDoubles) {
+			BattleTeambuilderTable['gen9digipendoubles'] = {};
+			BattleTeambuilderTable['gen9digipendoubles'].tiers = tiers;
+			BattleTeambuilderTable['gen9digipendoubles'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9digipendoubles'].formatSlices = formatSlices;
 		} else if (isVGC) {
 			BattleTeambuilderTable[gen + 'vgc'] = {};
 			BattleTeambuilderTable[gen + 'vgc'].tiers = tiers;
@@ -601,12 +630,17 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['gen9ssb'].tiers = tiers;
 			BattleTeambuilderTable['gen9ssb'].overrideTier = overrideTier;
 			BattleTeambuilderTable['gen9ssb'].formatSlices = formatSlices;
-		} else if (isDigiPen) {
+		} else if (isDigiPenSingles) {
 			BattleTeambuilderTable['gen9digipen'] = {};
 			BattleTeambuilderTable['gen9digipen'].learnsets = {};
 			BattleTeambuilderTable['gen9digipen'].tiers = tiers;
 			BattleTeambuilderTable['gen9digipen'].overrideTier = overrideTier;
 			BattleTeambuilderTable['gen9digipen'].formatSlices = formatSlices;
+		} else if (isDigiPenNatDex) {
+			BattleTeambuilderTable['gen9digipennatdex'] = {};
+			BattleTeambuilderTable['gen9digipennatdex'].tiers = tiers;
+			BattleTeambuilderTable['gen9digipennatdex'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9digipennatdex'].formatSlices = formatSlices;
 		} else if (isLegendsZA) {
 			BattleTeambuilderTable['gen9legendsou'] = {};
 			BattleTeambuilderTable['gen9legendsou'].tiers = tiers;
@@ -644,6 +678,27 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		}
 
 		const tierOrder = (() => {
+			if (isDigiPenVGC) {
+				return [
+					"DigiPen Mythical", "Mythical", "DigiPen Restricted", "Restricted",
+					"DigiPen Regular", "Regular",
+					"DigiPen NFE", "NFE", "DigiPen LC", "LC",
+				];
+			}
+			if (isDigiPenDoubles) {
+				return [
+					"DigiPen DUber", "DUber", "(DUber)",
+					"DigiPen", "DOU", "DBL", "(DOU)", "DUU", "(DUU)", "New",
+					"DigiPen NFE", "NFE", "DigiPen LC", "LC",
+				];
+			}
+			if (isDigiPenSingles || isDigiPenNatDex) {
+				return [
+					"DigiPen Uber", "Uber", "(Uber)",
+					"DigiPen", "OU", "(OU)", "UUBL", "UU", "RUBL", "RU", "NUBL", "NU", "PUBL", "PU", "ZUBL", "ZU", "New",
+					"DigiPen NFE", "NFE", "DigiPen LC", "LC", "Unreleased",
+				];
+			}
 			if (isVGC || isGen9BH) {
 				return ["Mythical", "Restricted", "Regular", "NFE", "LC"];
 			}
@@ -662,6 +717,9 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			if (tier in {
 				OU: 1, UUBL: 1, AG: 1, Uber: 1, UU: 1, RU: 1, NU: 1, PU: 1, ZU: 1, NFE: 1, LC: 1, DOU: 1, DUU: 1,
 				"(DUU)": 1, New: 1, Legal: 1, Regular: 1, Restricted: 1, "CAP LC": 1,
+				// DigiPen tiers
+				"DigiPen Uber": 1, "DigiPen": 1, "DigiPen NFE": 1, "DigiPen LC": 1,
+				"DigiPen DUber": 1, "DigiPen Mythical": 1, "DigiPen Restricted": 1, "DigiPen Regular": 1,
 			}) {
 				let usedTier = tier;
 				if (usedTier === "(DUU)") usedTier = "DNU";
@@ -676,6 +734,8 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				tiers.push(['header', tier.slice(1, -1) + " by technicality"]);
 			} else if (tier === "NFE") {
 				tiers.push(['header', "NFEs not in a higher tier"]);
+			} else if (tier === "DigiPen NFE") {
+				tiers.push(['header', "DigiPen NFEs not in a higher tier"]);
 			} else {
 				tiers.push(['header', tier]);
 			}
@@ -689,6 +749,76 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			if (formatSlices['DOU'] === undefined) formatSlices['DOU'] = formatSlices['New'];
 			if (formatSlices['DUU'] === undefined) formatSlices['DUU'] = formatSlices['New'];
 		}
+		if (isDigiPen) {
+			// Fallback: if no DigiPen Pokemon are defined yet, point DigiPen slices to the standard ones.
+			if (formatSlices['DigiPen Uber'] === undefined) formatSlices['DigiPen Uber'] = 0;
+			if (formatSlices['DigiPen'] === undefined) formatSlices['DigiPen'] = formatSlices['OU'] ?? formatSlices['DOU'] ?? 0;
+			if (formatSlices['DigiPen NFE'] === undefined) formatSlices['DigiPen NFE'] = formatSlices['NFE'] ?? 0;
+			if (formatSlices['DigiPen LC'] === undefined) formatSlices['DigiPen LC'] = formatSlices['LC'] ?? 0;
+			if (formatSlices['DigiPen DUber'] === undefined) formatSlices['DigiPen DUber'] = 0;
+			if (formatSlices['DigiPen Mythical'] === undefined) formatSlices['DigiPen Mythical'] = 0;
+			if (formatSlices['DigiPen Restricted'] === undefined) formatSlices['DigiPen Restricted'] = formatSlices['DigiPen Mythical'];
+			if (formatSlices['DigiPen Regular'] === undefined) formatSlices['DigiPen Regular'] = formatSlices['Regular'] ?? 0;
+		}
+
+		if (isDigiPenVGC) {
+			// The tiers array groups Pokemon under the correct VGC section headers
+			// (DigiPen Regular, Restricted, etc.). Post-process overrideTier so the
+			// label shown next to each Pokemon uses familiar doubles-tier notation,
+			// matching the behaviour of the standard gen9 VGC table which uses
+			// gen9doubles overrideTier values (DOU, DUber, etc.).
+			const digipenDoublesTierLabel = (doublesTier) => {
+				if (doublesTier === 'DigiPen DUber') return 'DP DUber';
+				if (doublesTier === 'DigiPen') return 'DP DOU';
+				if (doublesTier === 'DigiPen NFE') return 'DP NFE';
+				if (doublesTier === 'DigiPen LC') return 'DP LC';
+				// Base-game Pokémon already have standard doubles tier strings.
+				return doublesTier;
+			};
+			for (const id in overrideTier) {
+				const sp = Dex.mod(speciesMod).species.get(id);
+				overrideTier[id] = digipenDoublesTierLabel(sp.doublesTier || sp.tier);
+			}
+		}
+
+		if (isDigiPenDoubles) {
+			// Post-process overrideTier to show short "DP DOU"-style labels next to
+			// DigiPen Pokemon in the doubles teambuilder, matching VGC behaviour.
+			const digipenDoublesTierLabel = (doublesTier) => {
+				if (doublesTier === 'DigiPen DUber') return 'DP DUber';
+				if (doublesTier === 'DigiPen') return 'DP DOU';
+				if (doublesTier === 'DigiPen NFE') return 'DP NFE';
+				if (doublesTier === 'DigiPen LC') return 'DP LC';
+				// Base-game Pokémon already have standard doubles tier strings.
+				return doublesTier;
+			};
+			for (const id in overrideTier) {
+				const sp = Dex.mod(speciesMod).species.get(id);
+				if (sp.isNonstandard === 'DigiPen') {
+					overrideTier[id] = digipenDoublesTierLabel(sp.doublesTier || sp.tier);
+				}
+			}
+		}
+
+		if (isDigiPenSingles || isDigiPenNatDex) {
+			// Post-process overrideTier to show short "DP OU"-style labels next to
+			// DigiPen Pokemon in the singles/natdex teambuilder.
+			const digipenSinglesTierLabel = (tier) => {
+				if (tier === 'DigiPen Uber') return 'DP Uber';
+				if (tier === 'DigiPen') return 'DP OU';
+				if (tier === 'DigiPen NFE') return 'DP NFE';
+				if (tier === 'DigiPen LC') return 'DP LC';
+				// Base-game Pokémon already have standard tier strings.
+				return tier;
+			};
+			for (const id in overrideTier) {
+				const sp = Dex.mod(speciesMod).species.get(id);
+				if (sp.isNonstandard === 'DigiPen') {
+					const rawTier = isDigiPenNatDex ? (sp.natDexTier || sp.tier) : sp.tier;
+					overrideTier[id] = digipenSinglesTierLabel(rawTier);
+				}
+			}
+		}
 
 		const itemList = Object.keys(Dex.data.Items);
 		itemList.sort();
@@ -701,7 +831,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		const unreleasedItems = [];
 		if (genNum === 6) unreleasedItems.push(['header', "Unreleased"]);
 		for (const id of itemList) {
-			const item = Dex.mod(gen).items.get(id);
+			const item = Dex.mod(speciesMod).items.get(id);
 			if (item.gen > genNum) {
 				continue;
 			}
@@ -1106,9 +1236,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		}
 
 		// Also patch into the base gen9 learnset table so that move-based
-		// Pokémon searches (e.g. filtering by "Star Blazing") can find these
-		// Pokémon. The isNonstandard: "DigiPen" marker on each move causes
-		// battle-dex-search to skip them when the format is not DigiPen.
+		// Pokémon searches can find these
 		if (!BattleTeambuilderTable.learnsets[id]) BattleTeambuilderTable.learnsets[id] = {};
 		for (const moveid in learnset) {
 			BattleTeambuilderTable.learnsets[id][moveid] = '9a';

@@ -116,9 +116,9 @@
 	background: transparent none no-repeat scroll 0px 0px;
 }
 .utilichart .numcol {
-	width: 24px;
+	width: 36px;
 	padding-right: 5px;
-	text-align: right;
+	text-align: center;
 	color: #999999;
 	padding-top: 8px;
 	font-size: 8pt;
