@@ -875,15 +875,16 @@ abstract class BattleTypedSearch<T extends SearchType> {
 	}
 	protected canLearn(speciesid: ID, moveid: ID) {
 		const move = this.dex.moves.get(moveid);
-		if ((this.formatType === 'natdex' || this.formatType === 'legendsza') &&
-			move.isNonstandard && move.isNonstandard !== 'Past') {
-			return false;
-		}
 		if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) {
 			return false;
 		}
 		if ((move.isNonstandard === 'DigiPen Past' || move.isNonstandard === 'DigiPen Future') &&
 				!(this.isDigiPen && this.formatType === 'natdex')) {
+			return false;
+		}
+		if ((this.formatType === 'natdex' || this.formatType === 'legendsza') &&
+			move.isNonstandard && move.isNonstandard !== 'Past' &&
+			!move.isNonstandard.startsWith('DigiPen')) {
 			return false;
 		}
 		const gen = this.dex.gen;

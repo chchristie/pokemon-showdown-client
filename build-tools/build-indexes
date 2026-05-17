@@ -326,6 +326,10 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		const isDigiPenVGC = genIdent === -9.65;
 		const isDigiPenDoubles = genIdent === -9.66;
 		const isDigiPen = isDigiPenSingles || isDigiPenNatDex || isDigiPenVGC || isDigiPenDoubles;
+		// Effective flags: DigiPen formats inherit base-game NatDex/Doubles behaviors
+		// so that any future base-game additions apply automatically.
+		const effectiveIsNatDex = isNatDex || isDigiPenNatDex;
+		const effectiveIsDoubles = isDoubles || isDigiPenVGC || isDigiPenDoubles;
 		const isChampions = genIdent === 9.67;
 		const genNum = Math.floor(isDoubles ? -genIdent : genIdent);
 		const isBW1 = genIdent === 5.1;
@@ -845,9 +849,21 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				continue;
 			}
 		if (item.isNonstandard && !isMetBattle) {
-			if (isDigiPen && item.isNonstandard === 'DigiPen') {
-				// DigiPen items belong in DigiPen tables — don't skip.
-			} else if (isNatDex) {
+			const tag = item.isNonstandard;
+			// Item inclusion rules by tag and format type:
+			//   'DigiPen'              → all DigiPen formats
+			//   'DigiPen Past'         → DigiPen NatDex only
+			//   'DigiPen Future'       → DigiPen NatDex only
+			//   'Future'               → DigiPen NatDex only (format has +Future)
+			//   'Past' / other         → NatDex (base or DigiPen) if existed in a past gen
+			//   anything else          → Gen 2 only (legacy quirk), skip all others
+			if (tag === 'DigiPen') {
+				if (!isDigiPen) continue;
+			} else if (tag === 'DigiPen Past' || tag === 'DigiPen Future') {
+				if (!isDigiPenNatDex) continue;
+			} else if (tag === 'Future') {
+				if (!isDigiPenNatDex) continue;
+			} else if (effectiveIsNatDex) {
 				let curItem = item;
 				let curGen = genNum;
 				while (curItem.isNonstandard && curGen >= 7) {
@@ -881,29 +897,29 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				if (!isMetBattle) greatItems.push(id);
 				else goodItems.push(id);
 				break;
-			// just singles
-			case 'airballoon':
-			case 'loadeddice':
-			case 'heavydutyboots':
-			case 'expertbelt':
-			case 'salacberry':
-				if (isDoubles || isMetBattle) goodItems.push(id);
-				else greatItems.push(id);
-				break;
-			// just doubles
-			case 'safetygoggles':
-			case 'ejectbutton':
-			case 'ejectpack':
-				if (isDoubles) greatItems.push(id);
-				else goodItems.push(id);
-				break;
-			// doubles + metronome
-			case 'covertcloak':
-			case 'clearamulet':
-			case 'weaknesspolicy':
-				if (isDoubles || isMetBattle) greatItems.push(id);
-				else goodItems.push(id);
-				break;
+		// just singles
+		case 'airballoon':
+		case 'loadeddice':
+		case 'heavydutyboots':
+		case 'expertbelt':
+		case 'salacberry':
+			if (effectiveIsDoubles || isMetBattle) goodItems.push(id);
+			else greatItems.push(id);
+			break;
+		// just doubles
+		case 'safetygoggles':
+		case 'ejectbutton':
+		case 'ejectpack':
+			if (effectiveIsDoubles) greatItems.push(id);
+			else goodItems.push(id);
+			break;
+		// doubles + metronome
+		case 'covertcloak':
+		case 'clearamulet':
+		case 'weaknesspolicy':
+			if (effectiveIsDoubles || isMetBattle) greatItems.push(id);
+			else goodItems.push(id);
+			break;
 			// metronome only
 			case 'mirrorherb':
 				if (isMetBattle) greatItems.push(id);
@@ -919,8 +935,8 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				if (genNum === 2 || genNum > 6) goodItems.push(id);
 				else greatItems.push(id);
 				break;
-			case 'sitrusberry':
-				if (genNum > 3 && (genNum < 7 || isDoubles)) greatItems.push(id);
+		case 'sitrusberry':
+			if (genNum > 3 && (genNum < 7 || effectiveIsDoubles)) greatItems.push(id);
 				else if (genNum > 6) goodItems.push(id);
 				else poorItems.push(id);
 				break;
@@ -1437,7 +1453,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 
 	// Client relevant data that should be overridden by past gens and mods
 	const overrideSpeciesKeys = [
-		'abilities', 'baseStats', 'cosmeticFormes', 'gender', 'isNonstandard', 'requiredItems', 'types', 'unreleasedHidden',
+		'abilities', 'baseStats', 'cosmeticFormes', 'gender', 'iconnum', 'isNonstandard', 'requiredItems', 'types', 'unreleasedHidden',
 	];
 	const overrideMoveKeys = [
 		'accuracy', 'basePower', 'category', 'desc', 'flags', 'isNonstandard', 'pp', 'priority', 'shortDesc', 'target', 'type',
@@ -1651,6 +1667,7 @@ process.stdout.write("Building `data/pokedex.js`... ");
 		if (species.requiredItems) Pokedex[id].requiredItems = species.requiredItems;
 		if (species.otherFormes && species.otherFormes.length) Pokedex[id].otherFormes = species.otherFormes;
 		if (species.formeOrder && species.formeOrder.length) Pokedex[id].formeOrder = species.formeOrder;
+		if (species.iconnum !== undefined) Pokedex[id].iconnum = species.iconnum;
 		const formatsEntry = DigiPenModFormatsData[id];
 		if (formatsEntry && formatsEntry.tier) Pokedex[id].tier = formatsEntry.tier;
 	}

@@ -1517,6 +1517,7 @@ export class Species implements Effect {
 	readonly forme: string;
 	readonly formeid: string;
 	readonly spriteid: string;
+	readonly iconnum?: number;
 	readonly baseForme: string;
 
 	// basic data
@@ -1579,6 +1580,7 @@ export class Species implements Effect {
 		if (this.spriteid === 'greninja-bond') this.spriteid = 'greninja';
 		if (this.spriteid === 'rockruff-dusk') this.spriteid = 'rockruff';
 		if (this.spriteid.endsWith('-')) this.spriteid = this.spriteid.slice(0, -1);
+		this.iconnum = data.iconnum;
 		this.baseForme = data.baseForme || '';
 
 		this.num = data.num || 0;

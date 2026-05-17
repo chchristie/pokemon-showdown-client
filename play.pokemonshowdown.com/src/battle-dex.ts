@@ -208,6 +208,7 @@ export interface TeambuilderSpriteData {
 	spriteDir: string;
 	spriteid: string;
 	shiny?: boolean;
+	digipen?: boolean;		
 }
 
 export const Dex = new class implements ModdedDex {
@@ -239,6 +240,10 @@ export const Dex = new class implements ModdedDex {
 	fxPrefix = (() => {
 		const protocol = (window.document?.location?.protocol !== 'http:') ? 'https:' : '';
 		return `${protocol}//${window.Config ? Config.routes.client : 'play.pokemonshowdown.com'}/fx/`;
+	})();
+
+	resourcePrefixDigipen = (() => {
+		return 'https://raw.githubusercontent.com/chchristie/pokemon-showdown-client-resources/main/';
 	})();
 
 	loadedSpriteData = { xy: 1, bw: 0 };
@@ -712,7 +717,7 @@ export const Dex = new class implements ModdedDex {
 		}
 
 		// Mod Cries
-		if (options.mod) {
+		if (options.mod && !species.isNonstandard?.startsWith('DigiPen')) { // DigiPen mod uses normal file structure in its own prefix 
 			spriteData.cryurl = `sprites/${options.mod}/audio/${toID(species.baseSpecies)}`;
 			spriteData.cryurl += '.mp3';
 		}
@@ -740,6 +745,7 @@ export const Dex = new class implements ModdedDex {
 				break;
 			}
 		}
+
 		if (!animatedSprite) {
 			// There is no entry or enough data in pokedex-mini.js
 			// Handle these in case-by-case basis; either using BW sprites or matching the played gen.
@@ -754,6 +760,13 @@ export const Dex = new class implements ModdedDex {
 			spriteData.url += dir + '/' + name + '.png';
 		}
 
+		// Hardcode DigiPen sprite path to use the DigiPen sprite location
+		if (species.isNonstandard?.startsWith('DigiPen')) {
+			spriteData.url = Dex.resourcePrefixDigipen + 'sprites/gen5'
+			if (!isFront) spriteData.url += '-back';
+			spriteData.url += '/' + name + '.png';
+		}
+		
 		if (!options.noScale) {
 			if (graphicsGen > 4) {
 				// no scaling
@@ -783,6 +796,10 @@ export const Dex = new class implements ModdedDex {
 	}
 
 	getPokemonIconNum(id: ID, isFemale?: boolean, facingLeft?: boolean) {
+		const pokedexEntry = window.BattlePokedex?.[id] as { iconnum?: number } | undefined;
+		if (pokedexEntry && typeof pokedexEntry.iconnum === 'number') {
+			return pokedexEntry.iconnum;
+		}
 		let num = 0;
 		if (window.BattlePokemonSprites?.[id]?.num) {
 			num = BattlePokemonSprites[id].num;
@@ -833,11 +850,15 @@ export const Dex = new class implements ModdedDex {
 		}
 		let num = this.getPokemonIconNum(id, pokemon?.gender === 'F', facingLeft);
 
+		const pokedexEntry = window.BattlePokedex?.[id] as { iconnum?: number } | undefined;
+		const useDigipenIconSheet = pokedexEntry && typeof pokedexEntry.iconnum === 'number';
+		const prefix = useDigipenIconSheet ? Dex.resourcePrefixDigipen : Dex.resourcePrefix;
+
 		let top = Math.floor(num / 12) * 30;
 		let left = (num % 12) * 40;
 		let fainted = ((pokemon as Pokemon | ServerPokemon)?.fainted ?
 			`;opacity:.3;filter:grayscale(100%) brightness(.5)` : ``);
-		return `background:transparent url(${Dex.resourcePrefix}sprites/pokemonicons-sheet.png?v21) no-repeat scroll -${left}px -${top}px${fainted}`;
+		return `background:transparent url(${prefix}sprites/pokemonicons-sheet.png?v21) no-repeat scroll -${left}px -${top}px${fainted}`;
 	}
 
 	getTeambuilderSpriteData(pokemon: any, dex: ModdedDex = Dex): TeambuilderSpriteData {
@@ -854,6 +875,16 @@ export const Dex = new class implements ModdedDex {
 			}
 		}
 		if (species.exists === false) return { spriteDir: 'sprites/gen5', spriteid: '0', x: 10, y: 5 };
+		if (species.isNonstandard?.startsWith('DigiPen')) {
+			return {
+				spriteid,
+				spriteDir: 'sprites/gen5',
+				shiny: !!pokemon.shiny,
+				x: 10,
+				y: 5,
+				digipen: true,
+			};
+		}
 		if (Dex.afdMode) {
 			return {
 				spriteid,
@@ -918,19 +949,21 @@ export const Dex = new class implements ModdedDex {
 	getTeambuilderSprite(pokemon: any, dex?: ModdedDex, xOffset = 0, yOffset = 0) {
 		if (!pokemon) return '';
 		const data = this.getTeambuilderSpriteData(pokemon, dex);
+		const prefix = data.digipen ? Dex.resourcePrefixDigipen : Dex.resourcePrefix;
 		const shiny = (data.shiny ? '-shiny' : '');
 		const resize = (data.h ? `background-size:${data.h}px` : '');
-		return `background-image:url(${Dex.resourcePrefix}${data.spriteDir}${shiny}/${data.spriteid}.png);background-position:${data.x + xOffset}px ${data.y + yOffset}px;background-repeat:no-repeat;${resize}`;
+		return `background-image:url(${prefix}${data.spriteDir}${shiny}/${data.spriteid}.png);background-position:${data.x + xOffset}px ${data.y + yOffset}px;background-repeat:no-repeat;${resize}`;
 	}
 
 	getItemIcon(item: any) {
 		let num = 0;
 		if (typeof item === 'string' && window.BattleItems) item = window.BattleItems[toID(item)];
 		if (item?.spritenum) num = item.spritenum;
+		let prefix = item?.isNonstandard?.startsWith('DigiPen') ? Dex.resourcePrefixDigipen : Dex.resourcePrefix;
 
 		let top = Math.floor(num / 16) * 24;
 		let left = (num % 16) * 24;
-		return `background:transparent url(${Dex.resourcePrefix}sprites/itemicons-sheet.png?v1) no-repeat scroll -${left}px -${top}px`;
+		return `background:transparent url(${prefix}sprites/itemicons-sheet.png?v1) no-repeat scroll -${left}px -${top}px`;
 	}
 
 	getTypeIcon(type: string | null, b?: boolean) { // b is just for utilichart.js
