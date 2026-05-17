@@ -243,7 +243,7 @@ export const Dex = new class implements ModdedDex {
 	})();
 
 	resourcePrefixDigipen = (() => {
-		return 'https://raw.githubusercontent.com/chchristie/pokemon-showdown-client-resources/main/';
+		return `https://chchristie.github.io/pokemon-showdown-client-resources/`;
 	})();
 
 	loadedSpriteData = { xy: 1, bw: 0 };

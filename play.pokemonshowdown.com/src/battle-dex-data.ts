@@ -1166,6 +1166,7 @@ export class Item implements Effect {
 	readonly onDrive: TypeName;
 	readonly fling: any;
 	readonly naturalGift: { basePower: number, type: TypeName };
+	readonly isNonstandard: string | null;
 	readonly isPokeball: boolean;
 	readonly itemUser?: readonly string[];
 
@@ -1192,6 +1193,7 @@ export class Item implements Effect {
 		this.onDrive = data.onDrive || '';
 		this.fling = data.fling || null;
 		this.naturalGift = data.naturalGift || null;
+		this.isNonstandard = data.isNonstandard || null;
 		this.isPokeball = !!data.isPokeball;
 		this.itemUser = data.itemUser;
 
