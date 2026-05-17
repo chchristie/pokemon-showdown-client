@@ -1453,7 +1453,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 
 	// Client relevant data that should be overridden by past gens and mods
 	const overrideSpeciesKeys = [
-		'abilities', 'baseStats', 'cosmeticFormes', 'gender', 'iconnum', 'isNonstandard', 'requiredItems', 'types', 'unreleasedHidden',
+		'abilities', 'baseStats', 'cosmeticFormes', 'digipenIconnum', 'digipenSprite', 'gender', 'isNonstandard', 'requiredItems', 'types', 'unreleasedHidden',
 	];
 	const overrideMoveKeys = [
 		'accuracy', 'basePower', 'category', 'desc', 'flags', 'isNonstandard', 'pp', 'priority', 'shortDesc', 'target', 'type',
@@ -1634,13 +1634,23 @@ process.stdout.write("Building `data/pokedex.js`... ");
 			if (formatsEntry.unreleasedHidden) entry.unreleasedHidden = formatsEntry.unreleasedHidden;
 		}
 	}
-	// Inject DigiPen-only Pokémon into BattlePokedex so the client can look
-	// them up. isNonstandard: "DigiPen" is set so non-DigiPen formats see them
-	// as Illegal. The entry is built from the mod's compiled pokedex data.
+	
+	// Inject Digipen dex into BattlePokedex so the client can look
 	const DigiPenModPokedex = Dex.mod('gen9digipen').data.Pokedex;
 	const DigiPenModFormatsData = Dex.mod('gen9digipen').data.FormatsData;
+	const digiDex = Dex.mod('gen9digipen');
+	const parentDex = Dex.mod(digiDex.parentMod || 'base');
+
 	for (const id in DigiPenModPokedex) {
-		if (Pokedex[id]) continue; // base-game Pokémon already handled above
+		// Inject optional digipenIconnum and digipenSprite fields onto existing base dex pokemon that define it
+		if (Pokedex[id]) {
+			if (digiDex.data.Pokedex[id] === parentDex.data.Pokedex[id]) continue; // skip if nothing new to inject
+			const species = digiDex.species.get(id);
+			if (species.digipenSprite) Pokedex[id].digipenSprite = true;
+			if (species.digipenIconnum !== undefined) Pokedex[id].digipenIconnum = species.digipenIconnum;	
+			continue;
+		}
+		// Inject new DigiPen pokemon
 		const species = Dex.mod('gen9digipen').species.get(id);
 		Pokedex[id] = {
 			num: species.num,
@@ -1652,7 +1662,7 @@ process.stdout.write("Building `data/pokedex.js`... ");
 			weightkg: species.weightkg,
 			color: species.color,
 			eggGroups: species.eggGroups,
-			isNonstandard: "DigiPen",
+			isNonstandard: species.isNonstandard,
 		};
 		if (species.gender) Pokedex[id].gender = species.gender;
 		if (species.abilities[1]) Pokedex[id].abilities[1] = species.abilities[1];
@@ -1667,7 +1677,8 @@ process.stdout.write("Building `data/pokedex.js`... ");
 		if (species.requiredItems) Pokedex[id].requiredItems = species.requiredItems;
 		if (species.otherFormes && species.otherFormes.length) Pokedex[id].otherFormes = species.otherFormes;
 		if (species.formeOrder && species.formeOrder.length) Pokedex[id].formeOrder = species.formeOrder;
-		if (species.iconnum !== undefined) Pokedex[id].iconnum = species.iconnum;
+		if (species.digipenSprite) Pokedex[id].digipenSprite = true;
+		if (species.digipenIconnum !== undefined) Pokedex[id].digipenIconnum = species.digipenIconnum;
 		const formatsEntry = DigiPenModFormatsData[id];
 		if (formatsEntry && formatsEntry.tier) Pokedex[id].tier = formatsEntry.tier;
 	}

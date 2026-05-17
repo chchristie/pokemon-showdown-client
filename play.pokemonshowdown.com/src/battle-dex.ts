@@ -717,7 +717,7 @@ export const Dex = new class implements ModdedDex {
 		}
 
 		// Mod Cries
-		if (options.mod && !species.isNonstandard?.startsWith('DigiPen')) { // DigiPen mod uses normal file structure in its own prefix 
+		if (options.mod && !species.digipenSprite) {
 			spriteData.cryurl = `sprites/${options.mod}/audio/${toID(species.baseSpecies)}`;
 			spriteData.cryurl += '.mp3';
 		}
@@ -760,8 +760,8 @@ export const Dex = new class implements ModdedDex {
 			spriteData.url += dir + '/' + name + '.png';
 		}
 
-		// Hardcode DigiPen sprite path to use the DigiPen sprite location
-		if (species.isNonstandard?.startsWith('DigiPen')) {
+		// DigiPen sprite path uses the DigiPen sprite host when flagged in dex data
+		if (species.digipenSprite) {
 			spriteData.url = Dex.resourcePrefixDigipen + 'sprites/gen5'
 			if (!isFront) spriteData.url += '-back';
 			spriteData.url += '/' + name + '.png';
@@ -796,9 +796,9 @@ export const Dex = new class implements ModdedDex {
 	}
 
 	getPokemonIconNum(id: ID, isFemale?: boolean, facingLeft?: boolean) {
-		const pokedexEntry = window.BattlePokedex?.[id] as { iconnum?: number } | undefined;
-		if (pokedexEntry && typeof pokedexEntry.iconnum === 'number') {
-			return pokedexEntry.iconnum;
+		const pokedexEntry = window.BattlePokedex?.[id] as { digipenIconnum?: number; iconnum?: number } | undefined;
+		if (pokedexEntry && typeof pokedexEntry.digipenIconnum === 'number') {
+			return pokedexEntry.digipenIconnum;
 		}
 		let num = 0;
 		if (window.BattlePokemonSprites?.[id]?.num) {
@@ -850,8 +850,8 @@ export const Dex = new class implements ModdedDex {
 		}
 		let num = this.getPokemonIconNum(id, pokemon?.gender === 'F', facingLeft);
 
-		const pokedexEntry = window.BattlePokedex?.[id] as { iconnum?: number } | undefined;
-		const useDigipenIconSheet = pokedexEntry && typeof pokedexEntry.iconnum === 'number';
+		const pokedexEntry = window.BattlePokedex?.[id] as { digipenIconnum?: number } | undefined;
+		const useDigipenIconSheet = pokedexEntry && typeof pokedexEntry.digipenIconnum === 'number';
 		const prefix = useDigipenIconSheet ? Dex.resourcePrefixDigipen : Dex.resourcePrefix;
 
 		let top = Math.floor(num / 12) * 30;
@@ -875,7 +875,7 @@ export const Dex = new class implements ModdedDex {
 			}
 		}
 		if (species.exists === false) return { spriteDir: 'sprites/gen5', spriteid: '0', x: 10, y: 5 };
-		if (species.isNonstandard?.startsWith('DigiPen')) {
+		if (species.digipenSprite) {
 			return {
 				spriteid,
 				spriteDir: 'sprites/gen5',
