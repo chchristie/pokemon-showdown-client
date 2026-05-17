@@ -480,7 +480,10 @@ License: GPLv2
 	background: #DDAAEE url(../fx/weather-wonderroom.png) no-repeat scroll left top;
 	color: #661155;
 }
-
+.inverseroomweather {
+	background: #AAEEDD url(../fx/weather-inverseroom.png) no-repeat scroll left top;
+	color: #115566;
+}
 .battle .result {
 	display: none;
 	position: absolute;
