@@ -52,7 +52,7 @@ function requireNoCache(pathSpec) {
 	index = index.concat(Object.keys(Dex.data.Items).map(x => x + ' item'));
 	index = index.concat(Object.keys(Dex.data.Abilities).map(x => x + ' ability'));
 
-	// DigiPen content not present in the base game
+	// Add DigiPen content not present in the base game to the teambuilder search index
 	const DigiPenDex = Dex.mod('gen9digipen');
 	for (const id in DigiPenDex.data.Pokedex) {
 		if (!Dex.data.Pokedex[id]) index.push(id + ' pokemon');
@@ -66,6 +66,7 @@ function requireNoCache(pathSpec) {
 	for (const id in DigiPenDex.data.Items) {
 		if (!Dex.data.Items[id]) index.push(id + ' item');
 	}
+
 	index = index.concat(Object.keys(Dex.data.TypeChart).map(x => toID(x) + ' type'));
 	index = index.concat(['physical', 'special', 'status'].map(x => toID(x) + ' category'));
 	index = index.concat([
@@ -326,10 +327,6 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		const isDigiPenVGC = genIdent === -9.65;
 		const isDigiPenDoubles = genIdent === -9.66;
 		const isDigiPen = isDigiPenSingles || isDigiPenNatDex || isDigiPenVGC || isDigiPenDoubles;
-		// Effective flags: DigiPen formats inherit base-game NatDex/Doubles behaviors
-		// so that any future base-game additions apply automatically.
-		const effectiveIsNatDex = isNatDex || isDigiPenNatDex;
-		const effectiveIsDoubles = isDoubles || isDigiPenVGC || isDigiPenDoubles;
 		const isChampions = genIdent === 9.67;
 		const genNum = Math.floor(isDoubles ? -genIdent : genIdent);
 		const isBW1 = genIdent === 5.1;
@@ -355,8 +352,8 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			if (isChampions) genStr = 'champions';
 			return genStr;
 		})();
-		// process.stdout.write("" + gen + (isDoubles ? " doubles" : "") + "... ");
 		const pokemon = Object.keys(Dex.data.Pokedex);
+		// Add DigiPen Pokemon to the teambuilder pokemon tables for DigiPen formats
 		if (isDigiPen) {
 			for (const id in Dex.mod('gen9digipen').data.Pokedex) {
 				if (!Dex.data.Pokedex[id]) pokemon.push(id);
@@ -428,22 +425,22 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 					if (species.name === 'Pikachu-Alola') return 'Illegal';
 					return species.tier;
 				}
-			if (isVGC || isDigiPenVGC) {
-				if (isDigiPenVGC && species.isNonstandard === 'DigiPen') {
-					// DigiPen Pokemon use tag-based VGC classification with "DigiPen" prefix.
-					if (baseSpecies.tags.includes('Mythical')) return 'DigiPen Mythical';
-					if (baseSpecies.tags.includes('Restricted Legendary')) return 'DigiPen Restricted';
-					if (species.tier === 'NFE' || species.tier === 'DigiPen NFE') return 'DigiPen NFE';
-					if (species.tier === 'LC' || species.tier === 'DigiPen LC') return 'DigiPen LC';
-					return 'DigiPen Regular';
+				if (isVGC || isDigiPenVGC) {
+					if (isDigiPenVGC && species.isNonstandard === 'DigiPen') {
+						// DigiPen Pokemon use tag-based VGC classification with "DigiPen" prefix.
+						if (baseSpecies.tags.includes('Mythical')) return 'DigiPen Mythical';
+						if (baseSpecies.tags.includes('Restricted Legendary')) return 'DigiPen Restricted';
+						if (species.tier === 'NFE') return 'DigiPen NFE';
+						if (species.tier === 'LC') return 'DigiPen LC';
+						return 'DigiPen Regular';
+					}
+					if (species.isNonstandard && species.isNonstandard !== 'Gigantamax') return 'Illegal';
+					if (baseSpecies.tags.includes('Mythical')) return 'Mythical';
+					if (baseSpecies.tags.includes('Restricted Legendary')) return 'Restricted';
+					if (species.tier === 'NFE') return 'NFE';
+					if (species.tier === 'LC') return 'LC';
+					return 'Regular';
 				}
-				if (species.isNonstandard && species.isNonstandard !== 'Gigantamax') return 'Illegal';
-				if (baseSpecies.tags.includes('Mythical')) return 'Mythical';
-				if (baseSpecies.tags.includes('Restricted Legendary')) return 'Restricted';
-				if (species.tier === 'NFE') return 'NFE';
-				if (species.tier === 'LC') return 'LC';
-				return 'Regular';
-			}
 				if (isRS) {
 					if (species.isNonstandard) {
 						if (species.isNonstandard === 'Unobtainable') return 'Unreleased';
@@ -473,7 +470,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				if (species.tier === 'CAP' || species.tier === 'CAP NFE' || species.tier === 'CAP LC') {
 					return species.tier;
 				}
-				if (isDoubles && genNum > 4) {
+				if ((isDoubles || isDigiPenDoubles) && genNum > 4) {
 					return species.doublesTier;
 				}
 				if (isNatDex || isDigiPenNatDex || (isPreDLC && genNum === 9.41) || (isSVDLC1 && genNum === 9.411)) {
@@ -776,10 +773,10 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			// matching the behaviour of the standard gen9 VGC table which uses
 			// gen9doubles overrideTier values (DOU, DUber, etc.).
 			const digipenDoublesTierLabel = (doublesTier) => {
-				if (doublesTier === 'DigiPen DUber') return 'DP DUber';
-				if (doublesTier === 'DigiPen') return 'DP DOU';
-				if (doublesTier === 'DigiPen NFE') return 'DP NFE';
-				if (doublesTier === 'DigiPen LC') return 'DP LC';
+				if (doublesTier === 'DigiPen DUber') return 'DUber';
+				if (doublesTier === 'DigiPen') return 'DOU';
+				if (doublesTier === 'DigiPen NFE') return 'NFE';
+				if (doublesTier === 'DigiPen LC') return 'LC';
 				// Base-game Pokémon already have standard doubles tier strings.
 				return doublesTier;
 			};
@@ -790,13 +787,12 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		}
 
 		if (isDigiPenDoubles) {
-			// Post-process overrideTier to show short "DP DOU"-style labels next to
-			// DigiPen Pokemon in the doubles teambuilder, matching VGC behaviour.
+			// Post-process overrideTier to show shortened labels next to icon.
 			const digipenDoublesTierLabel = (doublesTier) => {
-				if (doublesTier === 'DigiPen DUber') return 'DP DUber';
-				if (doublesTier === 'DigiPen') return 'DP DOU';
-				if (doublesTier === 'DigiPen NFE') return 'DP NFE';
-				if (doublesTier === 'DigiPen LC') return 'DP LC';
+				if (doublesTier === 'DigiPen DUber') return 'DUber';
+				if (doublesTier === 'DigiPen') return 'DOU';
+				if (doublesTier === 'DigiPen NFE') return 'NFE';
+				if (doublesTier === 'DigiPen LC') return 'LC';
 				// Base-game Pokémon already have standard doubles tier strings.
 				return doublesTier;
 			};
@@ -809,13 +805,12 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		}
 
 		if (isDigiPenSingles || isDigiPenNatDex) {
-			// Post-process overrideTier to show short "DP OU"-style labels next to
-			// DigiPen Pokemon in the singles/natdex teambuilder.
+			// Post-process overrideTier to show shortened labels next to icon.
 			const digipenSinglesTierLabel = (tier) => {
-				if (tier === 'DigiPen Uber') return 'DP Uber';
-				if (tier === 'DigiPen') return 'DP OU';
-				if (tier === 'DigiPen NFE') return 'DP NFE';
-				if (tier === 'DigiPen LC') return 'DP LC';
+				if (tier === 'DigiPen Uber') return 'Uber';
+				if (tier === 'DigiPen') return 'OU';
+				if (tier === 'DigiPen NFE') return 'NFE';
+				if (tier === 'DigiPen LC') return 'LC';
 				// Base-game Pokémon already have standard tier strings.
 				return tier;
 			};
@@ -829,6 +824,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		}
 
 		const itemList = Object.keys(Dex.data.Items);
+		// Add DigiPen Items to the teambuilder item tables for DigiPen formats
 		if (isDigiPen) {
 			for (const id in Dex.mod('gen9digipen').data.Items) {
 				if (!Dex.data.Items[id]) itemList.push(id);
@@ -855,15 +851,14 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			//   'DigiPen Past'         → DigiPen NatDex only
 			//   'DigiPen Future'       → DigiPen NatDex only
 			//   'Future'               → DigiPen NatDex only (format has +Future)
-			//   'Past' / other         → NatDex (base or DigiPen) if existed in a past gen
-			//   anything else          → Gen 2 only (legacy quirk), skip all others
+			//   'Past'        			→ NatDex and DigiPen NatDex
 			if (tag === 'DigiPen') {
 				if (!isDigiPen) continue;
 			} else if (tag === 'DigiPen Past' || tag === 'DigiPen Future') {
 				if (!isDigiPenNatDex) continue;
 			} else if (tag === 'Future') {
 				if (!isDigiPenNatDex) continue;
-			} else if (effectiveIsNatDex) {
+			} else if (isNatDex) {
 				let curItem = item;
 				let curGen = genNum;
 				while (curItem.isNonstandard && curGen >= 7) {
@@ -878,6 +873,16 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			if (isMetBattle) {
 				const banlist = Dex.formats.getRuleTable(Dex.formats.get(gen + 'metronomebattle'));
 				if (banlist.isBanned('item:' + item.id)) continue;
+			}
+			// DigiPen items can define/override quality for teambuilder
+			if (item.quality) {
+				if (item.quality === 'great') greatItems.push(id);
+				else if (item.quality === 'good') goodItems.push(id);
+				else if (item.quality === 'specific') specificItems.push(id);
+				else if (item.quality === 'poor') poorItems.push(id);
+				else if (item.quality === 'bad') badItems.push(id);
+				else goodItems.push(id);
+				continue
 			}
 			switch (id) {
 			// mainstays
@@ -897,29 +902,29 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				if (!isMetBattle) greatItems.push(id);
 				else goodItems.push(id);
 				break;
-		// just singles
-		case 'airballoon':
-		case 'loadeddice':
-		case 'heavydutyboots':
-		case 'expertbelt':
-		case 'salacberry':
-			if (effectiveIsDoubles || isMetBattle) goodItems.push(id);
-			else greatItems.push(id);
-			break;
-		// just doubles
-		case 'safetygoggles':
-		case 'ejectbutton':
-		case 'ejectpack':
-			if (effectiveIsDoubles) greatItems.push(id);
-			else goodItems.push(id);
-			break;
-		// doubles + metronome
-		case 'covertcloak':
-		case 'clearamulet':
-		case 'weaknesspolicy':
-			if (effectiveIsDoubles || isMetBattle) greatItems.push(id);
-			else goodItems.push(id);
-			break;
+			// just singles
+			case 'airballoon':
+			case 'loadeddice':
+			case 'heavydutyboots':
+			case 'expertbelt':
+			case 'salacberry':
+				if (isDoubles || isMetBattle) goodItems.push(id);
+				else greatItems.push(id);
+				break;
+			// just doubles
+			case 'safetygoggles':
+			case 'ejectbutton':
+			case 'ejectpack':
+				if (isDoubles) greatItems.push(id);
+				else goodItems.push(id);
+				break;
+			// doubles + metronome
+			case 'covertcloak':
+			case 'clearamulet':
+			case 'weaknesspolicy':
+				if (isDoubles || isMetBattle) greatItems.push(id);
+				else goodItems.push(id);
+				break;
 			// metronome only
 			case 'mirrorherb':
 				if (isMetBattle) greatItems.push(id);
@@ -935,11 +940,11 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				if (genNum === 2 || genNum > 6) goodItems.push(id);
 				else greatItems.push(id);
 				break;
-		case 'sitrusberry':
-			if (genNum > 3 && (genNum < 7 || effectiveIsDoubles)) greatItems.push(id);
-				else if (genNum > 6) goodItems.push(id);
-				else poorItems.push(id);
-				break;
+			case 'sitrusberry':
+				if (genNum > 3 && (genNum < 7 || isDoubles)) greatItems.push(id);
+					else if (genNum > 6) goodItems.push(id);
+					else poorItems.push(id);
+					break;
 			case 'aguavberry':
 			case 'figyberry':
 			case 'iapapaberry':
@@ -1096,8 +1101,8 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 					specificItems.push(id);
 				} else if (item.itemUser) {
 					specificItems.push(id);
-			} else if (item.megaStone) {
-				specificItems.push(id);
+				} else if (item.megaStone) {
+					specificItems.push(id);
 				} else {
 					goodItems.push(id);
 				}
@@ -1254,16 +1259,12 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 	for (const id in DigipenLearnsets) {
 		const learnset = DigipenLearnsets[id].learnset;
 		if (!learnset) continue;
-
-		// Store in the DigiPen-specific table (used by the DigiPen learnset
-		// merge path in battle-dex-search when formatType === 'digipen').
 		BattleTeambuilderTable['gen9digipen'].learnsets[id] = {};
 		for (const moveid in learnset) {
 			BattleTeambuilderTable['gen9digipen'].learnsets[id][moveid] = '9a';
 		}
-
-		// Also patch into the base gen9 learnset table so that move-based
-		// Pokémon searches can find these
+		// Inject Digipen learnsets into the base gen9 learnset table so that move-based
+		// Pokémon searches can find the moves
 		if (!BattleTeambuilderTable.learnsets[id]) BattleTeambuilderTable.learnsets[id] = {};
 		for (const moveid in learnset) {
 			BattleTeambuilderTable.learnsets[id][moveid] = '9a';
@@ -1645,7 +1646,7 @@ process.stdout.write("Building `data/pokedex.js`... ");
 		if (species.title) entry.title = species.title;
 		if (species.dexEntry) entry.dexEntry = species.dexEntry;
 		if (species.habitat) entry.habitat = species.habitat;
-		if (species.notes && species.notes.length) entry.notes = species.notes;
+		if (species.notes) entry.notes = species.notes;
 		if (species.contributors && species.contributors.length) entry.contributors = species.contributors;
 		if (species.artSource && (species.artSource.artist || species.artSource.url)) {
 			entry.artSource = { artist: species.artSource.artist, url: species.artSource.url };
@@ -1654,15 +1655,13 @@ process.stdout.write("Building `data/pokedex.js`... ");
 
 	for (const id in DigiPenModPokedex) {
 		const modRow = DigiPenModPokedex[id];
-		// Inject optional digipenIconnum and digipenSprite fields onto existing base dex pokemon that define it
+		// Inject digipenIconnum, digipenSprite, and dex data fields onto existing base dex pokemon that define it
 		if (Pokedex[id]) {
-			if (modRow && modRow.modified === 'DigiPen') {
-				Pokedex[id].modified = 'DigiPen';
-			}
 			if (digiDex.data.Pokedex[id] === parentDex.data.Pokedex[id]) continue; // skip if nothing new to inject
 			const species = digiDex.species.get(id);
 			if (species.digipenSprite) Pokedex[id].digipenSprite = true;
 			if (species.digipenIconnum !== undefined) Pokedex[id].digipenIconnum = species.digipenIconnum;
+			if (species.modified) Pokedex[id].modified = species.modified;
 			copyDigiPenSpeciesDexMeta(Pokedex[id], species);
 			continue;
 		}
@@ -1683,30 +1682,23 @@ process.stdout.write("Building `data/pokedex.js`... ");
 		if (species.gender) Pokedex[id].gender = species.gender;
 		if (species.abilities[1]) Pokedex[id].abilities[1] = species.abilities[1];
 		if (species.abilities.H) Pokedex[id].abilities.H = species.abilities.H;
-		if (species.baseSpecies !== species.name) {
-			Pokedex[id].baseSpecies = species.baseSpecies;
-			Pokedex[id].forme = species.forme;
-		}
+		if (species.baseSpecies) Pokedex[id].baseSpecies = species.baseSpecies;
+		if (species.forme) Pokedex[id].forme = species.forme;
 		if (species.prevo) Pokedex[id].prevo = species.prevo;
 		if (species.evos && species.evos.length) Pokedex[id].evos = species.evos;
-		if (species.prevo) {
-			if (species.evoType) Pokedex[id].evoType = species.evoType;
-			if (species.evoLevel != null) Pokedex[id].evoLevel = species.evoLevel;
-			if (species.evoMove) Pokedex[id].evoMove = species.evoMove;
-			if (species.evoItem) Pokedex[id].evoItem = species.evoItem;
-			if (species.evoCondition) Pokedex[id].evoCondition = species.evoCondition;
-		}
+		if (species.evoType) Pokedex[id].evoType = species.evoType;
+		if (species.evoLevel) Pokedex[id].evoLevel = species.evoLevel;
+		if (species.evoMove) Pokedex[id].evoMove = species.evoMove;
+		if (species.evoItem) Pokedex[id].evoItem = species.evoItem;
+		if (species.evoCondition) Pokedex[id].evoCondition = species.evoCondition;
 		if (species.requiredItem) Pokedex[id].requiredItem = species.requiredItem;
-		if (species.requiredItems) Pokedex[id].requiredItems = species.requiredItems;
 		if (species.otherFormes && species.otherFormes.length) Pokedex[id].otherFormes = species.otherFormes;
 		if (species.formeOrder && species.formeOrder.length) Pokedex[id].formeOrder = species.formeOrder;
 		if (species.digipenSprite) Pokedex[id].digipenSprite = true;
-		if (species.digipenIconnum !== undefined) Pokedex[id].digipenIconnum = species.digipenIconnum;
+		if (species.digipenIconnum) Pokedex[id].digipenIconnum = species.digipenIconnum;
+		if (species.modified) Pokedex[id].modified = species.modified;
 		const formatsEntry = DigiPenModFormatsData[id];
 		if (formatsEntry && formatsEntry.tier) Pokedex[id].tier = formatsEntry.tier;
-		if (modRow && modRow.modified === 'DigiPen') {
-			Pokedex[id].modified = 'DigiPen';
-		}
 		copyDigiPenSpeciesDexMeta(Pokedex[id], species);
 	}
 	const buf = 'exports.BattlePokedex = ' + es3stringify(Pokedex) + ';';
@@ -1754,18 +1746,7 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (move.shortDesc) Moves[id].shortDesc = move.shortDesc;
 		if (move.dexEntry) Moves[id].dexEntry = move.dexEntry;
 		if (move.contributors && move.contributors.length) Moves[id].contributors = move.contributors;
-	}
-	const DigiPenModMoves = DigipenModDex.data.Moves;
-	for (const id in DigiPenModMoves) {
-		if (Moves[id] && DigiPenModMoves[id].modified === 'DigiPen') {
-			Moves[id].modified = 'DigiPen';
-		}
-	}
-	for (const id in DigiPenModMoves) {
-		if (!Moves[id]) continue;
-		const move = DigipenModDex.moves.get(id);
-		if (move.dexEntry) Moves[id].dexEntry = move.dexEntry;
-		if (move.contributors && move.contributors.length) Moves[id].contributors = move.contributors;
+		if (move.modified) Moves[id].modified = move.modified;
 	}
 	const buf = 'exports.BattleMovedex = ' + es3stringify(Moves) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/moves.js', buf);
@@ -1794,17 +1775,7 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (item.megaStone) Items[id].megaStone = item.megaStone;
 		if (item.megaEvolves) Items[id].megaEvolves = item.megaEvolves;
 		if (item.itemUser) Items[id].itemUser = item.itemUser;
-		if (item.contributors && item.contributors.length) Items[id].contributors = item.contributors;
-	}
-	const DigiPenModItems = Dex.mod('gen9digipen').data.Items;
-	for (const id in DigiPenModItems) {
-		if (Items[id] && DigiPenModItems[id].modified === 'DigiPen') {
-			Items[id].modified = 'DigiPen';
-		}
-	}
-	for (const id in DigiPenModItems) {
-		if (!Items[id]) continue;
-		const item = Dex.mod('gen9digipen').items.get(id);
+		if (item.modified) Items[id].modified = item.modified;
 		if (item.contributors && item.contributors.length) Items[id].contributors = item.contributors;
 	}
 	const buf = 'exports.BattleItems = ' + es3stringify(Items) + ';';
@@ -1830,17 +1801,7 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (ability.desc) Abilities[id].desc = ability.desc;
 		if (ability.shortDesc) Abilities[id].shortDesc = ability.shortDesc;
 		if (ability.contributors && ability.contributors.length) Abilities[id].contributors = ability.contributors;
-	}
-	const DigiPenModAbilities = Dex.mod('gen9digipen').data.Abilities;
-	for (const id in DigiPenModAbilities) {
-		if (Abilities[id] && DigiPenModAbilities[id].modified === 'DigiPen') {
-			Abilities[id].modified = 'DigiPen';
-		}
-	}
-	for (const id in DigiPenModAbilities) {
-		if (!Abilities[id]) continue;
-		const ability = Dex.mod('gen9digipen').abilities.get(id);
-		if (ability.contributors && ability.contributors.length) Abilities[id].contributors = ability.contributors;
+		if (ability.modified) Abilities[id].modified = ability.modified;
 	}
 	const buf = 'exports.BattleAbilities = ' + es3stringify(Abilities) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/abilities.js', buf);
@@ -1892,13 +1853,9 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 
 {
 	const Learnsets = requireNoCache('../caches/pokemon-showdown/dist/data/learnsets.js').Learnsets;
-	// Base dist/learnsets has no mod-only species (e.g. typhlosiondigipen). The dex and
-	// other UI read BattleLearnsets from this file, so merge gen9digipen in. Combine
-	// learnset maps so mod moves layer on top of base (mod shallow-merge replaces learnset
-	// in sim data, but we want full pool + DigiPen moves for the client file).
 	const merged = JSON.parse(JSON.stringify(Learnsets));
+	/** Track DigiPen movepool additions for the client dex. */
 	const DigipenLearnsets = Dex.mod('gen9digipen').data.Learnsets;
-	/** Moves present in the mod learnset but absent from vanilla dist/learnsets (per species id). */
 	const digiPenAdditions = {};
 	for (const id in DigipenLearnsets) {
 		const entry = DigipenLearnsets[id];

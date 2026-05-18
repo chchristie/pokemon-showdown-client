@@ -1169,8 +1169,8 @@ export class Item implements Effect {
 	readonly isNonstandard: string | null;
 	readonly isPokeball: boolean;
 	readonly itemUser?: readonly string[];
-	/** Client dex: dual base vs DigiPen view when set by build-indexes */
-	readonly modified?: 'DigiPen';
+	readonly modified?: string;
+	readonly contributors?: readonly string[];
 
 	constructor(id: ID, name: string, data: any) {
 		if (!data || typeof data !== 'object') data = {};
@@ -1198,7 +1198,8 @@ export class Item implements Effect {
 		this.isNonstandard = data.isNonstandard || null;
 		this.isPokeball = !!data.isPokeball;
 		this.itemUser = data.itemUser;
-		this.modified = data.modified === 'DigiPen' ? 'DigiPen' : undefined;
+		this.modified = data.modified || undefined;
+		this.contributors = (data.contributors && data.contributors.length) ? data.contributors : undefined;
 
 		if (!this.gen) {
 			if (this.num >= 577) {
@@ -1311,8 +1312,9 @@ export class Move implements Effect {
 	readonly status: string;
 	readonly secondaries: readonly any[] | null;
 	readonly num: number;
-	/** Client dex: dual base vs DigiPen view when set by build-indexes */
-	readonly modified?: 'DigiPen';
+	readonly modified?: string;
+	readonly dexEntry?: string;
+	readonly contributors?: readonly string[];
 
 	constructor(id: ID, name: string, data: any) {
 		if (!data || typeof data !== 'object') data = {};
@@ -1423,7 +1425,9 @@ export class Move implements Effect {
 		}
 
 		this.num = data.num || 0;
-		this.modified = data.modified === 'DigiPen' ? 'DigiPen' : undefined;
+		this.modified = data.modified || undefined;
+		this.dexEntry = data.dexEntry || undefined;
+		this.contributors = (data.contributors && data.contributors.length) ? data.contributors : undefined;
 		if (!this.gen) {
 			if (this.num >= 743) {
 				this.gen = 8;
@@ -1480,8 +1484,8 @@ export class Ability implements Effect {
 	readonly rating: number;
 	readonly flags: AbilityFlags;
 	readonly isNonstandard: string | null;
-	/** Client dex: dual base vs DigiPen view when set by build-indexes */
-	readonly modified?: 'DigiPen';
+	readonly modified?: string;
+	readonly contributors?: readonly string[];
 
 	constructor(id: ID, name: string, data: any) {
 		if (!data || typeof data !== 'object') data = {};
@@ -1496,7 +1500,8 @@ export class Ability implements Effect {
 		this.rating = data.rating || 1;
 		this.flags = data.flags || {};
 		this.isNonstandard = data.isNonstandard || null;
-		this.modified = data.modified === 'DigiPen' ? 'DigiPen' : undefined;
+		this.modified = data.modified || undefined;
+		this.contributors = (data.contributors && data.contributors.length) ? data.contributors : undefined;
 		if (!this.gen) {
 			if (this.num >= 234) {
 				this.gen = 8;
@@ -1530,8 +1535,13 @@ export class Species implements Effect {
 	readonly spriteid: string;
 	readonly digipenSprite?: boolean;
 	readonly digipenIconnum?: number;
-	/** Client dex: dual base vs DigiPen view when set by build-indexes */
-	readonly modified?: 'DigiPen';
+	readonly modified?: string;
+	readonly title?: string;
+	readonly dexEntry?: string;
+	readonly habitat?: string;
+	readonly notes?: string;
+	readonly contributors?: readonly string[];
+	readonly artSource?: { artist?: string, url?: string };
 	readonly baseForme: string;
 
 	// basic data
@@ -1596,7 +1606,26 @@ export class Species implements Effect {
 		if (this.spriteid.endsWith('-')) this.spriteid = this.spriteid.slice(0, -1);
 		this.digipenSprite = data.digipenSprite;
 		this.digipenIconnum = data.digipenIconnum;
-		this.modified = data.modified === 'DigiPen' ? 'DigiPen' : undefined;
+		this.modified = data.modified || undefined;
+		this.title = data.title || undefined;
+		this.dexEntry = data.dexEntry || undefined;
+		this.habitat = data.habitat || undefined;
+		if (typeof data.notes === 'string' && data.notes.trim()) {
+			this.notes = data.notes.trim();
+		} else if (Array.isArray(data.notes) && data.notes.length) {
+			this.notes = data.notes.filter(Boolean).map(String).join('\n').trim() || undefined;
+		} else {
+			this.notes = undefined;
+		}
+		this.contributors = (data.contributors && data.contributors.length) ? data.contributors : undefined;
+		if (data.artSource && (data.artSource.artist || data.artSource.url)) {
+			this.artSource = {
+				artist: data.artSource.artist,
+				url: data.artSource.url,
+			};
+		} else {
+			this.artSource = undefined;
+		}
 		this.baseForme = data.baseForme || '';
 
 		this.num = data.num || 0;
