@@ -18,7 +18,7 @@
  * @license MIT
  */
 
-import { Pokemon, type ServerPokemon } from "./battle";
+import type { Pokemon, ServerPokemon } from "./battle";
 import {
 	BattleAvatarNumbers, BattleBaseSpeciesChart, BattlePokemonIconIndexes, BattlePokemonIconIndexesLeft,
 	Ability, Item, Move, Species, PureEffect, type ID, type Type,
@@ -84,6 +84,24 @@ export function toID(text: any) {
 
 export function toUserid(text: any) {
 	return toID(text);
+}
+
+/**
+ * Returns whether `pokemon` is a live battle Pokémon object (nickname, shininess, Dynamax,
+ * Transform, etc.) as opposed to dex `Species` data or a species id string.
+ *
+ * `getSpriteData` accepts both; battle instances need extra handling. We cannot use
+ * `instanceof Pokemon` in bundles that ship without `battle.ts` (i.e. `battledata.js` for the dex),
+ * so we recognize battle instances by the shape they always have: `getSpeciesForme` and `volatiles`.
+ */
+function isBattlePokemonForSprite(pokemon: Pokemon | Species | string): pokemon is Pokemon {
+	if (typeof pokemon !== 'object' || pokemon === null) return false;
+
+	const candidate = pokemon as { getSpeciesForme?: unknown; volatiles?: unknown };
+	if (typeof candidate.getSpeciesForme !== 'function') return false;
+	if (!('volatiles' in candidate)) return false;
+
+	return true;
 }
 
 type Comparable = number | string | boolean | Comparable[] | { reverse: Comparable };
@@ -588,7 +606,7 @@ export const Dex = new class implements ModdedDex {
 	} = { gen: 6 }) {
 		const mechanicsGen = options.gen || 6;
 		let isDynamax = !!options.dynamax;
-		if (pokemon instanceof Pokemon) {
+		if (isBattlePokemonForSprite(pokemon)) {
 			if (pokemon.volatiles.transform) {
 				options.shiny = pokemon.volatiles.transform[2];
 				options.gender = pokemon.volatiles.transform[3];

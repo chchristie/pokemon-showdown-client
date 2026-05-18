@@ -1642,12 +1642,16 @@ process.stdout.write("Building `data/pokedex.js`... ");
 	const parentDex = Dex.mod(digiDex.parentMod || 'base');
 
 	for (const id in DigiPenModPokedex) {
+		const modRow = DigiPenModPokedex[id];
 		// Inject optional digipenIconnum and digipenSprite fields onto existing base dex pokemon that define it
 		if (Pokedex[id]) {
+			if (modRow && modRow.modified === 'DigiPen') {
+				Pokedex[id].modified = 'DigiPen';
+			}
 			if (digiDex.data.Pokedex[id] === parentDex.data.Pokedex[id]) continue; // skip if nothing new to inject
 			const species = digiDex.species.get(id);
 			if (species.digipenSprite) Pokedex[id].digipenSprite = true;
-			if (species.digipenIconnum !== undefined) Pokedex[id].digipenIconnum = species.digipenIconnum;	
+			if (species.digipenIconnum !== undefined) Pokedex[id].digipenIconnum = species.digipenIconnum;
 			continue;
 		}
 		// Inject new DigiPen pokemon
@@ -1673,6 +1677,13 @@ process.stdout.write("Building `data/pokedex.js`... ");
 		}
 		if (species.prevo) Pokedex[id].prevo = species.prevo;
 		if (species.evos && species.evos.length) Pokedex[id].evos = species.evos;
+		if (species.prevo) {
+			if (species.evoType) Pokedex[id].evoType = species.evoType;
+			if (species.evoLevel != null) Pokedex[id].evoLevel = species.evoLevel;
+			if (species.evoMove) Pokedex[id].evoMove = species.evoMove;
+			if (species.evoItem) Pokedex[id].evoItem = species.evoItem;
+			if (species.evoCondition) Pokedex[id].evoCondition = species.evoCondition;
+		}
 		if (species.requiredItem) Pokedex[id].requiredItem = species.requiredItem;
 		if (species.requiredItems) Pokedex[id].requiredItems = species.requiredItems;
 		if (species.otherFormes && species.otherFormes.length) Pokedex[id].otherFormes = species.otherFormes;
@@ -1681,6 +1692,9 @@ process.stdout.write("Building `data/pokedex.js`... ");
 		if (species.digipenIconnum !== undefined) Pokedex[id].digipenIconnum = species.digipenIconnum;
 		const formatsEntry = DigiPenModFormatsData[id];
 		if (formatsEntry && formatsEntry.tier) Pokedex[id].tier = formatsEntry.tier;
+		if (modRow && modRow.modified === 'DigiPen') {
+			Pokedex[id].modified = 'DigiPen';
+		}
 	}
 	const buf = 'exports.BattlePokedex = ' + es3stringify(Pokedex) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/pokedex.js', buf);
@@ -1726,6 +1740,12 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (move.desc) Moves[id].desc = move.desc;
 		if (move.shortDesc) Moves[id].shortDesc = move.shortDesc;
 	}
+	const DigiPenModMoves = DigipenModDex.data.Moves;
+	for (const id in DigiPenModMoves) {
+		if (Moves[id] && DigiPenModMoves[id].modified === 'DigiPen') {
+			Moves[id].modified = 'DigiPen';
+		}
+	}
 	const buf = 'exports.BattleMovedex = ' + es3stringify(Moves) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/moves.js', buf);
 	fs.writeFileSync('play.pokemonshowdown.com/data/moves.json', JSON.stringify(Moves));
@@ -1754,6 +1774,12 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (item.megaEvolves) Items[id].megaEvolves = item.megaEvolves;
 		if (item.itemUser) Items[id].itemUser = item.itemUser;
 	}
+	const DigiPenModItems = Dex.mod('gen9digipen').data.Items;
+	for (const id in DigiPenModItems) {
+		if (Items[id] && DigiPenModItems[id].modified === 'DigiPen') {
+			Items[id].modified = 'DigiPen';
+		}
+	}
 	const buf = 'exports.BattleItems = ' + es3stringify(Items) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/items.js', buf);
 }
@@ -1776,6 +1802,12 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		Abilities[id] = { num: ability.num, name: ability.name, isNonstandard: "DigiPen" };
 		if (ability.desc) Abilities[id].desc = ability.desc;
 		if (ability.shortDesc) Abilities[id].shortDesc = ability.shortDesc;
+	}
+	const DigiPenModAbilities = Dex.mod('gen9digipen').data.Abilities;
+	for (const id in DigiPenModAbilities) {
+		if (Abilities[id] && DigiPenModAbilities[id].modified === 'DigiPen') {
+			Abilities[id].modified = 'DigiPen';
+		}
 	}
 	const buf = 'exports.BattleAbilities = ' + es3stringify(Abilities) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/abilities.js', buf);
@@ -1827,9 +1859,25 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 
 {
 	const Learnsets = requireNoCache('../caches/pokemon-showdown/dist/data/learnsets.js').Learnsets;
-	const buf = 'exports.BattleLearnsets = ' + es3stringify(Learnsets) + ';';
+	// Base dist/learnsets has no mod-only species (e.g. typhlosiondigipen). The dex and
+	// other UI read BattleLearnsets from this file, so merge gen9digipen in. Combine
+	// learnset maps so mod moves layer on top of base (mod shallow-merge replaces learnset
+	// in sim data, but we want full pool + DigiPen moves for the client file).
+	const merged = JSON.parse(JSON.stringify(Learnsets));
+	const DigipenLearnsets = Dex.mod('gen9digipen').data.Learnsets;
+	for (const id in DigipenLearnsets) {
+		const entry = DigipenLearnsets[id];
+		if (!merged[id]) merged[id] = {};
+		if (entry.learnset) {
+			merged[id].learnset = Object.assign({}, merged[id].learnset, entry.learnset);
+		}
+		if (entry.eventData) merged[id].eventData = entry.eventData;
+		if (entry.eventOnly) merged[id].eventOnly = entry.eventOnly;
+		if (entry.encounters) merged[id].encounters = entry.encounters;
+	}
+	const buf = 'exports.BattleLearnsets = ' + es3stringify(merged) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/learnsets.js', buf);
-	fs.writeFileSync('play.pokemonshowdown.com/data/learnsets.json', JSON.stringify(Learnsets));
+	fs.writeFileSync('play.pokemonshowdown.com/data/learnsets.json', JSON.stringify(merged));
 }
 
 /*********************************************************
