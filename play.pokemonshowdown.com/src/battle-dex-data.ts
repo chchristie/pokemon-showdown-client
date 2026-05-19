@@ -1534,7 +1534,7 @@ export class Species implements Effect {
 	readonly formeid: string;
 	readonly spriteid: string;
 	readonly digipenSprite?: boolean;
-	readonly digipenIconnum?: number;
+	readonly digipenIcon?: boolean;
 	readonly modified?: string;
 	readonly title?: string;
 	readonly dexEntry?: string;
@@ -1605,7 +1605,7 @@ export class Species implements Effect {
 		if (this.spriteid === 'rockruff-dusk') this.spriteid = 'rockruff';
 		if (this.spriteid.endsWith('-')) this.spriteid = this.spriteid.slice(0, -1);
 		this.digipenSprite = data.digipenSprite;
-		this.digipenIconnum = data.digipenIconnum;
+		this.digipenIcon = data.digipenIcon || false;
 		this.modified = data.modified || undefined;
 		this.title = data.title || undefined;
 		this.dexEntry = data.dexEntry || undefined;

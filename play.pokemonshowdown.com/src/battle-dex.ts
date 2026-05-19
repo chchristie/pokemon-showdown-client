@@ -814,10 +814,10 @@ export const Dex = new class implements ModdedDex {
 	}
 
 	getPokemonIconNum(id: ID, isFemale?: boolean, facingLeft?: boolean) {
-		const pokedexEntry = window.BattlePokedex?.[id] as { digipenIconnum?: number; iconnum?: number } | undefined;
+		/*const pokedexEntry = window.BattlePokedex?.[id] as { digipenIconnum?: number; iconnum?: number } | undefined;
 		if (pokedexEntry && typeof pokedexEntry.digipenIconnum === 'number') {
 			return pokedexEntry.digipenIconnum;
-		}
+		}*/
 		let num = 0;
 		if (window.BattlePokemonSprites?.[id]?.num) {
 			num = BattlePokemonSprites[id].num;
@@ -868,15 +868,20 @@ export const Dex = new class implements ModdedDex {
 		}
 		let num = this.getPokemonIconNum(id, pokemon?.gender === 'F', facingLeft);
 
-		const pokedexEntry = window.BattlePokedex?.[id] as { digipenIconnum?: number } | undefined;
-		const useDigipenIconSheet = pokedexEntry && typeof pokedexEntry.digipenIconnum === 'number';
-		const prefix = useDigipenIconSheet ? Dex.resourcePrefixDigipen : Dex.resourcePrefix;
+		let fainted = ((pokemon as Pokemon | ServerPokemon)?.fainted ?
+		`;opacity:.3;filter:grayscale(100%) brightness(.5)` : ``);
+
+		// Handle DigiPen icons separately
+		const pokedexEntry = window.BattlePokedex?.[id] as { digipenIcon?: boolean } | undefined;
+		const species = Dex.species.get(id);
+		if (pokedexEntry?.digipenIcon) {
+			const url = Dex.resourcePrefixDigipen + 'sprites/pokemonicons/' + species.spriteid + '.png';
+			return `background:transparent url(${url}) no-repeat scroll 0px 0px${fainted}`;
+		}
 
 		let top = Math.floor(num / 12) * 30;
 		let left = (num % 12) * 40;
-		let fainted = ((pokemon as Pokemon | ServerPokemon)?.fainted ?
-			`;opacity:.3;filter:grayscale(100%) brightness(.5)` : ``);
-		return `background:transparent url(${prefix}sprites/pokemonicons-sheet.png?v21) no-repeat scroll -${left}px -${top}px${fainted}`;
+		return `background:transparent url(${Dex.resourcePrefix}sprites/pokemonicons-sheet.png?v21) no-repeat scroll -${left}px -${top}px${fainted}`;
 	}
 
 	getTeambuilderSpriteData(pokemon: any, dex: ModdedDex = Dex): TeambuilderSpriteData {
@@ -977,11 +982,16 @@ export const Dex = new class implements ModdedDex {
 		let num = 0;
 		if (typeof item === 'string' && window.BattleItems) item = window.BattleItems[toID(item)];
 		if (item?.spritenum) num = item.spritenum;
-		let prefix = item?.isNonstandard?.startsWith('DigiPen') ? Dex.resourcePrefixDigipen : Dex.resourcePrefix;
+
+		// Handle DigiPen icons separately
+		if (item?.isNonstandard?.startsWith('DigiPen')) {
+			const url = Dex.resourcePrefixDigipen + 'sprites/itemicons/' + item.id + '.png';
+			return `background:transparent url(${url}) no-repeat scroll 0px 0px`;
+		}
 
 		let top = Math.floor(num / 16) * 24;
 		let left = (num % 16) * 24;
-		return `background:transparent url(${prefix}sprites/itemicons-sheet.png?v1) no-repeat scroll -${left}px -${top}px`;
+		return `background:transparent url(${Dex.resourcePrefix}sprites/itemicons-sheet.png?v1) no-repeat scroll -${left}px -${top}px`;
 	}
 
 	getTypeIcon(type: string | null, b?: boolean) { // b is just for utilichart.js

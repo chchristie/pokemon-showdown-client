@@ -1454,7 +1454,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 
 	// Client relevant data that should be overridden by past gens and mods
 	const overrideSpeciesKeys = [
-		'abilities', 'baseStats', 'cosmeticFormes', 'digipenIconnum', 'digipenSprite', 'evos', 'formeOrder', 'gender', 'isNonstandard', 'otherFormes', 'prevo', 'requiredItems', 'types', 'unreleasedHidden',
+		'abilities', 'baseStats', 'cosmeticFormes', 'digipenIcon', 'digipenSprite', 'evos', 'formeOrder', 'gender', 'isNonstandard', 'otherFormes', 'prevo', 'requiredItems', 'types', 'unreleasedHidden',
 	];
 	const overrideMoveKeys = [
 		'accuracy', 'basePower', 'category', 'desc', 'flags', 'isNonstandard', 'pp', 'priority', 'shortDesc', 'target', 'type',
@@ -1637,10 +1637,8 @@ process.stdout.write("Building `data/pokedex.js`... ");
 	}
 	
 	// Inject Digipen dex into BattlePokedex so the client can look
-	const DigiPenModPokedex = Dex.mod('gen9digipen').data.Pokedex;
 	const DigiPenModFormatsData = Dex.mod('gen9digipen').data.FormatsData;
 	const digiDex = Dex.mod('gen9digipen');
-	const parentDex = Dex.mod(digiDex.parentMod || 'base');
 
 	function copyDigiPenSpeciesDexMeta(entry, species) {
 		if (species.title) entry.title = species.title;
@@ -1653,20 +1651,17 @@ process.stdout.write("Building `data/pokedex.js`... ");
 		}
 	}
 
-	for (const id in DigiPenModPokedex) {
-		const modRow = DigiPenModPokedex[id];
+	for (const id in digiDex.data.Pokedex) {
+		const species = digiDex.species.get(id);
 		// Inject digipenIconnum, digipenSprite, and dex data fields onto existing base dex pokemon that define it
 		if (Pokedex[id]) {
-			if (digiDex.data.Pokedex[id] === parentDex.data.Pokedex[id]) continue; // skip if nothing new to inject
-			const species = digiDex.species.get(id);
 			if (species.digipenSprite) Pokedex[id].digipenSprite = true;
-			if (species.digipenIconnum !== undefined) Pokedex[id].digipenIconnum = species.digipenIconnum;
+			if (species.digipenIcon !== undefined) Pokedex[id].digipenIcon = species.digipenIcon;
 			if (species.modified) Pokedex[id].modified = species.modified;
 			copyDigiPenSpeciesDexMeta(Pokedex[id], species);
 			continue;
 		}
 		// Inject new DigiPen pokemon
-		const species = Dex.mod('gen9digipen').species.get(id);
 		Pokedex[id] = {
 			num: species.num,
 			name: species.name,
@@ -1695,7 +1690,7 @@ process.stdout.write("Building `data/pokedex.js`... ");
 		if (species.otherFormes && species.otherFormes.length) Pokedex[id].otherFormes = species.otherFormes;
 		if (species.formeOrder && species.formeOrder.length) Pokedex[id].formeOrder = species.formeOrder;
 		if (species.digipenSprite) Pokedex[id].digipenSprite = true;
-		if (species.digipenIconnum) Pokedex[id].digipenIconnum = species.digipenIconnum;
+		if (species.digipenIcon) Pokedex[id].digipenIcon = species.digipenIcon;
 		if (species.modified) Pokedex[id].modified = species.modified;
 		const formatsEntry = DigiPenModFormatsData[id];
 		if (formatsEntry && formatsEntry.tier) Pokedex[id].tier = formatsEntry.tier;
@@ -1725,10 +1720,15 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 	// Inject DigiPen-only moves into BattleMovedex so the client can display
 	// tooltips and descriptions. isNonstandard: "DigiPen" is set so that
 	// battle-dex-search can filter them out in non-DigiPen formats.
-	const DigipenModDex = Dex.mod('gen9digipen');
-	for (const id in DigipenModDex.data.Moves) {
-		if (Moves[id]) continue; // skip base-game moves that the mod happens to override
-		const move = DigipenModDex.moves.get(id);
+	const digiDex = Dex.mod('gen9digipen');
+	for (const id in digiDex.data.Moves) {
+		const move = digiDex.moves.get(id);
+		if (Moves[id]) {
+			if (move.modified) Moves[id].modified = move.modified;
+			if (move.dexEntry) Moves[id].dexEntry = move.dexEntry;
+			if (move.contributors && move.contributors.length) Moves[id].contributors = move.contributors;
+			continue;
+		}
 		Moves[id] = {
 			num: move.num,
 			accuracy: move.accuracy,
@@ -1765,10 +1765,20 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (item.shortDesc) Items[id].shortDesc = item.shortDesc;
 	}
 	// Inject DigiPen-only items so the client can display tooltips.
-	for (const id in Dex.mod('gen9digipen').data.Items) {
-		if (Items[id]) continue;
-		const item = Dex.mod('gen9digipen').items.get(id);
-		Items[id] = { num: item.num, name: item.name, isNonstandard: "DigiPen" };
+	const digiDex = Dex.mod('gen9digipen');
+
+	for (const id in digiDex.data.Items) {
+		const item = digiDex.items.get(id);
+		if (Items[id]) {
+			if (item.modified) Items[id].modified = item.modified;
+			if (item.contributors && item.contributors.length) Items[id].contributors = item.contributors;
+			continue;
+		}
+		Items[id] = {
+			num: item.num, 
+			name: item.name, 
+			isNonstandard: "DigiPen" 
+		};
 		if (item.spritenum) Items[id].spritenum = item.spritenum;
 		if (item.desc) Items[id].desc = item.desc;
 		if (item.shortDesc) Items[id].shortDesc = item.shortDesc;
@@ -1794,10 +1804,19 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (ability.shortDesc) Abilities[id].shortDesc = ability.shortDesc;
 	}
 	// Inject DigiPen-only abilities so the client can display tooltips.
-	for (const id in Dex.mod('gen9digipen').data.Abilities) {
-		if (Abilities[id]) continue;
-		const ability = Dex.mod('gen9digipen').abilities.get(id);
-		Abilities[id] = { num: ability.num, name: ability.name, isNonstandard: "DigiPen" };
+	const digiDex = Dex.mod('gen9digipen');
+	for (const id in digiDex.data.Abilities) {
+		const ability = digiDex.abilities.get(id);
+		if (Abilities[id]) {
+			if (ability.modified) Abilities[id].modified = ability.modified;
+			if (ability.contributors && ability.contributors.length) Abilities[id].contributors = ability.contributors;
+			continue;
+		};
+		Abilities[id] = { 
+			num: ability.num, 
+			name: ability.name, 
+			isNonstandard: "DigiPen" 
+		};
 		if (ability.desc) Abilities[id].desc = ability.desc;
 		if (ability.shortDesc) Abilities[id].shortDesc = ability.shortDesc;
 		if (ability.contributors && ability.contributors.length) Abilities[id].contributors = ability.contributors;
