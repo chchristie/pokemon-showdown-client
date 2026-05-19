@@ -430,8 +430,8 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 						// DigiPen Pokemon use tag-based VGC classification with "DigiPen" prefix.
 						if (baseSpecies.tags.includes('Mythical')) return 'DigiPen Mythical';
 						if (baseSpecies.tags.includes('Restricted Legendary')) return 'DigiPen Restricted';
-						if (species.tier === 'NFE') return 'DigiPen NFE';
-						if (species.tier === 'LC') return 'DigiPen LC';
+						if (species.tier === 'DigiPen NFE') return 'DigiPen NFE';
+						if (species.tier === 'DigiPen LC') return 'DigiPen LC';
 						return 'DigiPen Regular';
 					}
 					if (species.isNonstandard && species.isNonstandard !== 'Gigantamax') return 'Illegal';
