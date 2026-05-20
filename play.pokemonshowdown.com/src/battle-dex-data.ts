@@ -1170,6 +1170,7 @@ export class Item implements Effect {
 	readonly isPokeball: boolean;
 	readonly itemUser?: readonly string[];
 	readonly modified?: string;
+	readonly dexEntry?: string;
 	readonly contributors?: readonly string[];
 
 	constructor(id: ID, name: string, data: any) {
@@ -1199,6 +1200,7 @@ export class Item implements Effect {
 		this.isPokeball = !!data.isPokeball;
 		this.itemUser = data.itemUser;
 		this.modified = data.modified || undefined;
+		this.dexEntry = data.dexEntry || undefined;
 		this.contributors = (data.contributors && data.contributors.length) ? data.contributors : undefined;
 
 		if (!this.gen) {

@@ -1786,6 +1786,7 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (item.megaEvolves) Items[id].megaEvolves = item.megaEvolves;
 		if (item.itemUser) Items[id].itemUser = item.itemUser;
 		if (item.modified) Items[id].modified = item.modified;
+		if (item.dexEntry) Items[id].dexEntry = item.dexEntry;
 		if (item.contributors && item.contributors.length) Items[id].contributors = item.contributors;
 	}
 	const buf = 'exports.BattleItems = ' + es3stringify(Items) + ';';
