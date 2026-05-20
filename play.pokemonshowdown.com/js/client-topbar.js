@@ -749,15 +749,24 @@
 	var AvatarsPopup = this.AvatarsPopup = Popup.extend({
 		type: 'semimodal',
 		initialize: function () {
-			var cur = +app.user.get('avatar');
+			var curAvatar = app.user.get('avatar');
 			var buf = '';
 			buf += '<p>Choose an avatar or <button name="close" class="button">Cancel</button></p>';
 
 			buf += '<div class="avatarlist">';
-			for (var i = 1; i <= 293; i++) {
-				if (i === 162 || i === 168) continue;
-				var offset = '-' + (((i - 1) % 16) * 80 + 1) + 'px -' + (Math.floor((i - 1) / 16) * 80 + 1) + 'px';
-				buf += '<button name="setAvatar" value="' + i + '" style="background-position:' + offset + '" class="option pixelated' + (i === cur ? ' cur' : '') + '" title="/avatar ' + i + '"></button>';
+			// DigiPen: extend loop end in battle-dex-data.ts when adding avatars
+			for (var i = 1; i <= 295; i++) {
+				if (i === 162 || i === 168 || i === 294) continue;
+				var avatarId = (window.BattleAvatarNumbers && Object.prototype.hasOwnProperty.call(window.BattleAvatarNumbers, i)) ?
+					window.BattleAvatarNumbers[i] : '' + i;
+				var style;
+				if (avatarId.charAt(0) === '$' || avatarId.charAt(0) === '#') {
+					style = 'background-image:url(' + Dex.resolveAvatar(avatarId) + ');background-position:center;background-size:76px 76px';
+				} else {
+					style = 'background-position:-' + (((i - 1) % 16) * 80 + 1) + 'px -' + (Math.floor((i - 1) / 16) * 80 + 1) + 'px';
+				}
+				var isCur = (avatarId === curAvatar || i === +curAvatar);
+				buf += '<button name="setAvatar" value="' + i + '" style="' + style + '" class="option pixelated' + (isCur ? ' cur' : '') + '" title="/avatar ' + BattleLog.escapeHTML(avatarId) + '"></button>';
 			}
 			buf += '</div><div style="clear:left"></div>';
 

@@ -1085,6 +1085,11 @@ export const BattleAvatarNumbers: { [k: string]: string } = {
 	292: 'bellelba',
 	293: 'benga',
 	294: 'ash',
+	// DigiPen start
+	// Remember to update the loop end index in panel-popups.tsx if you add a new avatar
+	295: '$sans',
+
+	// DigiPen end
 	'#bw2elesa': 'elesa-gen5bw2',
 	'#teamrocket': 'teamrocket',
 	'#yellow': 'yellow',
