@@ -2078,11 +2078,22 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 		moves.sort();
 		sketchMoves.sort();
 
+		let digipenMoves: SearchRow[] = [];
+		let modifiedMoves: SearchRow[] = [];
 		let usableMoves: SearchRow[] = [];
 		let uselessMoves: SearchRow[] = [];
 		for (const id of moves) {
+			const move = dex.moves.get(id as ID);
 			const isUsable = this.moveIsNotUseless(id as ID, species, moves, this.set);
-			if (isUsable) {
+			if (move.isNonstandard === 'DigiPen' && this.formatType?.startsWith('digipen')) {
+				if (!digipenMoves.length) digipenMoves.push(['header', "DigiPen moves"]);
+				digipenMoves.push(['move', id as ID]);
+			}
+			else if (move.modified === 'DigiPen' && this.formatType?.startsWith('digipen')) {
+				if (!modifiedMoves.length) modifiedMoves.push(['header', "Modified moves"]);
+				modifiedMoves.push(['move', id as ID]);
+			}
+			else if (isUsable) {
 				if (!usableMoves.length) usableMoves.push(['header', "Moves"]);
 				usableMoves.push(['move', id as ID]);
 			} else {
@@ -2102,7 +2113,7 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				uselessMoves.push(['move', id as ID]);
 			}
 		}
-		return [...usableMoves, ...uselessMoves];
+		return [...digipenMoves, ...modifiedMoves, ...usableMoves, ...uselessMoves];
 	}
 	filter(row: SearchRow, filters: string[][]) {
 		if (!filters) return true;
