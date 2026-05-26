@@ -582,9 +582,10 @@ abstract class BattleTypedSearch<T extends SearchType> {
 
 	protected formatType: 'doubles' | 'bdsp' | 'bdspdoubles' | 'rs' | 'frlg' | 'bw1' | 'letsgo' | 'metronome' | 'natdex' |
 		'nfe' | 'ssdlc1' | 'ssdlc1doubles' | 'predlc' | 'predlcdoubles' | 'predlcnatdex' | 'svdlc1' | 'svdlc1doubles' |
-		'svdlc1natdex' | 'stadium' | 'lc' | 'legendsza' | 'champions' | null = null;
+		'svdlc1natdex' | 'stadium' | 'lc' | 'legendsza' | 'champions' | 
+		'digipen' | 'digipendoubles' | 'digipennatdex' | 'digipenvgc' |
+		null = null;
 	isDoubles = false;
-	protected isDigiPen = false;
 
 	/**
 	 * Cached copy of what the results list would be with only base filters
@@ -614,130 +615,160 @@ abstract class BattleTypedSearch<T extends SearchType> {
 		} else if (!format) {
 			this.dex = Dex;
 		}
-
-		// Strip 'digipen' prefix BEFORE any other format detection so that
-		// doubles/natdex/vgc detection below works on the clean base format name.
 		if (format.startsWith('digipen')) {
-			this.isDigiPen = true;
 			this.dex = Dex.mod('gen9digipen' as ID);
 			format = format.slice(7) as ID; // remove 'digipen' (7 chars)
-			if (!format) format = 'ou' as ID;
+			switch (format) {
+				case 'singles':
+					this.formatType = 'digipennatdex';
+					break;
+				case 'ou':
+					this.formatType = 'digipen';
+					break;
+				case 'ubers':
+					this.formatType = 'digipen';
+					break;
+				case 'nationaldex':
+					this.formatType = 'digipennatdex';
+					break;
+				case 'nationaldexubers':
+					this.formatType = 'digipennatdex';
+					break;
+				case 'doublesou':
+					this.formatType = 'digipendoubles';
+					break;
+				case 'doublesubers':
+					this.formatType = 'digipendoubles';
+					break;
+				case 'vgc2026regf':
+					this.formatType = 'digipenvgc';
+					break;
+				case 'vgc2026regi':
+					this.formatType = 'digipenvgc';
+					break;
+				default:
+					this.formatType = 'digipen';
+					break;
+			}
+			console.log('format', format, 'formatType', this.formatType);
+		}
+		else {
+			if (format.startsWith('dlc1') && this.dex.gen === 8) {
+				if (format.includes('doubles')) {
+					this.formatType = 'ssdlc1doubles';
+					this.isDoubles = true;
+				} else {
+					this.formatType = 'ssdlc1';
+				}
+				format = format.slice(4) as ID;
+			}
+			if (format.startsWith('predlc')) {
+				if (format.includes('doubles') && !format.includes('nationaldex')) {
+					this.formatType = 'predlcdoubles';
+					this.isDoubles = true;
+				} else if (format.includes('nationaldex')) {
+					this.formatType = 'predlcnatdex';
+				} else {
+					this.formatType = 'predlc';
+				}
+				format = format.slice(6) as ID;
+			}
+			if (format.startsWith('dlc1') && this.dex.gen === 9) {
+				if (format.includes('doubles') && !format.includes('nationaldex')) {
+					this.formatType = 'svdlc1doubles';
+					this.isDoubles = true;
+				} else if (format.includes('nationaldex')) {
+					this.formatType = 'svdlc1natdex';
+				} else {
+					this.formatType = 'svdlc1';
+				}
+				format = format.slice(4) as ID;
+			}
+			if (format.startsWith('stadium')) {
+				this.formatType = 'stadium';
+				format = format.slice(7) as ID;
+				if (!format) format = 'ou' as ID;
+			}
+			if (format.includes('champions')) {
+				this.formatType = 'champions';
+				this.dex = Dex.mod('champions' as ID);
+				format = format.slice(9) as ID;
+				if (format !== 'ou' && format.length > 2) format = 'ubers' as ID;
+			}
+			if (format.startsWith('vgc')) {
+				this.formatType = 'doubles';
+				this.isDoubles = true;
+			}
+			if (format === 'vgc2020') {
+				this.formatType = 'ssdlc1doubles';
+			}
+			if (format.startsWith('vgc2023')) {
+				this.formatType = format.endsWith('rege') ? 'svdlc1doubles' : 'predlcdoubles';
+			}
+			if (format.includes('bdsp')) {
+				if (format.includes('doubles')) {
+					this.formatType = 'bdspdoubles';
+					this.isDoubles = true;
+				} else {
+					this.formatType = 'bdsp';
+				}
+				format = format.slice(4) as ID;
+				this.dex = Dex.mod('gen8bdsp' as ID);
+			}
+			if (format.includes('bw1')) {
+				this.formatType = 'bw1';
+				this.dex = Dex.mod('gen5bw1' as ID);
+			}
+			if (format.includes('adv200')) {
+				this.formatType = 'rs';
+				this.dex = Dex.mod('gen3rs' as ID);
+			}
+			if (format.includes('frlg')) {
+				this.formatType = 'frlg';
+				this.dex = Dex.mod('gen3frlg' as ID);
+				format = format.slice(4) as ID;
+			}
+			if (format === 'partnersincrime') this.formatType = 'doubles';
+			if (format.startsWith('ffa') || format === 'freeforall') this.formatType = 'doubles';
+			if (format.includes('letsgo')) {
+				this.formatType = 'letsgo';
+				this.dex = Dex.mod('gen7letsgo' as ID);
+			}
+			if (format.includes('nationaldex') || format.startsWith('nd') || format.includes('natdex')) {
+				format = (format.startsWith('nd') ? format.slice(2) :
+					format.includes('natdex') ? format.slice(6) : format.slice(11)) as ID;
+				this.formatType = 'natdex';
+				if (!format) format = 'ou' as ID;
+				this.isDoubles = format.includes('doubles');
+			}
+			if (format.includes('doubles') && this.dex.gen > 4 && !this.formatType) {
+				this.formatType = 'doubles';
+				this.isDoubles = true;
+			}
+			if (this.formatType === 'letsgo') format = format.slice(6) as ID;
+			if (format.includes('metronome')) {
+				this.formatType = 'metronome';
+			}
+			if (format.endsWith('nfe')) {
+				format = format.slice(3) as ID;
+				this.formatType = 'nfe';
+				if (!format) format = 'ou' as ID;
+			}
+			if ((format.endsWith('lc') || format.startsWith('lc')) && format !== 'caplc' && !this.formatType) {
+				this.formatType = 'lc';
+			}
+			if (format.endsWith('draft')) {
+				format = format.slice(0, -5) as ID;
+				if (!format) format = 'anythinggoes' as ID;
+			}
+			if (format.includes('legendsza')) {
+				this.formatType = 'legendsza';
+				this.dex = Dex.mod('gen9legendsou' as ID);
+				format = format.slice(9) as ID;
+				if (!format) format = 'ou' as ID;
+			}
 		}
 
-		if (format.startsWith('dlc1') && this.dex.gen === 8) {
-			if (format.includes('doubles')) {
-				this.formatType = 'ssdlc1doubles';
-				this.isDoubles = true;
-			} else {
-				this.formatType = 'ssdlc1';
-			}
-			format = format.slice(4) as ID;
-		}
-		if (format.startsWith('predlc')) {
-			if (format.includes('doubles') && !format.includes('nationaldex')) {
-				this.formatType = 'predlcdoubles';
-				this.isDoubles = true;
-			} else if (format.includes('nationaldex')) {
-				this.formatType = 'predlcnatdex';
-			} else {
-				this.formatType = 'predlc';
-			}
-			format = format.slice(6) as ID;
-		}
-		if (format.startsWith('dlc1') && this.dex.gen === 9) {
-			if (format.includes('doubles') && !format.includes('nationaldex')) {
-				this.formatType = 'svdlc1doubles';
-				this.isDoubles = true;
-			} else if (format.includes('nationaldex')) {
-				this.formatType = 'svdlc1natdex';
-			} else {
-				this.formatType = 'svdlc1';
-			}
-			format = format.slice(4) as ID;
-		}
-		if (format.startsWith('stadium')) {
-			this.formatType = 'stadium';
-			format = format.slice(7) as ID;
-			if (!format) format = 'ou' as ID;
-		}
-		if (format.includes('champions')) {
-			this.formatType = 'champions';
-			this.dex = Dex.mod('champions' as ID);
-			format = format.slice(9) as ID;
-			if (format !== 'ou' && format.length > 2) format = 'ubers' as ID;
-		}
-		if (format.startsWith('vgc')) {
-			this.formatType = 'doubles';
-			this.isDoubles = true;
-		}
-		if (format === 'vgc2020') {
-			this.formatType = 'ssdlc1doubles';
-		}
-		if (format.startsWith('vgc2023')) {
-			this.formatType = format.endsWith('rege') ? 'svdlc1doubles' : 'predlcdoubles';
-		}
-		if (format.includes('bdsp')) {
-			if (format.includes('doubles')) {
-				this.formatType = 'bdspdoubles';
-				this.isDoubles = true;
-			} else {
-				this.formatType = 'bdsp';
-			}
-			format = format.slice(4) as ID;
-			this.dex = Dex.mod('gen8bdsp' as ID);
-		}
-		if (format.includes('bw1')) {
-			this.formatType = 'bw1';
-			this.dex = Dex.mod('gen5bw1' as ID);
-		}
-		if (format.includes('adv200')) {
-			this.formatType = 'rs';
-			this.dex = Dex.mod('gen3rs' as ID);
-		}
-		if (format.includes('frlg')) {
-			this.formatType = 'frlg';
-			this.dex = Dex.mod('gen3frlg' as ID);
-			format = format.slice(4) as ID;
-		}
-		if (format === 'partnersincrime') this.formatType = 'doubles';
-		if (format.startsWith('ffa') || format === 'freeforall') this.formatType = 'doubles';
-		if (format.includes('letsgo')) {
-			this.formatType = 'letsgo';
-			this.dex = Dex.mod('gen7letsgo' as ID);
-		}
-		if (format.includes('nationaldex') || format.startsWith('nd') || format.includes('natdex')) {
-			format = (format.startsWith('nd') ? format.slice(2) :
-				format.includes('natdex') ? format.slice(6) : format.slice(11)) as ID;
-			this.formatType = 'natdex';
-			if (!format) format = 'ou' as ID;
-			this.isDoubles = format.includes('doubles');
-		}
-		if (format.includes('doubles') && this.dex.gen > 4 && !this.formatType) {
-			this.formatType = 'doubles';
-			this.isDoubles = true;
-		}
-		if (this.formatType === 'letsgo') format = format.slice(6) as ID;
-		if (format.includes('metronome')) {
-			this.formatType = 'metronome';
-		}
-		if (format.endsWith('nfe')) {
-			format = format.slice(3) as ID;
-			this.formatType = 'nfe';
-			if (!format) format = 'ou' as ID;
-		}
-		if ((format.endsWith('lc') || format.startsWith('lc')) && format !== 'caplc' && !this.formatType) {
-			this.formatType = 'lc';
-		}
-		if (format.endsWith('draft')) {
-			format = format.slice(0, -5) as ID;
-			if (!format) format = 'anythinggoes' as ID;
-		}
-		if (format.includes('legendsza')) {
-			this.formatType = 'legendsza';
-			this.dex = Dex.mod('gen9legendsou' as ID);
-			format = format.slice(9) as ID;
-			if (!format) format = 'ou' as ID;
-		}
 		this.format = format;
 
 		this.species = '' as ID;
@@ -875,16 +906,15 @@ abstract class BattleTypedSearch<T extends SearchType> {
 	}
 	protected canLearn(speciesid: ID, moveid: ID) {
 		const move = this.dex.moves.get(moveid);
-		if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) {
+		if (move.isNonstandard === 'DigiPen' && !this.formatType?.startsWith('digipen')) {
 			return false;
 		}
 		if ((move.isNonstandard === 'DigiPen Past' || move.isNonstandard === 'DigiPen Future') &&
-				!(this.isDigiPen && this.formatType === 'natdex')) {
+				!(this.formatType === 'digipennatdex')) {
 			return false;
 		}
 		if ((this.formatType === 'natdex' || this.formatType === 'legendsza') &&
-			move.isNonstandard && move.isNonstandard !== 'Past' &&
-			!move.isNonstandard.startsWith('DigiPen')) {
+			move.isNonstandard && move.isNonstandard !== 'Past') {
 			return false;
 		}
 		const gen = this.dex.gen;
@@ -956,21 +986,12 @@ abstract class BattleTypedSearch<T extends SearchType> {
 			this.formatType === 'stadium' ? `gen${gen}stadium${gen > 1 ? gen : ''}` :
 			this.formatType === 'legendsza' ? `gen9legendsou` :
 			this.formatType === 'champions' ? `champions` :
+			this.formatType === 'digipen' ? 'gen9digipen' :
+			this.formatType === 'digipendoubles' ? 'gen9digipendoubles' :
+			this.formatType === 'digipennatdex' ? 'gen9digipennatdex' :
+			this.formatType === 'digipenvgc' ? 'gen9digipenvgc' :
 			`gen${gen}`;
-		if (this.isDigiPen) {
-			const format = this.format;
-			let digiTableKey: string;
-			if (this.formatType === 'natdex') {
-				digiTableKey = 'gen9digipennatdex';
-			} else if (format.startsWith('vgc')) {
-				digiTableKey = 'gen9digipenvgc';
-			} else if (this.formatType?.includes('doubles') || format.includes('doubles')) {
-				digiTableKey = 'gen9digipendoubles';
-			} else {
-				digiTableKey = 'gen9digipen';
-			}
-			if (table?.[digiTableKey]) table = table[digiTableKey];
-		} else if (table?.[tableKey]) {
+		if (table?.[tableKey]) {
 			table = table[tableKey];
 		}
 		if (!table) return pokemon.tier;
@@ -1069,17 +1090,14 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 			table = table[`gen${dex.gen}`];
 		} else if (this.formatType === 'champions') {
 			table = table[`champions`];
-		} else if (this.isDigiPen) {
-			// Select the correct DigiPen table variant before any further narrowing.
-			if (this.formatType === 'natdex') {
-				table = table['gen9digipennatdex'] || table;
-			} else if (isVGCOrBS) {
-				table = table['gen9digipenvgc'] || table;
-			} else if (this.formatType?.includes('doubles') || format.includes('doubles') || isVGCOrBS) {
-				table = table['gen9digipendoubles'] || table;
-			} else {
-				table = table['gen9digipen'] || table;
-			}
+		} else if (this.formatType === 'digipen') {	
+			table = table['gen9digipen'];
+		} else if (this.formatType === 'digipendoubles') {
+			table = table['gen9digipendoubles'];
+		} else if (this.formatType === 'digipennatdex') {
+			table = table['gen9digipennatdex'];
+		} else if (this.formatType === 'digipenvgc') {
+			table = table['gen9digipenvgc'];
 		} else if (isVGCOrBS) {
 			table = table[`gen${dex.gen}vgc`];
 		} else if (dex.gen === 9 && isHackmons && !this.formatType) {
@@ -1154,26 +1172,53 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 		}
 		let tierSet: SearchRow[] = table.tierSet;
 		let slices: { [k: string]: number } = table.formatSlices;
-		if (this.isDigiPen) {
-			// DigiPen formats use their own tier-section slices that interleave
-			// DigiPen-specific headers before the standard tiers.
-			if (isVGCOrBS) {
-				// VGC Reg I shows Restricted+ (no Mythicals); Reg F shows Regular+ (same as standard VGC logic).
-				if (format.endsWith('regi') || format === 'vgc2022' || format.endsWith('regg')) {
-					tierSet = tierSet.slice(slices['DigiPen Restricted'] ?? 0);
-				} else {
-					tierSet = tierSet.slice(slices['DigiPen Regular'] ?? slices.Regular ?? 0);
-				}
-			} else if (format === 'ubers' || format === 'uber' || format === 'doublesubers') {
-				// Ubers shows everything from DigiPen Uber
-				tierSet = tierSet.slice(slices['DigiPen Uber'] ?? slices['DigiPen DUber'] ?? 0);
-			} else if (format === 'lc' || format === 'lc' || format.startsWith('lc') || format.endsWith('lc')) {
-				// LC shows from DigiPen LC
-				tierSet = tierSet.slice(slices['DigiPen LC'] ?? slices.LC ?? 0);
+		// DigiPen formats use their own tier-section slices that interleave
+		// DigiPen-specific headers before the standard tiers.
+		const concatDigiPenTiers = (...sections: [string, string][]) => {
+			const rows: SearchRow[] = [];
+			for (const [startKey, endKey] of sections) {
+				const start = slices[startKey] ?? 0;
+				const end = slices[endKey] ?? tierSet.length;
+				if (start < end) rows.push(...tierSet.slice(start, end));
+			}
+			return rows;
+		};
+		if (this.formatType === 'digipenvgc') {
+			// VGC Reg I shows Restricted+ (no Mythicals); Reg F shows Regular+ (same as standard VGC logic).
+			if (format.endsWith('regi') || format.endsWith('regg')) {
+				tierSet = tierSet.slice(slices['DigiPen Restricted'] ?? 0);
 			} else {
-				// OU, Doubles OU, NatDex OU and similar: start at "DigiPen" tier
-				// (DigiPen Uber and DUber are banned in these formats)
-				tierSet = tierSet.slice(slices['DigiPen'] ?? slices.OU ?? slices.DOU ?? 0);
+				tierSet = tierSet.slice(slices['DigiPen Regular'] ?? slices.Regular ?? 0);
+			}
+		} else if (this.formatType === 'digipen' || this.formatType === 'digipennatdex') {
+			if (format === 'singles') {
+				tierSet = concatDigiPenTiers(
+					['DigiPen Uber', 'Uber'],
+					['DigiPen', 'OU'],
+					['DigiPen NFE', 'NFE'],
+					['DigiPen LC', 'LC'],
+				);
+			}
+			else if (format.includes('ubers')) {
+				tierSet = tierSet.slice(slices['DigiPen Uber'] ?? 0);
+			}
+			else {
+				tierSet = tierSet.slice(slices['DigiPen'] ?? slices.OU ?? 0);
+			}
+		} else if (this.formatType === 'digipendoubles') {
+			if (format === 'doubles') {
+				tierSet = concatDigiPenTiers(
+					['DigiPen DUber', 'DUber'],
+					['DigiPen', 'DOU'],
+					['DigiPen NFE', 'NFE'],
+					['DigiPen LC', 'LC'],
+				);
+			}
+			else if (format === 'doublesou') {
+				tierSet = tierSet.slice(slices['DigiPen'] ?? slices.DOU ?? 0);
+			}
+			else if (format === 'doublesubers') {
+				tierSet = tierSet.slice(slices['DigiPen DUber'] ?? 0);
 			}
 		} else if (format === 'ubers' || format === 'uber' || format === 'ubersuu' || format === 'nationaldexdoubles') {
 			tierSet = tierSet.slice(slices.Uber);
@@ -1462,19 +1507,14 @@ class BattleItemSearch extends BattleTypedSearch<'item'> {
 	}
 	getDefaultResults(): SearchRow[] {
 		let table = BattleTeambuilderTable;
-		if (this.isDigiPen) {
-			if (this.formatType === 'natdex') {
-				table = table['gen9digipennatdex'] || table;
-			} else if (this.formatType?.includes('doubles')) {
-				// VGC and doubles both set formatType to 'doubles'
-				if (this.format.startsWith('vgc')) {
-					table = table['gen9digipenvgc'] || table;
-				} else {
-					table = table['gen9digipendoubles'] || table;
-				}
-			} else {
-				table = table['gen9digipen'] || table;
-			}
+		if (this.formatType === 'digipennatdex') {
+			table = table['gen9digipennatdex'];
+		} else if (this.formatType === 'digipen') {
+			table = table['gen9digipen'];
+		} else if (this.formatType === 'digipendoubles') {
+			table = table['gen9digipendoubles'];
+		} else if (this.formatType === 'digipenvgc') {
+			table = table['gen9digipenvgc'];
 		} else if (this.formatType?.startsWith('bdsp')) {
 			table = table['gen8bdsp'];
 		} else if (this.formatType === 'bw1') {
@@ -1910,11 +1950,11 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				if (this.formatType !== 'natdex' && this.formatType !== 'legendsza' && move.isNonstandard === "Past") {
 					continue;
 				}
-				if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) {
+				if (move.isNonstandard === 'DigiPen' && !this.formatType?.startsWith('digipen')) {
 					continue;
 				}
 				if ((move.isNonstandard === 'DigiPen Past' || move.isNonstandard === 'DigiPen Future') &&
-					!(this.isDigiPen && this.formatType === 'natdex')) {
+					!(this.formatType === 'digipennatdex')) {
 					continue;
 				}
 				if (
@@ -1951,7 +1991,7 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 		// the base gen9 learnset. The DigiPen learnset table only stores additions
 		// (custom moves) so we loop through it separately to avoid replacing the
 		// full base learnset.
-		if (this.isDigiPen) {
+		if (this.formatType?.startsWith('digipen')) {
 			let digiLearnsetid = this.firstLearnsetid(species.id);
 			while (digiLearnsetid) {
 				const digiLearnset = (BattleTeambuilderTable as any)['gen9digipen']?.learnsets?.[digiLearnsetid];
@@ -1969,9 +2009,9 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				if (!format.startsWith('cap') && (id === 'paleowave' || id === 'shadowstrike')) continue;
 				const move = dex.moves.get(id);
 				if (move.gen > dex.gen || !move.exists) continue;
-			if (move.isNonstandard === 'DigiPen' && !this.isDigiPen) continue;
+			if (move.isNonstandard === 'DigiPen' && !this.formatType?.startsWith('digipen')) continue;
 			if ((move.isNonstandard === 'DigiPen Past' || move.isNonstandard === 'DigiPen Future') &&
-				!(this.isDigiPen && this.formatType === 'natdex')) continue;
+				!(this.formatType === 'digipennatdex')) continue;
 			if (sketch) {
 				if (move.flags['nosketch'] || move.isMax || move.isZ) continue;
 				if (move.isNonstandard && move.isNonstandard !== 'Past' && move.isNonstandard !== 'DigiPen') continue;

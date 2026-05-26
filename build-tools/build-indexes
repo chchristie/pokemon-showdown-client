@@ -8,14 +8,15 @@ const child_process = require("child_process");
 const rootDir = path.resolve(__dirname, '..');
 process.chdir(rootDir);
 
+const branch = 'master';
 if (!fs.existsSync('caches/pokemon-showdown')) {
-	child_process.execSync('git clone https://github.com/chchristie/pokemon-showdown', {
+	child_process.execSync(`git clone -b ${branch} https://github.com/chchristie/pokemon-showdown`, {
 		cwd: 'caches',
 	});
 }
 
 process.stdout.write("Syncing data from Git repository... ");
-child_process.execSync('git pull', { cwd: 'caches/pokemon-showdown' });
+child_process.execSync(`git pull origin ${branch}`, { cwd: 'caches/pokemon-showdown' });
 child_process.execSync('npm run build', { cwd: 'caches/pokemon-showdown' });
 console.log("DONE");
 
@@ -603,12 +604,14 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['gen9digipenvgc'].tiers = tiers;
 			BattleTeambuilderTable['gen9digipenvgc'].items = items;
 			BattleTeambuilderTable['gen9digipenvgc'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9digipenvgc'].metagameBans = metagameBans;
 			BattleTeambuilderTable['gen9digipenvgc'].formatSlices = formatSlices;
 		} else if (isDigiPenDoubles) {
 			BattleTeambuilderTable['gen9digipendoubles'] = {};
 			BattleTeambuilderTable['gen9digipendoubles'].tiers = tiers;
 			BattleTeambuilderTable['gen9digipendoubles'].items = items;
 			BattleTeambuilderTable['gen9digipendoubles'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9digipendoubles'].metagameBans = metagameBans;
 			BattleTeambuilderTable['gen9digipendoubles'].formatSlices = formatSlices;
 		} else if (isVGC) {
 			BattleTeambuilderTable[gen + 'vgc'] = {};
@@ -639,12 +642,14 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['gen9digipen'].tiers = tiers;
 			BattleTeambuilderTable['gen9digipen'].items = items;
 			BattleTeambuilderTable['gen9digipen'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9digipen'].metagameBans = metagameBans;
 			BattleTeambuilderTable['gen9digipen'].formatSlices = formatSlices;
 		} else if (isDigiPenNatDex) {
 			BattleTeambuilderTable['gen9digipennatdex'] = {};
 			BattleTeambuilderTable['gen9digipennatdex'].tiers = tiers;
 			BattleTeambuilderTable['gen9digipennatdex'].items = items;
 			BattleTeambuilderTable['gen9digipennatdex'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9digipennatdex'].metagameBans = metagameBans;
 			BattleTeambuilderTable['gen9digipennatdex'].formatSlices = formatSlices;
 		} else if (isLegendsZA) {
 			BattleTeambuilderTable['gen9legendsou'] = {};
@@ -740,7 +745,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			} else if (tier === "NFE") {
 				tiers.push(['header', "NFEs not in a higher tier"]);
 			} else if (tier === "DigiPen NFE") {
-				tiers.push(['header', "DigiPen NFEs not in a higher tier"]);
+				tiers.push(['header', "DigiPen NFEs"]);
 			} else {
 				tiers.push(['header', tier]);
 			}
@@ -816,8 +821,8 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			};
 			for (const id in overrideTier) {
 				const sp = Dex.mod(speciesMod).species.get(id);
-				if (sp.isNonstandard === 'DigiPen') {
-					const rawTier = isDigiPenNatDex ? (sp.natDexTier || sp.tier) : sp.tier;
+				if (sp.isNonstandard === 'DigiPen' || sp.isNonstandard === 'DigiPen Past' || sp.isNonstandard === 'DigiPen Future') {
+					const rawTier = isDigiPenNatDex ? sp.natDexTier : sp.tier;
 					overrideTier[id] = digipenSinglesTierLabel(rawTier);
 				}
 			}
