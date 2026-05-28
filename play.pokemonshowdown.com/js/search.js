@@ -71,7 +71,7 @@
 		this.resultSet = this.engine.results;
 		if (firstElem) {
 			this.resultSet = [[this.engine.typedSearch.searchType, firstElem]].concat(this.resultSet);
-			if (this.resultSet.length > 1 && ['sortpokemon', 'sortmove'].includes(this.resultSet[1][0])) {
+			if (this.resultSet.length > 1 && ['sortpokemon', 'sortmove', 'sortability', 'sortitem'].includes(this.resultSet[1][0])) {
 				var sortRow = this.resultSet[1];
 				this.resultSet[1] = this.resultSet[0];
 				this.resultSet[0] = sortRow;
@@ -200,6 +200,10 @@
 			return this.renderPokemonSortRow();
 		case 'sortmove':
 			return this.renderMoveSortRow();
+		case 'sortability':
+			return this.renderAbilityDexSortRow();
+		case 'sortitem':
+			return this.renderItemDexSortRow();
 		case 'pokemon':
 			var pokemon = this.engine.dex.species.get(id);
 			return this.renderPokemonRow(pokemon, matchStart, matchLength, errorMessage, attrs);
@@ -279,6 +283,18 @@
 		}
 		buf += '<button class="sortcol statsortcol' + (this.sortCol === 'spe' ? ' cur' : '') + '" data-sort="spe">Spe</button>';
 		buf += '<button class="sortcol statsortcol' + (this.sortCol === 'bst' ? ' cur' : '') + '" data-sort="bst">BST</button>';
+		buf += '</div></li>';
+		return buf;
+	};
+	Search.prototype.renderAbilityDexSortRow = function () {
+		var buf = '<li class="result"><div class="sortrow">';
+		buf += '<button class="sortcol namecol' + (this.sortCol === 'name' ? ' cur' : '') + '" data-sort="name">Name</button>';
+		buf += '</div></li>';
+		return buf;
+	};
+	Search.prototype.renderItemDexSortRow = function () {
+		var buf = '<li class="result"><div class="sortrow">';
+		buf += '<button class="sortcol namecol' + (this.sortCol === 'name' ? ' cur' : '') + '" data-sort="name">Name</button>';
 		buf += '</div></li>';
 		return buf;
 	};

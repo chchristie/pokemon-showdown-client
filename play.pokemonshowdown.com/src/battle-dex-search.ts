@@ -18,7 +18,7 @@ export type SearchType = (
 );
 
 export type SearchRow = (
-	[SearchType, ID, number?, number?] | ['sortpokemon' | 'sortmove', ''] | ['header' | 'html', string]
+	[SearchType, ID, number?, number?] | ['sortpokemon' | 'sortmove' | 'sortability' | 'sortitem', ''] | ['header' | 'html', string]
 );
 
 type SearchFilter = [string, string];
@@ -1485,15 +1485,64 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 }
 
 class BattleAbilitySearch extends BattleTypedSearch<'ability'> {
+	protected override sortRow: SearchRow | null = null;
+
+	constructor(searchType: 'ability', format: ID, speciesOrSet: ID | Dex.PokemonSet = '' as ID) {
+		super(searchType, format, speciesOrSet);
+		if (format === 'dexnatdex') this.sortRow = ['sortability', ''];
+	}
+
 	getTable() {
 		return BattleAbilities;
 	}
 	getDefaultResults(reverseSort?: boolean): SearchRow[] {
+		if (this.format === 'dexnatdex' && this.formatType?.startsWith('digipen')) {
+			return this.getDigipenPokedexAbilityResults();
+		}
 		const results: SearchRow[] = [];
 		for (let id in BattleAbilities) {
 			results.push(['ability', id as ID]);
 		}
 		if (reverseSort) results.reverse();
+		return results;
+	}
+	getDigipenPokedexAbilityResults(): SearchRow[] {
+		const digipen: SearchRow[] = [];
+		const modified: SearchRow[] = [];
+		const other: SearchRow[] = [];
+		const sortAbilities = (rows: SearchRow[]) => {
+			rows.sort((a, b) =>
+				this.dex.abilities.get(a[1]).name.localeCompare(this.dex.abilities.get(b[1]).name)
+			);
+		};
+		for (const id in BattleAbilities) {
+			const ability = this.dex.abilities.get(id as ID);
+			if (ability.gen > this.dex.gen) continue;
+			const isDigiPen =
+				typeof ability.isNonstandard === 'string' && ability.isNonstandard.startsWith('DigiPen');
+			if (isDigiPen) {
+				digipen.push(['ability', id as ID]);
+			} else if (ability.modified === 'DigiPen') {
+				modified.push(['ability', id as ID]);
+			} else {
+				other.push(['ability', id as ID]);
+			}
+		}
+		sortAbilities(digipen);
+		sortAbilities(modified);
+		const results: SearchRow[] = [];
+		if (digipen.length) {
+			results.push(['header', 'DigiPen abilities']);
+			results.push(...digipen);
+		}
+		if (modified.length) {
+			results.push(['header', 'Modified abilities']);
+			results.push(...modified);
+		}
+		if (other.length) {
+			results.push(['header', 'Abilities']);
+			results.push(...other);
+		}
 		return results;
 	}
 	getBaseResults(): SearchRow[] {
@@ -1568,15 +1617,31 @@ class BattleAbilitySearch extends BattleTypedSearch<'ability'> {
 		return true;
 	}
 	sort(results: SearchRow[], sortCol: string | null, reverseSort?: boolean): SearchRow[] {
+		if (this.format === 'dexnatdex' && sortCol === 'name') {
+			const sortOrder = reverseSort ? -1 : 1;
+			return results.sort(([, id1], [, id2]) =>
+				this.dex.abilities.get(id1).name.localeCompare(this.dex.abilities.get(id2).name) * sortOrder
+			);
+		}
 		throw new Error("invalid sortcol");
 	}
 }
 
 class BattleItemSearch extends BattleTypedSearch<'item'> {
+	protected override sortRow: SearchRow | null = null;
+
+	constructor(searchType: 'item', format: ID, speciesOrSet: ID | Dex.PokemonSet = '' as ID) {
+		super(searchType, format, speciesOrSet);
+		if (format === 'dexnatdex') this.sortRow = ['sortitem', ''];
+	}
+
 	getTable() {
 		return BattleItems;
 	}
 	getDefaultResults(): SearchRow[] {
+		if (this.format === 'dexnatdex' && this.formatType?.startsWith('digipen')) {
+			return this.getDigipenPokedexItemResults();
+		}
 		let table = BattleTeambuilderTable;
 		if (this.formatType === 'digipennatdex') {
 			table = table['gen9digipennatdex'];
@@ -1617,6 +1682,45 @@ class BattleItemSearch extends BattleTypedSearch<'item'> {
 			table.items = null;
 		}
 		return table.itemSet;
+	}
+	getDigipenPokedexItemResults(): SearchRow[] {
+		const digipen: SearchRow[] = [];
+		const modified: SearchRow[] = [];
+		const other: SearchRow[] = [];
+		const sortItems = (rows: SearchRow[]) => {
+			rows.sort((a, b) =>
+				this.dex.items.get(a[1]).name.localeCompare(this.dex.items.get(b[1]).name)
+			);
+		};
+		for (const id in BattleItems) {
+			const item = this.dex.items.get(id as ID);
+			if (item.gen > this.dex.gen) continue;
+			const isDigiPen =
+				typeof item.isNonstandard === 'string' && item.isNonstandard.startsWith('DigiPen');
+			if (isDigiPen) {
+				digipen.push(['item', id as ID]);
+			} else if (item.modified === 'DigiPen') {
+				modified.push(['item', id as ID]);
+			} else {
+				other.push(['item', id as ID]);
+			}
+		}
+		sortItems(digipen);
+		sortItems(modified);
+		const results: SearchRow[] = [];
+		if (digipen.length) {
+			results.push(['header', 'DigiPen items']);
+			results.push(...digipen);
+		}
+		if (modified.length) {
+			results.push(['header', 'Modified items']);
+			results.push(...modified);
+		}
+		if (other.length) {
+			results.push(['header', 'Items']);
+			results.push(...other);
+		}
+		return results;
 	}
 	getBaseResults(): SearchRow[] {
 		if (!this.species) return this.getDefaultResults();
@@ -1664,6 +1768,12 @@ class BattleItemSearch extends BattleTypedSearch<'item'> {
 		return true;
 	}
 	sort(results: SearchRow[], sortCol: string | null, reverseSort?: boolean): SearchRow[] {
+		if (this.format === 'dexnatdex' && sortCol === 'name') {
+			const sortOrder = reverseSort ? -1 : 1;
+			return results.sort(([, id1], [, id2]) =>
+				this.dex.items.get(id1).name.localeCompare(this.dex.items.get(id2).name) * sortOrder
+			);
+		}
 		throw new Error("invalid sortcol");
 	}
 }
