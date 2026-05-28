@@ -1695,6 +1695,11 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 		const digipen: SearchRow[] = [];
 		const modified: SearchRow[] = [];
 		const other: SearchRow[] = [];
+		const sortMoves = (rows: SearchRow[]) => {
+			rows.sort((a, b) =>
+				this.dex.moves.get(a[1]).name.localeCompare(this.dex.moves.get(b[1]).name)
+			);
+		};
 		for (const id in BattleMovedex) {
 			if (id === 'magikarpsrevenge') continue;
 			const move = this.dex.moves.get(id as ID);
@@ -1708,6 +1713,8 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				other.push(['move', id as ID]);
 			}
 		}
+		sortMoves(digipen);
+		sortMoves(modified);
 		const results: SearchRow[] = [];
 		if (digipen.length) {
 			results.push(['header', 'DigiPen moves']);
