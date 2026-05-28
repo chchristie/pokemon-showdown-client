@@ -646,11 +646,13 @@ abstract class BattleTypedSearch<T extends SearchType> {
 				case 'vgc2026regi':
 					this.formatType = 'digipenvgc';
 					break;
+				case 'dexnatdex':
+					this.formatType = 'digipennatdex';
+					break;
 				default:
 					this.formatType = 'digipen';
 					break;
 			}
-			console.log('format', format, 'formatType', this.formatType);
 		}
 		else {
 			if (format.startsWith('dlc1') && this.dex.gen === 8) {
@@ -1191,7 +1193,76 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 				tierSet = tierSet.slice(slices['DigiPen Regular'] ?? slices.Regular ?? 0);
 			}
 		} else if (this.formatType === 'digipen' || this.formatType === 'digipennatdex') {
-			if (format === 'singles') {
+			if (format === 'dexnatdex') {
+				// NatDex tierSet is built Uber → DigiPen → OU…RU → DigiPen NFE → NFE → DigiPen LC → LC.
+				// Dex list: DigiPen block, Modified block, then standard tiers (no Uber block).
+				const isDigipenModified = (id: ID) => dex.species.get(id).modified === 'DigiPen';
+				const filterDexRows = (rows: SearchRow[], exclude: Set<ID>) => {
+					const out: SearchRow[] = [];
+					for (const row of rows) {
+						if (row[0] === 'pokemon' && exclude.has(row[1])) continue;
+						out.push(row);
+					}
+					return out;
+				};
+				const collectDigipenDexPokemon = (): SearchRow[] => {
+					const seen = new Set<ID>();
+					const ids: ID[] = [];
+					const addFromSlice = (startKey: string, endKey: string, digipenOnly = false) => {
+						const start = slices[startKey] ?? 0;
+						const end = slices[endKey] ?? tierSet.length;
+						for (const row of tierSet.slice(start, end)) {
+							if (row[0] !== 'pokemon') continue;
+							const id = row[1];
+							if (seen.has(id) || isDigipenModified(id)) continue;
+							if (digipenOnly) {
+								const species = dex.species.get(id);
+								const modTier = (species as Dex.Species & { natDexTier?: string }).natDexTier ||
+									species.tier;
+								const isDigiPenSpecies = typeof species.isNonstandard === 'string' &&
+									species.isNonstandard.startsWith('DigiPen');
+								const isDigiPenTier = modTier === 'DigiPen Uber' || modTier === 'DigiPen' ||
+									modTier === 'DigiPen NFE' || modTier === 'DigiPen LC';
+								if (!isDigiPenSpecies && !isDigiPenTier) continue;
+							}
+							seen.add(id);
+							ids.push(id);
+						}
+					};
+					addFromSlice('DigiPen Uber', 'DigiPen', true);
+					addFromSlice('DigiPen', 'OU');
+					addFromSlice('DigiPen NFE', 'NFE');
+					addFromSlice('DigiPen LC', 'LC');
+					ids.sort((a, b) => dex.species.get(a).name.localeCompare(dex.species.get(b).name));
+					return [['header', 'DigiPen'], ...ids.map(id => ['pokemon', id] as SearchRow)];
+				};
+				const collectModifiedDexPokemon = (exclude: Set<ID>): SearchRow[] => {
+					const ids: ID[] = [];
+					for (const id in BattlePokedex) {
+						const pid = id as ID;
+						if (!isDigipenModified(pid) || exclude.has(pid)) continue;
+						ids.push(pid);
+					}
+					ids.sort((a, b) => dex.species.get(a).name.localeCompare(dex.species.get(b).name));
+					if (!ids.length) return [];
+					return [['header', 'Modified'], ...ids.map(id => ['pokemon', id] as SearchRow)];
+				};
+				const digipenBlock = collectDigipenDexPokemon();
+				const listed = new Set<ID>();
+				for (const row of digipenBlock) {
+					if (row[0] === 'pokemon') listed.add(row[1]);
+				}
+				const modifiedBlock = collectModifiedDexPokemon(listed);
+				for (const row of modifiedBlock) {
+					if (row[0] === 'pokemon') listed.add(row[1]);
+				}
+				const rest = filterDexRows(concatDigiPenTiers(
+					['OU', 'DigiPen NFE'],
+					['NFE', 'DigiPen LC'],
+					['LC', 'Unreleased'],
+				), listed);
+				tierSet = [...digipenBlock, ...modifiedBlock, ...rest];
+			} else if (format === 'singles') {
 				tierSet = concatDigiPenTiers(
 					['DigiPen Uber', 'Uber'],
 					['DigiPen', 'OU'],
@@ -1603,6 +1674,9 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 		return BattleMovedex;
 	}
 	getDefaultResults(): SearchRow[] {
+		if (this.format === 'dexnatdex' && this.formatType?.startsWith('digipen')) {
+			return this.getDigipenPokedexMoveResults();
+		}
 		let results: SearchRow[] = [];
 		results.push(['header', "Moves"]);
 		for (let id in BattleMovedex) {
@@ -1614,6 +1688,38 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				continue;
 			}
 			results.push(['move', id as ID]);
+		}
+		return results;
+	}
+	getDigipenPokedexMoveResults(): SearchRow[] {
+		const digipen: SearchRow[] = [];
+		const modified: SearchRow[] = [];
+		const other: SearchRow[] = [];
+		for (const id in BattleMovedex) {
+			if (id === 'magikarpsrevenge') continue;
+			const move = this.dex.moves.get(id as ID);
+			const isDigiPen =
+				typeof move.isNonstandard === 'string' && move.isNonstandard.startsWith('DigiPen');
+			if (isDigiPen) {
+				digipen.push(['move', id as ID]);
+			} else if (move.modified === 'DigiPen') {
+				modified.push(['move', id as ID]);
+			} else {
+				other.push(['move', id as ID]);
+			}
+		}
+		const results: SearchRow[] = [];
+		if (digipen.length) {
+			results.push(['header', 'DigiPen moves']);
+			results.push(...digipen);
+		}
+		if (modified.length) {
+			results.push(['header', 'Modified moves']);
+			results.push(...modified);
+		}
+		if (other.length) {
+			results.push(['header', 'Moves']);
+			results.push(...other);
 		}
 		return results;
 	}
