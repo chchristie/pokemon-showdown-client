@@ -18,7 +18,7 @@
  * @license MIT
  */
 
-import type { Pokemon, ServerPokemon } from "./battle";
+import { Pokemon, type ServerPokemon } from "./battle";
 import {
 	BattleAvatarNumbers, BattleBaseSpeciesChart, BattlePokemonIconIndexes, BattlePokemonIconIndexesLeft,
 	Ability, Item, Move, Species, PureEffect, type ID, type Type,
@@ -86,22 +86,43 @@ export function toUserid(text: any) {
 	return toID(text);
 }
 
-/**
- * Returns whether `pokemon` is a live battle Pokémon object (nickname, shininess, Dynamax,
- * Transform, etc.) as opposed to dex `Species` data or a species id string.
- *
- * `getSpriteData` accepts both; battle instances need extra handling. We cannot use
- * `instanceof Pokemon` in bundles that ship without `battle.ts` (i.e. `battledata.js` for the dex),
- * so we recognize battle instances by the shape they always have: `getSpeciesForme` and `volatiles`.
- */
-function isBattlePokemonForSprite(pokemon: Pokemon | Species | string): pokemon is Pokemon {
-	if (typeof pokemon !== 'object' || pokemon === null) return false;
+const TEXT_LANGUAGES: { [language: string]: string } = {
+	english: 'en', german: 'de', spanish: 'es', french: 'fr', italian: 'it',
+	japanese: 'ja', korean: 'ko', simplifiedchinese: 'zh-cn', traditionalchinese: 'zh-tw',
+};
 
-	const candidate = pokemon as { getSpeciesForme?: unknown; volatiles?: unknown };
-	if (typeof candidate.getSpeciesForme !== 'function') return false;
-	if (!('volatiles' in candidate)) return false;
+interface ClientDexText {
+	getLanguage(): string;
+	get(effect: Species | Item | Ability | Move, lang?: string): BattleTextEntry;
+}
 
-	return true;
+function getTextLanguage() {
+	const preference = Dex.prefs('language') || Dex.prefs('serversettings')?.language || 'english';
+	const language = TEXT_LANGUAGES[preference] || 'en';
+	return language === 'en' && Dex.afdMode === true ? 'en-afd' : language;
+}
+
+function getTextEntry(effect: Species | Item | Ability | Move, gen: number, lang: string): BattleTextEntry {
+	const tableName = `${effect.effectType === 'Species' ? 'Pokedex' : `${effect.effectType}s`}` as keyof BattleTextData;
+	const english = BattleText.en?.[tableName]?.[effect.id] || {};
+	const localized = BattleText[lang]?.[tableName]?.[effect.id] || {};
+	const entry: BattleTextEntry = { ...english, ...localized };
+	for (let i = 1; i <= 8; i++) {
+		const genName = `gen${i}`;
+		const englishGen = english[genName];
+		const localizedGen = localized[genName];
+		if (typeof englishGen === 'object' || typeof localizedGen === 'object') {
+			entry[genName] = {
+				...(typeof englishGen === 'object' ? englishGen : {}),
+				...(typeof localizedGen === 'object' ? localizedGen : {}),
+			};
+		}
+	}
+	for (let i = 8; i >= gen; i--) {
+		const genName = `gen${i}`;
+		Object.assign(entry, english[genName] || {}, localized[genName] || {});
+	}
+	return entry;
 }
 
 type Comparable = number | string | boolean | Comparable[] | { reverse: Comparable };
@@ -181,6 +202,17 @@ export const PSUtils = new class {
 		if (!callback) return (array as any[]).sort(PSUtils.compare);
 		return array.sort((a, b) => PSUtils.compare(callback(a), callback(b)));
 	}
+	normalizeError(err: any): string {
+		const stack = err.stack || '';
+		const messagePrefix = `${err.name}: ${err.message}`;
+
+		// Firefox doesn't put the error message inside the stack trace,
+		// but Chrome/Safari does
+		if (stack && !stack.startsWith(messagePrefix)) {
+			return `${messagePrefix}\n${stack}`;
+		}
+		return stack || messagePrefix;
+	}
 };
 
 /**
@@ -227,6 +259,7 @@ export interface TeambuilderSpriteData {
 	spriteid: string;
 	shiny?: boolean;
 	digipen?: boolean;		
+	pixelated?: boolean;
 }
 
 export const Dex = new class implements ModdedDex {
@@ -265,6 +298,7 @@ export const Dex = new class implements ModdedDex {
 	})();
 
 	loadedSpriteData = { xy: 1, bw: 0 };
+	loadedTextData: { [lang: string]: 1 | Promise<void> } = { en: 1 };
 	moddedDexes: { [mod: string]: ModdedDex } = {};
 
 	/**
@@ -304,9 +338,6 @@ export const Dex = new class implements ModdedDex {
 		if (dex.gen === 8 && formatid.includes('bdsp')) {
 			dex = Dex.mod('gen8bdsp' as ID);
 		}
-		if (dex.gen === 9 && formatid.includes('legends')) {
-			dex = Dex.mod('gen9legendsou' as ID);
-		}
 		if (dex.gen === 9 && formatid.includes('champions')) {
 			dex = Dex.mod('champions' as ID);
 		}
@@ -326,7 +357,12 @@ export const Dex = new class implements ModdedDex {
 		if (avatar.startsWith('$')) {
 			return Dex.resourcePrefixDigipen + 'sprites/trainers/' + toID(avatar.slice(1)) + '.png';
 		}
-		if (avatar.includes('.') && window.Config?.server?.registered) {
+		if (avatar.includes('.')) {
+			if (!window.Config?.server) {
+				return Dex.resourcePrefix + 'sprites/trainers/unknown.png';
+			}
+			// previously checked `&& window.Config?.server?.registered`
+			// currently doesn't, bc server registration isn't a thing anymore
 			// custom avatar served by the server
 			const protocol = (Config.server.port === 443) ? 'https' : 'http';
 			const server = `${protocol}://${Config.server.host}:${Config.server.port}`;
@@ -357,6 +393,13 @@ export const Dex = new class implements ModdedDex {
 		// @ts-expect-error this is what I get for calling it Storage...
 		return window.Storage?.prefs ? window.Storage.prefs(prop) : window.PS?.prefs?.[prop];
 	}
+
+	text: ClientDexText = {
+		getLanguage: getTextLanguage,
+		get: (effect: Species | Item | Ability | Move, lang = getTextLanguage()) => {
+			return getTextEntry(effect, 9, lang);
+		},
+	};
 
 	getShortName(name: string) {
 		let shortName = name.replace(/[^A-Za-z0-9]+$/, '');
@@ -598,6 +641,29 @@ export const Dex = new class implements ModdedDex {
 		el.src = path + 'data/pokedex-mini-bw.js' + qs;
 		document.getElementsByTagName('body')[0].appendChild(el);
 	}
+	loadTextData(lang = this.text.getLanguage()): Promise<void> {
+		lang = TEXT_LANGUAGES[lang] || lang;
+		if (BattleText[lang] || typeof document === 'undefined') return Promise.resolve();
+		const existing = this.loadedTextData[lang];
+		if (existing) return existing === 1 ? Promise.resolve() : existing;
+
+		const loadScript = (src: string) => new Promise<void>((resolve, reject) => {
+			const el = document.createElement('script');
+			el.src = src;
+			el.onload = () => resolve();
+			el.onerror = () => reject(new Error(`Failed to load text data from ${src}`));
+			document.getElementsByTagName('body')[0].appendChild(el);
+		});
+		let loading = loadScript(Config.testclient ? `data/text/${lang}.js` : `${this.resourcePrefix}data/text/${lang}.js`);
+		if (Config.testclient) {
+			loading = loading.catch(() => loadScript(`https://play.pokemonshowdown.com/data/text/${lang}.js`));
+		}
+		loading = loading.catch(() => {
+			delete this.loadedTextData[lang];
+		});
+		this.loadedTextData[lang] = loading;
+		return loading;
+	}
 	getSpriteData(pokemon: Pokemon | Species | string, isFront: boolean, options: {
 		gen?: number,
 		shiny?: boolean,
@@ -609,7 +675,7 @@ export const Dex = new class implements ModdedDex {
 	} = { gen: 6 }) {
 		const mechanicsGen = options.gen || 6;
 		let isDynamax = !!options.dynamax;
-		if (isBattlePokemonForSprite(pokemon)) {
+		if (pokemon instanceof Pokemon) {
 			if (pokemon.volatiles.transform) {
 				options.shiny = pokemon.volatiles.transform[2];
 				options.gender = pokemon.volatiles.transform[3];
@@ -681,37 +747,19 @@ export const Dex = new class implements ModdedDex {
 			let baseSpeciesid = toID(species.baseSpecies);
 			spriteData.cryurl = 'audio/cries/' + baseSpeciesid;
 			let formeid = species.formeid;
-			if (species.isMega || formeid && (
-				formeid === '-crowned' ||
-				formeid === '-eternal' ||
-				formeid === '-eternamax' ||
-				formeid === '-four' ||
-				formeid === '-hangry' ||
-				formeid === '-hero' ||
-				formeid === '-lowkey' ||
-				formeid === '-noice' ||
-				formeid === '-primal' ||
-				formeid === '-rapidstrike' ||
-				formeid === '-roaming' ||
-				formeid === '-school' ||
-				formeid === '-sky' ||
-				formeid === '-starter' ||
-				formeid === '-super' ||
-				formeid === '-therian' ||
-				formeid === '-unbound' ||
-				baseSpeciesid === 'calyrex' ||
-				baseSpeciesid === 'kyurem' ||
-				baseSpeciesid === 'cramorant' ||
-				baseSpeciesid === 'indeedee' ||
-				baseSpeciesid === 'lycanroc' ||
-				baseSpeciesid === 'necrozma' ||
-				baseSpeciesid === 'oinkologne' ||
-				baseSpeciesid === 'oricorio' ||
-				baseSpeciesid === 'slowpoke' ||
-				baseSpeciesid === 'tatsugiri' ||
-				baseSpeciesid === 'zygarde'
-			)) {
-				spriteData.cryurl += formeid;
+			const specialFormeCries = [
+				'-bloodmoon', '-crowned', '-eternal', '-eternamax', '-four', '-hangry', '-hero', '-lowkey', '-noice', '-primal', '-rapidstrike', '-roaming', '-school', '-sky', '-starter', '-super', '-therian', '-unbound',
+			];
+			const specialBaseSpeciesCries = [
+				'calyrex', 'kyurem', 'cramorant', 'indeedee', 'lycanroc', 'necrozma', 'oinkologne', 'oricorio', 'slowpoke', 'tatsugiri', 'zygarde',
+			];
+			if (species.isMega ||
+				formeid && (specialFormeCries.includes(formeid) || specialBaseSpeciesCries.includes(baseSpeciesid))) {
+				if (species.isMega && (baseSpeciesid === 'meowstic' || baseSpeciesid === 'tatsugiri')) {
+					spriteData.cryurl += '-mega';
+				} else {
+					spriteData.cryurl += formeid;
+				}
 			}
 			spriteData.cryurl += '.mp3';
 		}
@@ -900,7 +948,7 @@ export const Dex = new class implements ModdedDex {
 				spriteid = species.spriteid || id;
 			}
 		}
-		if (species.exists === false) return { spriteDir: 'sprites/gen5', spriteid: '0', x: 10, y: 5 };
+		if (species.exists === false) return { spriteDir: 'sprites/gen5', spriteid: '0', x: 10, y: 5, pixelated: true };
 		if (species.digipenSprite) {
 			return {
 				spriteid,
@@ -967,6 +1015,7 @@ export const Dex = new class implements ModdedDex {
 		else if (gen <= 2 && species.gen <= 2) spriteData.spriteDir = 'sprites/gen2';
 		else if (gen <= 3 && species.gen <= 3) spriteData.spriteDir = 'sprites/gen3';
 		else if (gen <= 4 && species.gen <= 4) spriteData.spriteDir = 'sprites/gen4';
+		spriteData.pixelated = true;
 		spriteData.x = 10;
 		spriteData.y = 5;
 		return spriteData;
@@ -1050,6 +1099,12 @@ export class ModdedDex {
 		if ((modid !== 'champions' && !modid.startsWith('gen')) || !gen) throw new Error("Unsupported modid");
 		this.gen = gen;
 	}
+	text: ClientDexText = {
+		getLanguage: getTextLanguage,
+		get: (effect: Species | Item | Ability | Move, lang = getTextLanguage()) => {
+			return getTextEntry(effect, this.gen, lang);
+		},
+	};
 	moves = {
 		get: (name: string): Move => {
 			let id = toID(name);
@@ -1146,13 +1201,16 @@ export class ModdedDex {
 	species = {
 		get: (name: string): Species => {
 			let id = toID(name);
+			const originalId = id;
 			if (window.BattleAliases && id in BattleAliases) {
 				name = BattleAliases[id];
 				id = toID(name);
 			}
+			const baseSpecies = Dex.species.get(originalId || name);
+			id = baseSpecies.id;
 			if (this.cache.Species.hasOwnProperty(id)) return this.cache.Species[id];
 
-			let data = { ...Dex.species.get(name) };
+			let data = { ...baseSpecies };
 
 			for (let i = Dex.gen - 1; i >= this.gen; i--) {
 				const table = window.BattleTeambuilderTable[`gen${i}`];

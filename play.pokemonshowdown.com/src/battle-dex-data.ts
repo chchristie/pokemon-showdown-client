@@ -678,6 +678,7 @@ export const BattlePokemonIconIndexes: { [id: string]: number } = {
 	ramnarok: 1560 + 78,
 	ramnarokradiant: 1560 + 79,
 	flox: 1560 + 80,
+	obliteryx: 1560 + 81,
 };
 
 export const BattlePokemonIconIndexesLeft: { [id: string]: number } = {
@@ -1664,7 +1665,7 @@ export class Species implements Effect {
 		this.tier = data.tier || '';
 
 		this.isTotem = false;
-		this.isMega = !!(this.forme && ['-mega', '-megax', '-megay'].includes(this.formeid));
+		this.isMega = !!(this.forme && this.formeid.includes('mega'));
 		this.isPrimal = !!(this.forme && this.formeid === '-primal');
 		this.canGigantamax = !!data.canGigantamax;
 		this.cannotDynamax = !!data.cannotDynamax;

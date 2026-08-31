@@ -400,6 +400,7 @@ function toId() {
 			window.app = this;
 			this.initializeRooms();
 			this.initializePopups();
+			this.initializeCCPAIntercept();
 
 			this.user = new User();
 			this.ignore = {};
@@ -741,20 +742,6 @@ function toId() {
 		},
 		setAFD: function (mode) {
 			if (mode === undefined) {
-				// init
-				if (typeof BattleTextAFD !== 'undefined') {
-					for (var id in BattleTextNotAFD) {
-						if (!BattleTextAFD[id]) {
-							BattleTextAFD[id] = BattleTextNotAFD[id];
-						} else {
-							var combined = {};
-							Object.assign(combined, BattleTextNotAFD[id]);
-							Object.assign(combined, BattleTextAFD[id]);
-							BattleTextAFD[id] = combined;
-						}
-					}
-				}
-
 				if (Config.server.afd) {
 					mode = true;
 				} else if (Dex.prefs('afd') !== undefined) {
@@ -766,12 +753,7 @@ function toId() {
 			}
 
 			Dex.afdMode = mode;
-
-			if (mode === true) {
-				BattleText = BattleTextAFD;
-			} else {
-				BattleText = BattleTextNotAFD;
-			}
+			if (mode === true) Dex.loadTextData('en-afd');
 		},
 		/**
 		 * This function establishes the actual connection to the sim server.
@@ -1608,6 +1590,23 @@ function toId() {
 
 			$(window).on('resize', _.bind(this.resize, this));
 		},
+		initializeCCPAIntercept: function () {
+			var self = this;
+			self.interceptCCPA();
+			setTimeout(function () { self.interceptCCPA(); }, 1000);
+			setTimeout(function () { self.interceptCCPA(); }, 3000);
+			setTimeout(function () { self.interceptCCPA(); }, 5000);
+			setTimeout(function () { self.interceptCCPA(); }, 10000);
+		},
+		interceptCCPA: function () {
+			if (this.ccpaIntercepted) return;
+			var $ccpa = $('.fc-dns-dialog');
+			if (!$ccpa.length) return;
+			var $target = $('#room- .mainmenufooter');
+			if (!$target.length) return;
+			$ccpa.appendTo($target);
+			this.ccpaIntercepted = true;
+		},
 		fixedWidth: true,
 		resize: function () {
 			if (window.screen && screen.width && screen.width >= 320) {
@@ -1769,6 +1768,7 @@ function toId() {
 			}
 
 			room.focus(null, focusTextbox);
+			this.interceptCCPA();
 		},
 		focusRoomLeft: function (id) {
 			var room = this.rooms[id];
@@ -1794,6 +1794,7 @@ function toId() {
 			if (this.curRoom.id === id) this.navigate(id);
 
 			room.focus(null, true);
+			this.interceptCCPA();
 		},
 		focusRoomRight: function (id) {
 			var room = this.rooms[id];
@@ -1817,6 +1818,7 @@ function toId() {
 			// if (this.curRoom.id === id) this.navigate(id);
 
 			room.focus(null, true);
+			this.interceptCCPA();
 		},
 		/**
 		 * This is the function for handling the two-panel layout
@@ -2230,7 +2232,7 @@ function toId() {
 		},
 		dispatchClickButton: function (e) {
 			var target = e.currentTarget;
-			var type = $(target).attr('type');
+			var type = $(target).attr('data-select');
 			if (type === 'submit') type = null;
 			if (target.name || type) {
 				app.dismissingSource = app.dismissPopups();

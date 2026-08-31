@@ -472,6 +472,7 @@
 			'change select[name=bg]': 'setBg',
 			'change select[name=timestamps-lobby]': 'setTimestampsLobby',
 			'change select[name=timestamps-pms]': 'setTimestampsPMs',
+			'change input[name=syncteams]': 'setSyncTeams',
 			'change select[name=onepanel]': 'setOnePanel',
 			'change select[name=theme]': 'setTheme',
 			'change input[name=logchat]': 'setLogChat',
@@ -549,8 +550,9 @@
 				"Türkçe": 'turkish',
 				"हिंदी": 'hindi',
 				"日本語": 'japanese',
+				"한국어": 'korean',
 				"简体中文": 'simplifiedchinese',
-				"中文": 'traditionalchinese'
+				"繁體中文": 'traditionalchinese'
 			};
 			buf += '<p><label class="optlabel">Language: <select name="language" class="button">';
 			for (var name in possibleLanguages) {
@@ -564,7 +566,8 @@
 			buf += '<p><label class="optlabel">Timestamps in chat rooms: <select name="timestamps-lobby" class="button"><option value="off">Off</option><option value="minutes"' + (timestamps.lobby === 'minutes' ? ' selected="selected"' : '') + '>[HH:MM]</option><option value="seconds"' + (timestamps.lobby === 'seconds' ? ' selected="selected"' : '') + '>[HH:MM:SS]</option></select></label></p>';
 			buf += '<p><label class="optlabel">Timestamps in PMs: <select name="timestamps-pms" class="button"><option value="off">Off</option><option value="minutes"' + (timestamps.pms === 'minutes' ? ' selected="selected"' : '') + '>[HH:MM]</option><option value="seconds"' + (timestamps.pms === 'seconds' ? ' selected="selected"' : '') + '>[HH:MM:SS]</option></select></label></p>';
 			buf += '<p><label class="optlabel">Chat preferences: <button name="formatting" class="button">Text formatting</button></label></p>';
-
+			var syncTeams = !Storage.prefs('nosyncteams');
+			buf += '<p><label class="optlabel">Download teams from server: <input type="checkbox" name="syncteams" ' + (syncTeams ? 'checked ' : '') + '></input></p>';
 			if (window.nodewebkit) {
 				buf += '<hr />';
 				buf += '<p><strong>Desktop app</strong></p>';
@@ -629,7 +632,14 @@
 			Storage.prefs('tournaments', tournaments);
 		},
 		setLanguage: function (e) {
-			app.user.updateSetting('language', e.currentTarget.value);
+			var language = e.currentTarget.value;
+			app.user.updateSetting('language', language);
+			Dex.loadTextData().then(function () {
+				for (var roomid in app.rooms) {
+					var battle = app.rooms[roomid] && app.rooms[roomid].battle;
+					if (battle) battle.resetToCurrentTurn();
+				}
+			});
 		},
 		setBlockpms: function (e) {
 			app.user.updateSetting('blockPMs', !!e.currentTarget.checked);
@@ -672,6 +682,17 @@
 		setTimestampsPMs: function (e) {
 			this.timestamps.pms = e.currentTarget.value;
 			Storage.prefs('timestamps', this.timestamps);
+		},
+		setSyncTeams: function () {
+			Storage.prefs('nosyncteams', !Storage.prefs('nosyncteams'));
+			if (!Storage.prefs('nosyncteams')) {
+				Storage.loadRemoteTeams(function () {
+					if (app.rooms.teambuilder) {
+						// if they have it open, be sure to update so it doesn't show 'no teams'
+						app.rooms.teambuilder.update();
+					}
+				});
+			}
 		},
 		avatars: function () {
 			app.addPopup(AvatarsPopup);
