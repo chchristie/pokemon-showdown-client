@@ -675,7 +675,9 @@ export const Dex = new class implements ModdedDex {
 	} = { gen: 6 }) {
 		const mechanicsGen = options.gen || 6;
 		let isDynamax = !!options.dynamax;
-		if (pokemon instanceof Pokemon) {
+		console.log("pokemon:", pokemon);
+		console.log("constructor:", pokemon?.constructor);		
+		if (typeof pokemon !== 'string' && !(pokemon instanceof Species) && pokemon instanceof Pokemon) {
 			if (pokemon.volatiles.transform) {
 				options.shiny = pokemon.volatiles.transform[2];
 				options.gender = pokemon.volatiles.transform[3];

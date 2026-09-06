@@ -650,7 +650,8 @@ abstract class BattleTypedSearch<T extends SearchType> {
 	protected formatType: 'doubles' | 'bdsp' | 'bdspdoubles' | 'rs' | 'frlg' | 'bw1' | 'letsgo' | 'metronome' | 'natdex' |
 	'nfe' | 'ssdlc1' | 'ssdlc1doubles' | 'predlc' | 'predlcdoubles' | 'svdlc1' | 'svdlc1doubles' | 'stadium' | 'lc' |
 	'champions' | 'natdexchampions' |
-	'digipen' | 'digipendoubles' | 'digipennatdex' | 'digipenvgc' |
+	'digipen' | 'digipendoubles' | 'digipennatdex' | 'digipenvgc' | 
+	'fnaf' | 'fnafnatdex' | 'fnafvgc' |
 	null = null;
 	isDoubles = false;
 
@@ -713,11 +714,41 @@ abstract class BattleTypedSearch<T extends SearchType> {
 				case 'vgc2026regi':
 					this.formatType = 'digipenvgc';
 					break;
+				case 'vgcnonrestricted':
+					this.formatType = 'digipenvgc';
+					break;
+				case 'vgconerestricted':
+					this.formatType = 'digipenvgc';
+					break;
+				case 'vgctworestricted':
+					this.formatType = 'digipenvgc';
+					break;	
 				case 'dexnatdex':
 					this.formatType = 'digipennatdex';
 					break;
 				default:
 					this.formatType = 'digipen';
+					break;
+			}
+		}
+		else if (format.startsWith('fnaf')) {
+			this.dex = Dex.mod('gen9fnaf' as ID);
+			format = format.slice(4) as ID; // remove 'fnaf' (7 chars)
+			switch (format) {
+				case 'singles':
+					this.formatType = 'fnaf';
+					break;
+				case 'ou':
+					this.formatType = 'fnaf';
+					break; 
+				case 'nationaldex':
+					this.formatType = 'fnafnatdex';
+					break;
+				case 'vgc': 
+					this.formatType = 'fnafvgc';
+					break; 
+				default: 
+					this.formatType = 'fnaf';
 					break;
 			}
 		}
@@ -975,6 +1006,9 @@ abstract class BattleTypedSearch<T extends SearchType> {
 				!(this.formatType === 'digipennatdex')) {
 			return false;
 		}
+		if ((move.isNonstandard === 'FNAF') && !(this.formatType?.startsWith('fnaf'))) {
+			return false;
+		}
 		if (this.formatType?.includes('natdex') && move.isNonstandard && move.isNonstandard !== 'Past') {
 			return false;
 		}
@@ -1048,6 +1082,9 @@ abstract class BattleTypedSearch<T extends SearchType> {
 			this.formatType === 'digipendoubles' ? 'gen9digipendoubles' :
 			this.formatType === 'digipennatdex' ? 'gen9digipennatdex' :
 			this.formatType === 'digipenvgc' ? 'gen9digipenvgc' :
+			this.formatType === 'fnaf' ? 'gen9fnaf' :
+			this.formatType === 'fnafnatdex' ? 'gen9fnafnatdex' :
+			this.formatType === 'fnafvgc' ? 'gen9fnafvgc' :
 			this.formatType === 'natdexchampions' ? `natdexchampions` :
 			`gen${gen}`;
 		if (table?.[tableKey]) {
@@ -1157,6 +1194,12 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 			table = table['gen9digipennatdex'];
 		} else if (this.formatType === 'digipenvgc') {
 			table = table['gen9digipenvgc'];
+		} else if (this.formatType === 'fnaf') {	
+			table = table['gen9fnaf'];
+		} else if (this.formatType === 'fnafnatdex') {
+			table = table['gen9fnafnatdex'];
+		} else if (this.formatType === 'fnafvgc') {
+			table = table['gen9fnafvgc'];
 		} else if (this.formatType === 'natdexchampions') {
 			table = table[`natdexchampions`];
 		} else if (isVGCOrBS) {
@@ -1244,8 +1287,7 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 			return rows;
 		};
 		if (this.formatType === 'digipenvgc') {
-			// VGC Reg I shows Restricted+ (no Mythicals); Reg F shows Regular+ (same as standard VGC logic).
-			if (format.endsWith('regi') || format.endsWith('regg')) {
+			if (format.endsWith('regi') || format.endsWith('regg') || format.endsWith('onerestricted') || format.endsWith('tworestricted')) {
 				tierSet = tierSet.slice(slices['DigiPen Restricted'] ?? 0);
 			} else {
 				tierSet = tierSet.slice(slices['DigiPen Regular'] ?? slices.Regular ?? 0);
@@ -1349,6 +1391,8 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 			else if (format === 'doublesubers') {
 				tierSet = tierSet.slice(slices['DigiPen DUber'] ?? 0);
 			}
+		} else if (this.formatType === 'fnaf') {
+			tierSet = tierSet.slice(slices['FNAF'] ?? 0);
 		} else if (format === 'ubers' || format === 'uber' || format === 'ubersuu' ||
 			format === '4v4doublesuu' || format === 'nationaldexdoubles'
 		) {
@@ -1712,6 +1756,12 @@ class BattleItemSearch extends BattleTypedSearch<'item'> {
 			table = table['gen9digipendoubles'];
 		} else if (this.formatType === 'digipenvgc') {
 			table = table['gen9digipenvgc'];
+		} else if (this.formatType === 'fnaf') {
+			table = table['gen9fnaf'];
+		} else if (this.formatType === 'fnafnatdex') {
+			table = table['gen9fnafnatdex'];
+		} else if (this.formatType === 'fnafvgc') {
+			table = table['gen9fnafvgc'];
 		} else if (this.formatType?.startsWith('bdsp')) {
 			table = table['gen8bdsp'];
 		} else if (this.formatType === 'bw1') {
@@ -2241,6 +2291,9 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 						!(this.formatType === 'digipennatdex')) {
 						continue;
 					}
+					if (move.isNonstandard === 'FNAF' && !this.formatType?.startsWith('fnaf')) {
+						continue;
+					}
 					if (
 						this.formatType?.startsWith('dlc1') &&
 						BattleTeambuilderTable['gen8dlc1']?.nonstandardMoves.includes(moveid)
@@ -2364,6 +2417,7 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 
 		let digipenMoves: SearchRow[] = [];
 		let modifiedMoves: SearchRow[] = [];
+		let fnafMoves: SearchRow[] = [];
 		let usableMoves: SearchRow[] = [];
 		let uselessMoves: SearchRow[] = [];
 		for (const id of moves) {
@@ -2376,6 +2430,10 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 			else if (move.modified === 'DigiPen' && this.formatType?.startsWith('digipen')) {
 				if (!modifiedMoves.length) modifiedMoves.push(['header', "Modified moves"]);
 				modifiedMoves.push(['move', id as ID]);
+			}
+			else if (move.isNonstandard === 'FNAF' && this.formatType?.startsWith('fnaf')) {
+				if (!fnafMoves.length) fnafMoves.push(['header', "FNAF moves"]);
+				fnafMoves.push(['move', id as ID]);
 			}
 			else if (isUsable) {
 				if (!usableMoves.length) usableMoves.push(['header', "Moves"]);
@@ -2397,7 +2455,7 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				uselessMoves.push(['move', id as ID]);
 			}
 		}
-		return [...digipenMoves, ...modifiedMoves, ...usableMoves, ...uselessMoves];
+		return [...digipenMoves, ...modifiedMoves, ...fnafMoves, ...usableMoves, ...uselessMoves];
 	}
 	filter(row: SearchRow, filters: string[][]) {
 		if (!filters) return true;

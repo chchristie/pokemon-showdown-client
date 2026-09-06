@@ -65,6 +65,7 @@ function requireNoCache(pathSpec) {
 	for (const id in DigiPenDex.data.Items) {
 		if (!Dex.data.Items[id]) index.push(id + ' item');
 	}
+	
 
 	index = index.concat(Object.keys(Dex.data.TypeChart).map(x => toID(x) + ' type'));
 	index = index.concat(['physical', 'special', 'status'].map(x => toID(x) + ' category'));
@@ -300,6 +301,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 	const OTHER = [
 		9.9, 9.67, 9.6, 9.411, 9.41, 9.401, 9.4, 9.33, 9.2, -9.4, -9.401,
 		9.66, 9.661, -9.65, -9.66, // DigiPen
+		9.56, 9.561, -9.55, // FNAF
 		8.6, 8.4, 8.2, -8.4, -8.6,
 		7.1,
 		5.1,
@@ -327,6 +329,10 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		const isDigiPenVGC = genIdent === -9.65;
 		const isDigiPenDoubles = genIdent === -9.66;
 		const isDigiPen = isDigiPenSingles || isDigiPenNatDex || isDigiPenVGC || isDigiPenDoubles;
+		const isFnafSingles = genIdent === 9.56;
+		const isFnafNatDex = genIdent === 9.561;
+		const isFnafVGC = genIdent === -9.55;
+		const isFnaf = isFnafSingles || isFnafNatDex || isFnafVGC;
 		const isChampions = genIdent === 9.67;
 		const isNDChampions = genIdent === 9.68;
 		const genNum = Math.floor(isDoubles ? -genIdent : genIdent);
@@ -346,6 +352,9 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			if (isDigiPenNatDex) genStr += 'digipennatdex';
 			if (isDigiPenVGC) genStr += 'digipenvgc';
 			if (isDigiPenDoubles) genStr += 'digipendoubles';
+			if (isFnafSingles) genStr += 'fnaf';
+			if (isFnafNatDex) genStr += 'fnafnatdex';
+			if (isFnafVGC) genStr += 'fnafvgc';
 			if (isBW1) genStr += 'bw1';
 			if (isRS) genStr += 'rs';
 			if (isFRLG) genStr += 'frlg';
@@ -359,6 +368,11 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				if (!Dex.data.Pokedex[id]) pokemon.push(id);
 			}
 		}
+		if (isFnaf) {
+			for (const id in Dex.mod('gen9fnaf').data.Pokedex) {
+				if (!Dex.data.Pokedex[id]) pokemon.push(id);
+			}
+		}
 		pokemon.sort();
 		const tierTable = {};
 		const overrideTier = {};
@@ -366,7 +380,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		const nonstandardMoves = [];
 		// All DigiPen variants share the same mod for species data; only their
 		// tier ordering and table names differ.
-		const speciesMod = isDigiPen ? 'gen9digipen' : gen;
+		const speciesMod = isDigiPen ? 'gen9digipen' : isFnaf ? 'gen9fnaf' : gen;
 		for (const id of pokemon) {
 			const species = Dex.mod(speciesMod).species.get(id);
 			const baseSpecies = Dex.mod(speciesMod).species.get(species.baseSpecies);
@@ -425,7 +439,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 					if (species.name === 'Pikachu-Alola') return 'Illegal';
 					return species.tier;
 				}
-				if (isVGC || isDigiPenVGC) {
+				if (isVGC || isDigiPenVGC || isFnafVGC) {
 					if (isDigiPenVGC && species.isNonstandard === 'DigiPen') {
 						// DigiPen Pokemon use tag-based VGC classification with "DigiPen" prefix.
 						if (baseSpecies.tags.includes('Mythical')) return 'DigiPen Mythical';
@@ -433,6 +447,9 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 						if (species.tier === 'DigiPen NFE') return 'DigiPen NFE';
 						if (species.tier === 'DigiPen LC') return 'DigiPen LC';
 						return 'DigiPen Regular';
+					}
+					if (isFnafVGC && species.isNonstandard === 'FNAF') {
+						return 'FNAF Regular';
 					}
 					if (species.isNonstandard && species.isNonstandard !== 'Gigantamax') return 'Illegal';
 					if (baseSpecies.tags.includes('Mythical')) return 'Mythical';
@@ -473,7 +490,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				if ((isDoubles || isDigiPenDoubles) && genNum > 4) {
 					return species.doublesTier;
 				}
-				if (isNatDex || isDigiPenNatDex || (isPreDLC && genNum === 9.41) || (isSVDLC1 && genNum === 9.411)) {
+				if (isNatDex || isDigiPenNatDex || isFnafNatDex || (isPreDLC && genNum === 9.41) || (isSVDLC1 && genNum === 9.411)) {
 					return species.natDexTier;
 				}
 				if (isNDChampions) {
@@ -610,6 +627,13 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['gen9digipenvgc'].overrideTier = overrideTier;
 			BattleTeambuilderTable['gen9digipenvgc'].metagameBans = metagameBans;
 			BattleTeambuilderTable['gen9digipenvgc'].formatSlices = formatSlices;
+		} else if (isFnafVGC) {
+			BattleTeambuilderTable['gen9fnafvgc'] = {};
+			BattleTeambuilderTable['gen9fnafvgc'].tiers = tiers;
+			BattleTeambuilderTable['gen9fnafvgc'].items = items;
+			BattleTeambuilderTable['gen9fnafvgc'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9fnafvgc'].metagameBans = metagameBans;
+			BattleTeambuilderTable['gen9fnafvgc'].formatSlices = formatSlices;
 		} else if (isDigiPenDoubles) {
 			BattleTeambuilderTable['gen9digipendoubles'] = {};
 			BattleTeambuilderTable['gen9digipendoubles'].tiers = tiers;
@@ -656,6 +680,14 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['gen9digipen'].overrideTier = overrideTier;
 			BattleTeambuilderTable['gen9digipen'].metagameBans = metagameBans;
 			BattleTeambuilderTable['gen9digipen'].formatSlices = formatSlices;
+		} else if (isFnafSingles) {
+			BattleTeambuilderTable['gen9fnaf'] = {};
+			BattleTeambuilderTable['gen9fnaf'].learnsets = {};
+			BattleTeambuilderTable['gen9fnaf'].tiers = tiers;
+			BattleTeambuilderTable['gen9fnaf'].items = items;
+			BattleTeambuilderTable['gen9fnaf'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9fnaf'].metagameBans = metagameBans;
+			BattleTeambuilderTable['gen9fnaf'].formatSlices = formatSlices;
 		} else if (isDigiPenNatDex) {
 			BattleTeambuilderTable['gen9digipennatdex'] = {};
 			BattleTeambuilderTable['gen9digipennatdex'].tiers = tiers;
@@ -663,6 +695,13 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['gen9digipennatdex'].overrideTier = overrideTier;
 			BattleTeambuilderTable['gen9digipennatdex'].metagameBans = metagameBans;
 			BattleTeambuilderTable['gen9digipennatdex'].formatSlices = formatSlices;
+		} else if (isFnafNatDex) {
+			BattleTeambuilderTable['gen9fnafnatdex'] = {};
+			BattleTeambuilderTable['gen9fnafnatdex'].tiers = tiers;
+			BattleTeambuilderTable['gen9fnafnatdex'].items = items;
+			BattleTeambuilderTable['gen9fnafnatdex'].overrideTier = overrideTier;
+			BattleTeambuilderTable['gen9fnafnatdex'].metagameBans = metagameBans;
+			BattleTeambuilderTable['gen9fnafnatdex'].formatSlices = formatSlices;
 		} else if (gen === 'gen9') {
 			BattleTeambuilderTable.tiers = tiers;
 			BattleTeambuilderTable.items = items;
@@ -700,6 +739,13 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 					"DigiPen NFE", "NFE", "DigiPen LC", "LC",
 				];
 			}
+			if (isFnafVGC) {
+				return [
+					"Mythical", "Restricted",
+					"FNAF Regular", "Regular",
+					"NFE", "LC",
+				];
+			}
 			if (isDigiPenDoubles) {
 				return [
 					"DigiPen DUber", "DUber", "(DUber)",
@@ -712,6 +758,13 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 					"DigiPen Uber", "Uber", "(Uber)",
 					"DigiPen", "OU", "(OU)", "UUBL", "UU", "RUBL", "RU", "NUBL", "NU", "PUBL", "PU", "ZUBL", "ZU", "New",
 					"DigiPen NFE", "NFE", "DigiPen LC", "LC", "Unreleased",
+				];
+			}
+			if (isFnafSingles || isFnafNatDex) {
+				return [
+					"Uber", "(Uber)", "FNAF",
+					"OU", "(OU)", "UUBL", "UU", "RUBL", "RU", "NUBL", "NU", "PUBL", "PU", "ZUBL", "ZU", "New",
+					"NFE", "LC", "Unreleased",
 				];
 			}
 			if (isVGC || isGen9BH) {
@@ -735,6 +788,8 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				// DigiPen tiers
 				"DigiPen Uber": 1, "DigiPen": 1, "DigiPen NFE": 1, "DigiPen LC": 1,
 				"DigiPen DUber": 1, "DigiPen Mythical": 1, "DigiPen Restricted": 1, "DigiPen Regular": 1,
+				// Other tiers
+				"FNAF": 1, "FNAF Regular": 1,
 			}) {
 				let usedTier = tier;
 				if (usedTier === "(DUU)") usedTier = "DNU";
@@ -773,6 +828,12 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			if (formatSlices['DigiPen Restricted'] === undefined) formatSlices['DigiPen Restricted'] = formatSlices['DigiPen Mythical'];
 			if (formatSlices['DigiPen Regular'] === undefined) formatSlices['DigiPen Regular'] = formatSlices['Regular'] ?? 0;
 		}
+		if (isFnaf) {
+			// Fallback: if no FNAF Pokemon are defined yet, point FNAF slices to the standard ones.
+			if (formatSlices['FNAF'] === undefined) formatSlices['DigiPen'] = formatSlices['OU'] ?? formatSlices['DOU'] ?? 0;
+			if (formatSlices['FNAF Regular'] === undefined) formatSlices['DigiPen Regular'] = formatSlices['Regular'] ?? 0;
+		}
+
 
 		if (isDigiPenVGC) {
 			// The tiers array groups Pokemon under the correct VGC section headers
@@ -838,7 +899,18 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				if (!Dex.data.Items[id]) itemList.push(id);
 			}
 		}
+		if (isFnaf) {
+			for (const id in Dex.mod('gen9fnaf').data.Items) {
+				if (!Dex.data.Items[id]) itemList.push(id);
+			}
+		}
 		itemList.sort();
+
+		const digipenItems = [['header', "DigiPen items"]];
+		const modifiedItems = [['header', "Modified items"]];
+		const digipenSpecificItems = [['header', "DigiPen Pok\u00e9mon-specific items"]];
+
+		const fnafItems = [['header', "FNAF items"]];
 
 		const greatItems = [['header', "Popular items"]];
 		const goodItems = [['header', "Items"]];
@@ -864,6 +936,8 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 					if (!isDigiPen) continue;
 				} else if (tag === 'DigiPen Past' || tag === 'DigiPen Future') {
 					if (!isDigiPenNatDex) continue;
+				} else if (tag === 'FNAF') {
+					if (!isFnaf) continue;
 				} else if (tag === 'Future') {
 					if (!isDigiPenNatDex) continue;
 				} else if (isNatDex || isNDChampions) {
@@ -882,7 +956,22 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				const banlist = Dex.formats.getRuleTable(Dex.formats.get(gen + 'metronomebattle'));
 				if (banlist.isBanned('item:' + item.id)) continue;
 			}
-			// DigiPen items can define/override quality for teambuilder
+			if (item.isNonstandard && item.isNonstandard.includes("DigiPen")) {
+				if (item.quality === 'specific') {
+					digipenSpecificItems.push(id);
+					continue;
+				}
+				digipenItems.push(id);
+				continue;
+			}
+			if (item.modified === 'DigiPen') {
+				modifiedItems.push(id);
+				continue;
+			}
+			if (item.isNonstandard === "FNAF") {
+				fnafItems.push(id);
+			}
+			/* DigiPen items can define/override quality for teambuilder
 			if (item.quality) {
 				if (item.quality === 'great') greatItems.push(id);
 				else if (item.quality === 'good') goodItems.push(id);
@@ -891,7 +980,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				else if (item.quality === 'bad') badItems.push(id);
 				else goodItems.push(id);
 				continue
-			}
+			} */
 			switch (id) {
 			// mainstays
 			case 'choiceband':
@@ -1116,6 +1205,14 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 				}
 			}
 		}
+		if (isDigiPen) {
+			items.push(...digipenItems);
+			items.push(...modifiedItems);
+			items.push(...digipenSpecificItems);
+		}
+		if (isFnaf) {
+			items.push(...fnafItems);
+		}
 		items.push(...greatItems);
 		items.push(...goodItems);
 		items.push(...specificItems);
@@ -1272,6 +1369,21 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 			BattleTeambuilderTable['gen9digipen'].learnsets[id][moveid] = '9a';
 		}
 		// Inject Digipen learnsets into the base gen9 learnset table so that move-based
+		// Pokémon searches can find the moves
+		if (!BattleTeambuilderTable.learnsets[id]) BattleTeambuilderTable.learnsets[id] = {};
+		for (const moveid in learnset) {
+			BattleTeambuilderTable.learnsets[id][moveid] = '9a';
+		}
+	}
+	const FnafLearnsets = Dex.mod('gen9fnaf').data.Learnsets;
+	for (const id in FnafLearnsets) {
+		const learnset = FnafLearnsets[id].learnset;
+		if (!learnset) continue;
+		BattleTeambuilderTable['gen9fnaf'].learnsets[id] = {};
+		for (const moveid in learnset) {
+			BattleTeambuilderTable['gen9fnaf'].learnsets[id][moveid] = '9a';
+		}
+		// Inject FNAF learnsets into the base gen9 learnset table so that move-based
 		// Pokémon searches can find the moves
 		if (!BattleTeambuilderTable.learnsets[id]) BattleTeambuilderTable.learnsets[id] = {};
 		for (const moveid in learnset) {
@@ -1527,7 +1639,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 	//
 
 	for (const mod of [
-		'gen3rs', 'gen3frlg', 'gen5bw1', 'gen7letsgo', 'gen8bdsp', 'gen9digipen', 'gen9ssb', 'champions',
+		'gen3rs', 'gen3frlg', 'gen5bw1', 'gen7letsgo', 'gen8bdsp', 'gen9digipen', 'gen9fnaf', 'gen9ssb', 'champions',
 	]) {
 		const modDex = Dex.mod(mod);
 		const modData = modDex.data;
@@ -1613,7 +1725,7 @@ process.stdout.write("Building `data/pokedex.js`... ");
 		}
 	}
 	
-	// Inject Digipen dex into BattlePokedex so the client can look
+	// Inject Digipen dex into BattlePokedex
 	const DigiPenModFormatsData = Dex.mod('gen9digipen').data.FormatsData;
 	const digiDex = Dex.mod('gen9digipen');
 
@@ -1673,6 +1785,35 @@ process.stdout.write("Building `data/pokedex.js`... ");
 		if (formatsEntry && formatsEntry.tier) Pokedex[id].tier = formatsEntry.tier;
 		copyDigiPenSpeciesDexMeta(Pokedex[id], species);
 	}
+	
+
+	// Inject Fnaf dex into BattlePokedex
+	const FnafModFormatsData = Dex.mod('gen9fnaf').data.FormatsData;
+	const fnafDex = Dex.mod('gen9fnaf');
+	
+	for (const id in fnafDex.data.Pokedex) {
+		const species = fnafDex.species.get(id);
+		// Inject new FNAF pokemon
+		Pokedex[id] = {
+			num: species.num,
+			name: species.name,
+			types: species.types,
+			baseStats: species.baseStats,
+			abilities: { 0: species.abilities[0] },
+			heightm: species.heightm,
+			weightkg: species.weightkg,
+			color: species.color,
+			eggGroups: species.eggGroups,
+			isNonstandard: species.isNonstandard,
+		};
+		if (species.digipenSprite) Pokedex[id].digipenSprite = true;
+		if (species.digipenIcon) Pokedex[id].digipenIcon = species.digipenIcon;
+		const formatsEntry = FnafModFormatsData[id];
+		if (formatsEntry && formatsEntry.tier) Pokedex[id].tier = formatsEntry.tier;
+		copyDigiPenSpeciesDexMeta(Pokedex[id], species);
+	}
+
+
 	const buf = 'exports.BattlePokedex = ' + es3stringify(Pokedex) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/pokedex.js', buf);
 	fs.writeFileSync('play.pokemonshowdown.com/data/pokedex.json', JSON.stringify(Pokedex));
@@ -1695,6 +1836,7 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (text.shortDesc) Moves[id].shortDesc = text.shortDesc;
 		if (move.basePowerCallback) Moves[id].basePowerCallback = true;
 	}
+
 	// Inject DigiPen-only moves into BattleMovedex so the client can display
 	// tooltips and descriptions. isNonstandard: "DigiPen" is set so that
 	// battle-dex-search can filter them out in non-DigiPen formats.
@@ -1726,6 +1868,38 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (move.contributors && move.contributors.length) Moves[id].contributors = move.contributors;
 		if (move.modified) Moves[id].modified = move.modified;
 	}
+
+	// Inject FNAF-only moves into BattleMovedex so the client can display
+	// tooltips and descriptions properly.
+	const fnafDex = Dex.mod('gen9fnaf');
+	for (const id in fnafDex.data.Moves) {
+		const move = fnafDex.moves.get(id);
+		if (Moves[id]) {
+			if (move.modified) Moves[id].modified = move.modified;
+			if (move.dexEntry) Moves[id].dexEntry = move.dexEntry;
+			if (move.contributors && move.contributors.length) Moves[id].contributors = move.contributors;
+			continue;
+		}
+		Moves[id] = {
+			num: move.num,
+			accuracy: move.accuracy,
+			basePower: move.basePower,
+			category: move.category,
+			name: move.name,
+			pp: move.pp,
+			priority: move.priority,
+			flags: move.flags,
+			type: move.type,
+			target: move.target,
+			isNonstandard: "FNAF",
+		};
+		if (move.desc) Moves[id].desc = move.desc;
+		if (move.shortDesc) Moves[id].shortDesc = move.shortDesc;
+		if (move.dexEntry) Moves[id].dexEntry = move.dexEntry;
+		if (move.contributors && move.contributors.length) Moves[id].contributors = move.contributors;
+		if (move.modified) Moves[id].modified = move.modified;
+	}
+
 	const buf = 'exports.BattleMovedex = ' + es3stringify(Moves) + ';';
 	fs.writeFileSync('play.pokemonshowdown.com/data/moves.js', buf);
 	fs.writeFileSync('play.pokemonshowdown.com/data/moves.json', JSON.stringify(Moves));
@@ -1743,6 +1917,7 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (text.desc) Items[id].desc = text.desc;
 		if (text.shortDesc) Items[id].shortDesc = text.shortDesc;
 	}
+
 	// Inject DigiPen-only items so the client can display tooltips.
 	const digiDex = Dex.mod('gen9digipen');
 
@@ -1757,6 +1932,32 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 			num: item.num, 
 			name: item.name, 
 			isNonstandard: "DigiPen" 
+		};
+		if (item.spritenum) Items[id].spritenum = item.spritenum;
+		if (item.desc) Items[id].desc = item.desc;
+		if (item.shortDesc) Items[id].shortDesc = item.shortDesc;
+		if (item.megaStone) Items[id].megaStone = item.megaStone;
+		if (item.megaEvolves) Items[id].megaEvolves = item.megaEvolves;
+		if (item.itemUser) Items[id].itemUser = item.itemUser;
+		if (item.modified) Items[id].modified = item.modified;
+		if (item.dexEntry) Items[id].dexEntry = item.dexEntry;
+		if (item.contributors && item.contributors.length) Items[id].contributors = item.contributors;
+	}
+
+	// Inject FNAF-only items so the client can display tooltips.
+	const fnafDex = Dex.mod('gen9fnaf');
+
+	for (const id in fnafDex.data.Items) {
+		const item = fnafDex.items.get(id);
+		if (Items[id]) {
+			if (item.modified) Items[id].modified = item.modified;
+			if (item.contributors && item.contributors.length) Items[id].contributors = item.contributors;
+			continue;
+		}
+		Items[id] = {
+			num: item.num, 
+			name: item.name, 
+			isNonstandard: "FNAF" 
 		};
 		if (item.spritenum) Items[id].spritenum = item.spritenum;
 		if (item.desc) Items[id].desc = item.desc;
@@ -1784,6 +1985,7 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 		if (text.desc) Abilities[id].desc = text.desc;
 		if (text.shortDesc) Abilities[id].shortDesc = text.shortDesc;
 	}
+
 	// Inject DigiPen-only abilities so the client can display tooltips.
 	const digiDex = Dex.mod('gen9digipen');
 	for (const id in digiDex.data.Abilities) {
@@ -1797,6 +1999,26 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 			num: ability.num, 
 			name: ability.name, 
 			isNonstandard: "DigiPen" 
+		};
+		if (ability.desc) Abilities[id].desc = ability.desc;
+		if (ability.shortDesc) Abilities[id].shortDesc = ability.shortDesc;
+		if (ability.contributors && ability.contributors.length) Abilities[id].contributors = ability.contributors;
+		if (ability.modified) Abilities[id].modified = ability.modified;
+	}
+
+	// Inject FNAF-only abilities so the client can display tooltips.
+	const fnafDex = Dex.mod('gen9fnaf');
+	for (const id in fnafDex.data.Abilities) {
+		const ability = fnafDex.abilities.get(id);
+		if (Abilities[id]) {
+			if (ability.modified) Abilities[id].modified = ability.modified;
+			if (ability.contributors && ability.contributors.length) Abilities[id].contributors = ability.contributors;
+			continue;
+		};
+		Abilities[id] = { 
+			num: ability.num, 
+			name: ability.name, 
+			isNonstandard: "FNAF" 
 		};
 		if (ability.desc) Abilities[id].desc = ability.desc;
 		if (ability.shortDesc) Abilities[id].shortDesc = ability.shortDesc;
