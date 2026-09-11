@@ -111,6 +111,8 @@ compiledFiles += compiler.compileToDir(`play.pokemonshowdown.com/src`, `play.pok
 
 compiledFiles += compiler.compileToDir(`replay.pokemonshowdown.com/src`, `replay.pokemonshowdown.com/js`, compileOpts);
 
+compiledFiles += compiler.compileToDir(`analysis.pokemonshowdown.com/src`, `analysis.pokemonshowdown.com/js`, compileOpts);
+
 compiledFiles += compiler.compileToDir(`teams.pokemonshowdown.com/src`, `teams.pokemonshowdown.com/js`, compileOpts);
 
 try {

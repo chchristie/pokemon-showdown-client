@@ -2,6 +2,7 @@
 $config = array();
 
 require_once __DIR__ . '/../config/config.inc.php';
+$analysisRoute = $psconfig['routes']['analysis'] ?? 'analysis.pokemonshowdown.com';
 
 $host = strtolower(strval(@$_REQUEST['host']));
 if (preg_match('/^([a-z0-9-_\.]*?)\.psim\.us$/', $host, $m)) {
@@ -9,7 +10,7 @@ if (preg_match('/^([a-z0-9-_\.]*?)\.psim\.us$/', $host, $m)) {
 	if ($config['host'] === 'logs') die; // not authorised
 	if ($config['host'] === 'sim') die; // not authorised
 	if ($config['host'] === 'insecure') $config['host'] = 'showdown.insecure';
-} else if ($host === $psconfig['routes']['client']) {
+} else if ($host === $psconfig['routes']['client'] || $host === $analysisRoute) {
 	$config['host'] = 'showdown';
 } else {
 	die; // not authorised

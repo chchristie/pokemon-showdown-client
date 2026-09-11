@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width" />
+
+<title>Analysis - Pokemon Showdown!</title>
+
+<link rel="stylesheet" href="//pokemonshowdown.com/style/global.css" />
+<link rel="stylesheet" href="//play.pokemonshowdown.com/style/font-awesome.css" />
+<link rel="stylesheet" href="//play.pokemonshowdown.com/style/client.css" />
+<link rel="stylesheet" href="//play.pokemonshowdown.com/style/client2.css" />
+<link rel="stylesheet" href="//play.pokemonshowdown.com/style/battle.css" />
+<link rel="stylesheet" href="//play.pokemonshowdown.com/style/sim-types.css" />
+
+<style>
+	:root { color-scheme: light; }
+	body { background: #f1f4f6; }
+	.analysis-shell { width: 100%; margin: 0; padding: 0; }
+	.analysis-panel { min-height: calc(100vh - 120px); margin: 0; padding: 0; }
+	.analysis-shell > .header { position: relative; z-index: 12; }
+	.analysis-shell > .header .nav { height: 49px; margin: 0; }
+	.analysis-shell > .header .nav .button { height: 34px; margin-top: 6px; padding-top: 7px; padding-bottom: 7px; box-sizing: border-box; font-size: 9pt; }
+	.analysis-home { max-width: 980px; margin: 30px auto; }
+	.analysis-home h1 { margin-bottom: 4px; }
+	.analysis-home > p { color: #53616b; }
+	.analysis-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 22px 0; }
+	.analysis-option { min-height: 92px; text-align: left; }
+	.analysis-option strong, .analysis-option small { display: block; }
+	.analysis-option small { margin-top: 7px; white-space: normal; color: #53616b; }
+	.analysis-form { max-width: 620px; padding: 18px; background: #fff; border: 1px solid #cbd4da; border-radius: 6px; }
+	.analysis-form label { display: block; margin: 12px 0; }
+	.analysis-form select, .analysis-form input[type="text"], .analysis-form textarea { box-sizing: border-box; width: 100%; max-width: 520px; padding: 6px; }
+	.analysis-form textarea { min-height: 190px; font: 9pt monospace; }
+	.analysis-form .button { margin-right: 6px; }
+	.analysis-team-preview { display: block; margin-top: 5px; }
+	.analysis-team-preview strong, .analysis-team-preview small { display: block; }
+	.analysis-team-preview .picon { display: inline-block; vertical-align: middle; margin-right: 2px; }
+	.analysis-choice-summary-wrap { margin: 6px 0; font: 9pt monospace; color: #53616b; }
+	.analysis-choice-summary { display: inline-block; margin-right: 18px; vertical-align: top; }
+	.analysis-choice-controls .megaevo-box { margin: 5px 0; }
+	.analysis-choice-controls .megaevo { display: inline-block; margin-right: 8px; padding: 3px 6px; border: 1px solid #aaa; background: #eef2f5; }
+	.analysis-choice-controls .megaevo.cur { background: #c7e7ff; }
+	.analysis-muted { color: #53616b; }
+	.analysis-debug-log { margin: 0; white-space: pre-wrap; word-break: break-word; font: 8pt monospace; color: #33434d; }
+	.analysis-node-tree { margin: 0 8px 16px 28px; padding: 0; }
+	.analysis-node-tree li { margin: 3px 0; }
+	.analysis-node-button { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 6px; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+	.analysis-node-button:hover, .analysis-node-current .analysis-node-button { background: #dbeaf4; }
+	.analysis-node-action { display: inline-flex; align-items: center; gap: 2px; margin-right: 8px; }
+	.analysis-node-action .picon { display: inline-block; }
+	.analysis-simulation-list { margin: 0; padding: 0; list-style: none; }
+	.analysis-simulation-group { padding: 8px 10px 10px; border-bottom: 1px solid #bbc7cd; }
+	.analysis-simulation-group h3, .analysis-simulation-group p { margin: 0 0 5px; }
+	.analysis-simulation-group > div { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 4px; }
+	.analysis-simulation-list button { box-sizing: border-box; min-width: 0; padding: 6px; border: 1px solid #ccd5da; background: #f7f9fa; color: #26343d; text-align: left; cursor: pointer; }
+	.analysis-simulation-list button:hover, .analysis-simulation-list button.cur { background: #dbeaf4; }
+	.analysis-simulation-list strong, .analysis-simulation-list span, .analysis-simulation-list small { display: block; overflow-wrap: anywhere; }
+	.analysis-simulation-list small { margin-top: 2px; color: #53616b; font: 8pt monospace; }
+	@media (max-width: 1050px) { .analysis-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+	@media (max-width: 650px) { .analysis-options { grid-template-columns: 1fr; } }
+</style>
+
+<div class="analysis-shell" id="main">
+    <noscript><section class="section">You need to enable JavaScript to use this page.</section></noscript>
+</div>
+
+<script nomodule src="//play.pokemonshowdown.com/js/lib/ps-polyfill.js"></script>
+<script src="//play.pokemonshowdown.com/js/lib/preact.min.js"></script>
+<script src="//play.pokemonshowdown.com/config/config.js"></script>
+<script src="//play.pokemonshowdown.com/js/lib/jquery-1.11.0.min.js"></script>
+<script src="//play.pokemonshowdown.com/js/lib/html-sanitizer-minified.js"></script>
+<script src="//play.pokemonshowdown.com/js/battle-sound.js"></script>
+<script src="//play.pokemonshowdown.com/js/battledata.js"></script>
+<script src="//play.pokemonshowdown.com/data/pokedex-mini.js"></script>
+<script src="//play.pokemonshowdown.com/data/pokedex-mini-bw.js"></script>
+<script src="//play.pokemonshowdown.com/data/graphics.js"></script>
+<script src="//play.pokemonshowdown.com/data/pokedex.js"></script>
+<script src="//play.pokemonshowdown.com/data/moves.js"></script>
+<script src="//play.pokemonshowdown.com/data/abilities.js"></script>
+<script src="//play.pokemonshowdown.com/data/items.js"></script>
+<script src="//play.pokemonshowdown.com/data/teambuilder-tables.js"></script>
+<script src="../play.pokemonshowdown.com/js/battle-tooltips.js"></script>
+<script src="//play.pokemonshowdown.com/js/battle.js"></script>
+<script src="//play.pokemonshowdown.com/js/battle-choices.js"></script>
+<script src="js/analysis-model.js?20260910"></script>
+<script src="js/analysis-api.js?20260910"></script>
+<script src="js/analysis-nodes.js?20260910"></script>
+<script src="js/analysis-team-utils.js?20260910"></script>
+<script src="js/analysis-header.js?20260910"></script>
+<script src="js/analysis-node-tree.js?20260910"></script>
+<script src="js/analysis-replay-controls.js?20260910"></script>
+<script src="js/analysis.js?20260909"></script>

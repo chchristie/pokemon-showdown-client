@@ -17,6 +17,7 @@
         "./play.pokemonshowdown.com/js/lib/preact.d.ts",
         "./play.pokemonshowdown.com/src/*",
         "./replay.pokemonshowdown.com/src/*",
+        "./analysis.pokemonshowdown.com/src/*",
         "./teams.pokemonshowdown.com/src/*"
     ]
 }
