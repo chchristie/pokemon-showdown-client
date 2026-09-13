@@ -13,7 +13,10 @@ export interface AnalysisSimulationResult {
 	seed: string;
 	log: string[];
 	turnLog: string[];
+	switchInputLog: string[];
 	totalDamage: number;
+	protectedMisses: string[];
+	brokenProtections: string[];
 }
 
 export interface AnalysisSimulationGroup {
@@ -22,6 +25,24 @@ export interface AnalysisSimulationGroup {
 	min: AnalysisSimulationResult;
 	median: AnalysisSimulationResult;
 	max: AnalysisSimulationResult;
+	executions: AnalysisSimulationResult[];
+	requiredCritMoves: string[];
+	requiredMissMoves: string[];
+}
+
+export type AnalysisSimulationRoll = 'min' | 'median' | 'max';
+export type AnalysisGroupingMode = 'turn' | 'state';
+export type AnalysisPhase = 'preview' | 'default' | 'selection' | 'one-turn' | 'replay' |
+	'simulation' | 'simulating' | 'simulation-selection' | 'simulation-switch-selection' |
+	'mid-turn-switch-selection' | 'switch-selection';
+
+export interface AnalysisMidTurnSwitchOption {
+	side: 'p1' | 'p2';
+	pokemonIndex: number;
+	pokemon: string;
+	reason: string;
+	reasonName: string;
+	replacementIndex?: number;
 }
 
 export interface AnalysisTab {
@@ -35,15 +56,25 @@ export interface AnalysisTab {
 	loading?: boolean;
 	requests?: any[];
 	requestState?: string;
-	phase: 'preview' | 'default' | 'selection' | 'one-turn' | 'replay' | 'simulation';
+	phase: AnalysisPhase;
 	gameType?: string;
 	nodes: Record<string, AnalysisNode>;
 	currentNodeId: string;
 	rootSeed: string;
 	simulationCount: number;
 	simulationGroups?: AnalysisSimulationGroup[];
+	turnSimulationGroups?: AnalysisSimulationGroup[];
+	stateSimulationGroups?: AnalysisSimulationGroup[];
+	simulationGroupingMode?: AnalysisGroupingMode;
 	simulationResultCount?: number;
 	selectedSimulationIndex?: number;
+	selectedSimulationGroupIndex?: number;
+	hoveredSimulationGroupIndex?: number;
+	simulationRoll?: AnalysisSimulationRoll;
+	simulationInputLog?: string[];
+	midTurnSwitchOptions?: AnalysisMidTurnSwitchOption[];
+	midTurnSwitchOptionIndex?: number;
+	oneTurnDestination?: 'default' | 'simulation-selection' | 'mid-turn-switch-selection' | 'switch-selection';
 }
 
 export interface AnalysisBattle {

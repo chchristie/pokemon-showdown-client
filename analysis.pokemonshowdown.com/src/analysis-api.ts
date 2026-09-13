@@ -12,14 +12,23 @@ export interface AnalysisRequest {
 
 export interface AnalysisBatchRequest extends AnalysisRequest {
 	inputLog: string[];
+	midTurnSwitchChoices?: AnalysisMidTurnSwitchChoice[];
 	count: number;
 }
 
-async function postAnalysis(path: string, request: AnalysisRequest | AnalysisBatchRequest) {
+export interface AnalysisMidTurnSwitchChoice {
+	side: 'p1' | 'p2';
+	pokemonIndex: number;
+	reason: string;
+	replacementIndex: number;
+}
+
+async function postAnalysis(path: string, request: AnalysisRequest | AnalysisBatchRequest, signal?: AbortSignal) {
 	const response = await fetch(`${ANALYSIS_API}${path}`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
 		body: JSON.stringify(request),
+		signal,
 	});
 	const data = await response.json();
 	if (!response.ok || data.error) {
@@ -32,6 +41,6 @@ export async function runAnalysis(request: AnalysisRequest) {
 	return postAnalysis('/analysis/start', request);
 }
 
-export async function runAnalysisBatch(request: AnalysisBatchRequest) {
-	return postAnalysis('/analysis/simulate', request);
+export async function runAnalysisBatch(request: AnalysisBatchRequest, signal?: AbortSignal) {
+	return postAnalysis('/analysis/simulate', request, signal);
 }

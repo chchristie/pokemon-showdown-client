@@ -7,7 +7,8 @@ import { Teams } from '../../play.pokemonshowdown.com/src/battle-teams';
 import {
 	FORMATS, LAYOUT, getRequestState,
 	type AnalysisBattle, type AnalysisNode, type AnalysisSimulationGroup, type AnalysisSimulationResult, type AnalysisTab,
-	type LocalTeam, type PlaybackStage, type StartMode,
+	type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisSimulationRoll, type LocalTeam,
+	type PlaybackStage, type StartMode,
 } from './analysis-model';
 import { runAnalysis, runAnalysisBatch } from './analysis-api';
 import { AnalysisHeader } from './analysis-header';
@@ -18,6 +19,21 @@ import { packTeamSyntax } from './analysis-team-utils';
 
 function PSIcon(props: { pokemon: any }) {
 	return <span class="picon" style={(window as any).Dex.getPokemonIcon(props.pokemon)} />;
+}
+
+interface SimulationActionDetail {
+	label: string;
+	pokemon?: string;
+}
+
+interface SimulationActionSummary {
+	side: string;
+	pokemon: string;
+	type: 'move' | 'switch' | 'cant' | 'faint';
+	move?: string;
+	switchedTo?: string;
+	reason?: string;
+	details?: SimulationActionDetail[];
 }
 
 class AnalysisApp extends preact.Component {
@@ -50,7 +66,11 @@ class AnalysisApp extends preact.Component {
 	pendingTarget: { side: 'p1' | 'p2', index: number, choice: string, targetType: string } | null = null;
 	choiceSide: { side: 'p1' | 'p2', index: number } | null = null;
 	choiceSnapshot: { moves: AnalysisApp['moveChoicesBySlot'], switches: AnalysisApp['switchChoicesBySlot'] } | null = null;
+	pendingHydration: { tabId: string, inputLog: string[] } | null = null;
+	simulationGroupElements: Record<number, HTMLElement | null> = {};
+	simulationAbortController: AbortController | null = null;
 	playbackStage: PlaybackStage = null;
+	oneTurnStartTurn: number | null = null;
 	turnView: boolean | string = false;
 	layout = { battleWidth: LAYOUT.battleWidth, battleHeight: LAYOUT.battleHeight, mainWidth: LAYOUT.leftWidth, treeWidth: LAYOUT.rightWidth, sideBySide: true };
 
@@ -123,25 +143,65 @@ class AnalysisApp extends preact.Component {
 		return tab.nodes[id];
 	}
 
-	hydrateNodeChoices(tab: AnalysisTab, node: AnalysisNode) {
-		for (const line of node.inputLog) {
+	hydrateInputLog(tab: AnalysisTab, inputLog: string[]) {
+		for (const line of inputLog) {
 			const match = /^>p([12])\s+(.+)$/.exec(line);
 			if (!match) continue;
 			const side = match[1] === '1' ? 'p1' : 'p2';
 			const builder = this.choiceBuilders[side];
 			if (!builder) continue;
-			const index = builder.index();
 			builder.addChoices(match[2]);
-			if (match[2].startsWith('move ')) this.moveChoicesBySlot[side][index] = match[2];
-			if (match[2].startsWith('switch ')) this.switchChoicesBySlot[side][index] = match[2];
+			for (let index = 0; index < builder.choices.length; index++) {
+				const choice = builder.choices[index];
+				if (choice.startsWith('move ')) this.moveChoicesBySlot[side][index] = choice;
+				if (choice.startsWith('switch ')) this.switchChoicesBySlot[side][index] = choice;
+			}
 		}
+	}
+
+	saveLeafDraft(tab: AnalysisTab, inputLog?: string[]) {
+		const node = tab.nodes[tab.currentNodeId];
+		if (!node) return;
+		for (var candidate of Object.values(tab.nodes)) {
+			if (candidate.parentId === node.id) return;
+		}
+		if (inputLog) {
+			node.inputLog = [...inputLog];
+			return;
+		}
+		const draft: string[] = [];
+		const sides = ['p1', 'p2'] as const;
+		for (var sideIndex = 0; sideIndex < sides.length; sideIndex++) {
+			var side = sides[sideIndex];
+			var request = tab.requests?.[side === 'p1' ? 0 : 1];
+			if (request?.active) {
+				var choices: string[] = [];
+				var hasChoice = false;
+				for (var activeIndex = 0; activeIndex < request.active.length; activeIndex++) {
+					var choice = request.active[activeIndex] ?
+						this.moveChoicesBySlot[side][activeIndex] || this.switchChoicesBySlot[side][activeIndex] || 'pass' : 'pass';
+					choices.push(choice);
+					if (choice !== 'pass') hasChoice = true;
+				}
+				if (hasChoice) draft.push(`>${side} ${choices.join(', ')}`);
+				continue;
+			}
+			var builder = this.choiceBuilders[side];
+			if (builder && !builder.isEmpty()) draft.push(`>${side} ${builder.toString()}`);
+		}
+		node.inputLog = draft;
+	}
+
+	selectAnalysisNode(tab: AnalysisTab, nodeId: string) {
+		this.saveLeafDraft(tab);
+		void this.restoreAnalysisNode(tab, nodeId);
 	}
 
 	replayNodesFor = (tab: AnalysisTab, nodeId: string, includeNode: boolean) => {
 		return replayNodesFor(tab, nodeId, includeNode);
 	};
 
-	restoreAnalysisNode = async (tab: AnalysisTab, nodeId: string) => {
+	restoreAnalysisNode = async (tab: AnalysisTab, nodeId: string, inputLog?: string[]) => {
 		const node = tab.nodes[nodeId];
 		if (!node) return;
 		try {
@@ -156,10 +216,8 @@ class AnalysisApp extends preact.Component {
 			tab.requestState = getRequestState(data.requestState, data.requests);
 			tab.gameType = data.gameType || tab.gameType;
 			tab.phase = tab.requestState === 'teampreview' ? 'preview' : 'default';
+			this.pendingHydration = { tabId: tab.id, inputLog: [...(inputLog ?? node.inputLog)] };
 			this.destroyBattle();
-			this.setAnalysisTeams(tab.requests);
-			this.setChoiceBuilders(tab.requests, tab.gameType);
-			this.hydrateNodeChoices(tab, node);
 			this.forceUpdate();
 		} catch (error: any) {
 			this.startError = error.message || 'Unable to restore this node.';
@@ -167,28 +225,107 @@ class AnalysisApp extends preact.Component {
 		}
 	};
 
+	getPotentialMidTurnSwitches(tab: AnalysisTab) {
+		const options: AnalysisMidTurnSwitchOption[] = [];
+		for (const side of ['p1', 'p2'] as const) {
+			const request = tab.requests?.[side === 'p1' ? 0 : 1];
+			if (!request?.active || !request.side?.pokemon) continue;
+			const activePokemon = request.side.pokemon.filter((pokemon: any) => pokemon.active);
+			for (let slot = 0; slot < request.active.length; slot++) {
+				const pokemon = activePokemon[slot];
+				if (!pokemon) continue;
+				const pokemonIndex = request.side.pokemon.indexOf(pokemon);
+				const moveChoice = this.moveChoicesBySlot[side][slot];
+				const moveIndex = Number(/^move (\d+)/.exec(moveChoice || '')?.[1]) - 1;
+				const move = request.active[slot]?.moves?.[moveIndex];
+				const moveData = move && (window as any).Dex.moves.get(move.id || move.name);
+				if (move?.selfSwitch || moveData?.selfSwitch) {
+					options.push({
+						side, pokemonIndex, pokemon: pokemon.name || pokemon.details,
+						reason: moveData.id, reasonName: moveData.name,
+					});
+				}
+			}
+			for (let pokemonIndex = 0; pokemonIndex < request.side.pokemon.length; pokemonIndex++) {
+				const pokemon = request.side.pokemon[pokemonIndex];
+				if (pokemon.fainted) continue;
+				const item = (window as any).Dex.items.get(pokemon.item);
+				if (item.id === 'ejectbutton' || item.id === 'ejectpack') {
+					options.push({
+						side, pokemonIndex, pokemon: pokemon.name || pokemon.details,
+						reason: item.id, reasonName: item.name,
+					});
+				}
+			}
+		}
+		return options;
+	}
+
+	prepareSimulation = (tab: AnalysisTab) => {
+		const options = this.getPotentialMidTurnSwitches(tab);
+		if (!options.length) return void this.simulateNextTurn(tab);
+		tab.midTurnSwitchOptions = options;
+		tab.midTurnSwitchOptionIndex = 0;
+		tab.phase = 'simulation-switch-selection';
+		this.forceUpdate();
+	};
+
 	simulateNextTurn = async (tab: AnalysisTab) => {
 		if (tab.loading) return;
+		const abortController = new AbortController();
+		this.simulationAbortController?.abort();
+		this.simulationAbortController = abortController;
 		tab.loading = true;
+		tab.phase = 'simulating';
 		this.forceUpdate();
 		try {
 			const inputLog = [
 				`>p1 ${this.actionChoiceString(tab, 'p1')}`,
 				`>p2 ${this.actionChoiceString(tab, 'p2')}`,
 			];
+			tab.simulationInputLog = inputLog;
 			const data = await runAnalysisBatch({
 				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
 				replayNodes: this.replayNodesFor(tab, tab.currentNodeId, false), inputLog,
+				midTurnSwitchChoices: tab.midTurnSwitchOptions?.map(option => ({
+					side: option.side, pokemonIndex: option.pokemonIndex, reason: option.reason,
+					replacementIndex: option.replacementIndex!,
+				})),
 				count: tab.simulationCount,
-			});
-			tab.simulationGroups = data.groups || [];
+			}, abortController.signal);
+			if (abortController.signal.aborted || this.simulationAbortController !== abortController) return;
+			const simulationGroups: AnalysisSimulationGroup[] = data.turnGroups || [];
+			tab.turnSimulationGroups = simulationGroups;
+			tab.stateSimulationGroups = data.stateGroups || [];
+			tab.simulationGroupingMode = 'turn';
+			tab.simulationGroups = simulationGroups;
 			tab.simulationResultCount = data.simulationCount || 0;
-			tab.selectedSimulationIndex = undefined;
+			tab.selectedSimulationGroupIndex = 0;
+			tab.simulationRoll = 'median';
+			const simulation = simulationGroups[0]?.median;
+			if (simulation) {
+				this.oneTurnStartTurn = tab.nodes[tab.currentNodeId]?.turn ?? 0;
+				tab.selectedSimulationIndex = simulation.index;
+				tab.log = simulation.log;
+				tab.phase = 'one-turn';
+				tab.oneTurnDestination = 'simulation-selection';
+				this.destroyBattle();
+			} else {
+				tab.phase = 'default';
+			}
 		} catch (error: any) {
-			this.startError = error.message || 'Unable to simulate the turn.';
+			if (error.name !== 'AbortError' && !abortController.signal.aborted) {
+				this.startError = error.message || 'Unable to simulate the turn.';
+				tab.phase = 'default';
+			}
 		} finally {
-			tab.loading = false;
-			this.forceUpdate();
+			tab.midTurnSwitchOptions = undefined;
+			tab.midTurnSwitchOptionIndex = undefined;
+			if (this.simulationAbortController === abortController) {
+				this.simulationAbortController = null;
+				tab.loading = false;
+				this.forceUpdate();
+			}
 		}
 	};
 
@@ -205,15 +342,22 @@ class AnalysisApp extends preact.Component {
 				replayNodes: this.replayNodesFor(tab, tab.currentNodeId, false), inputLog: nodeInputLog,
 			});
 			if (currentNode) currentNode.seed = data.actionSeed;
-			this.storeAnalysisNode(tab, [], currentNode?.id || null);
+			const requestState = getRequestState(data.requestState, data.requests);
+			if (requestState !== 'switch') this.storeAnalysisNode(tab, [], currentNode?.id || null);
+			const pendingMidTurnSwitches = data.pendingMidTurnSwitches as AnalysisMidTurnSwitchOption[];
 			tab.simulationGroups = undefined;
 			tab.simulationResultCount = undefined;
 			tab.selectedSimulationIndex = undefined;
 			tab.log = data.log || [];
 			tab.state = data.state;
 			tab.requests = data.requests;
-			tab.requestState = getRequestState(data.requestState, data.requests);
+			tab.requestState = requestState;
+			tab.midTurnSwitchOptions = pendingMidTurnSwitches?.length ? pendingMidTurnSwitches : undefined;
+			tab.midTurnSwitchOptionIndex = pendingMidTurnSwitches?.length ? 0 : undefined;
 			tab.phase = tab.requestState === 'teampreview' ? 'preview' : 'one-turn';
+			tab.oneTurnDestination = pendingMidTurnSwitches?.length ? 'mid-turn-switch-selection' :
+				requestState === 'switch' ? 'switch-selection' : 'default';
+			this.oneTurnStartTurn = currentNode?.turn ?? 0;
 			tab.gameType = data.gameType || tab.gameType;
 			this.setAnalysisTeams(tab.requests);
 			this.setChoiceBuilders(data.requests, tab.gameType);
@@ -226,43 +370,483 @@ class AnalysisApp extends preact.Component {
 		}
 	};
 
-	openSimulation = (tab: AnalysisTab, simulation: AnalysisSimulationResult) => {
+	selectMidTurnSwitch = (tab: AnalysisTab, replacementIndex: number) => {
+		const index = tab.midTurnSwitchOptionIndex || 0;
+		const option = tab.midTurnSwitchOptions?.[index];
+		if (!option) return;
+		option.replacementIndex = replacementIndex;
+		if (index + 1 < tab.midTurnSwitchOptions!.length) {
+			tab.midTurnSwitchOptionIndex = index + 1;
+			this.forceUpdate();
+			return;
+		}
+		void this.submitMidTurnSwitches(tab);
+	};
+
+	submitMidTurnSwitches = async (tab: AnalysisTab) => {
+		const parent = tab.nodes[tab.currentNodeId];
+		const options = tab.midTurnSwitchOptions || [];
+		if (!parent?.seed || !options.length || tab.loading) return;
+		const switchInputLog: string[] = [];
+		for (const side of ['p1', 'p2'] as const) {
+			const sideOptions: AnalysisMidTurnSwitchOption[] = [];
+			for (const option of options) {
+				if (option.side === side) sideOptions.push(option);
+			}
+			if (!sideOptions.length) continue;
+			const request = tab.requests?.[side === 'p1' ? 0 : 1];
+			const active = request?.side?.pokemon?.filter((pokemon: any) => pokemon.active) || [];
+			const choices: string[] = [];
+			for (let slot = 0; slot < (request?.forceSwitch?.length || 0); slot++) {
+				if (!request.forceSwitch[slot]) {
+					choices.push('pass');
+					continue;
+				}
+				const pokemonIndex = request.side.pokemon.indexOf(active[slot]);
+				let replacementIndex: number | undefined;
+				for (const option of sideOptions) {
+					if (option.pokemonIndex === pokemonIndex) replacementIndex = option.replacementIndex;
+				}
+				choices.push(replacementIndex !== undefined ? `switch ${replacementIndex + 1}` : 'pass');
+			}
+			if (choices.length) switchInputLog.push(`>${side} ${choices.join(', ')}`);
+		}
+		if (!switchInputLog.length) return;
+		tab.loading = true;
+		this.forceUpdate();
+		try {
+			const previousLog = tab.log;
+			parent.inputLog.push(...switchInputLog);
+			const data = await runAnalysis({
+				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				replayNodes: this.replayNodesFor(tab, parent.id, true),
+			});
+			const requestState = getRequestState(data.requestState, data.requests);
+			const pendingMidTurnSwitches = data.pendingMidTurnSwitches as AnalysisMidTurnSwitchOption[];
+			if (!pendingMidTurnSwitches?.length && requestState !== 'switch') {
+				this.storeAnalysisNode(tab, [], parent.id);
+			}
+			tab.log = data.log || [];
+			tab.state = data.state;
+			tab.requests = data.requests;
+			tab.requestState = requestState;
+			tab.gameType = data.gameType || tab.gameType;
+			tab.midTurnSwitchOptions = pendingMidTurnSwitches?.length ? pendingMidTurnSwitches : undefined;
+			tab.midTurnSwitchOptionIndex = pendingMidTurnSwitches?.length ? 0 : undefined;
+			tab.phase = 'one-turn';
+			tab.oneTurnDestination = pendingMidTurnSwitches?.length ? 'mid-turn-switch-selection' :
+				requestState === 'switch' ? 'switch-selection' : 'default';
+			this.setAnalysisTeams(tab.requests);
+			this.setChoiceBuilders(tab.requests, tab.gameType);
+			const battle = this.battle as any;
+			const prefixMatches = previousLog.every((line, lineIndex) =>
+				tab.log[lineIndex] === line || (line.startsWith('|t:|') && tab.log[lineIndex]?.startsWith('|t:|'))
+			);
+			if (battle && prefixMatches) {
+				battle.pause();
+				for (const line of tab.log.slice(previousLog.length)) battle.add(line);
+				this.playbackStage = 'playing';
+				battle.play();
+			} else {
+				this.oneTurnStartTurn = parent.turn;
+				this.destroyBattle();
+			}
+		} catch (error: any) {
+			parent.inputLog.splice(-switchInputLog.length);
+			this.startError = error.message || 'Unable to submit replacement.';
+			tab.phase = 'mid-turn-switch-selection';
+		} finally {
+			tab.loading = false;
+			this.forceUpdate();
+		}
+	};
+
+	submitSwitchChoices = async (tab: AnalysisTab) => {
+		const parent = tab.nodes[tab.currentNodeId];
+		if (!parent?.seed || tab.loading) return;
+		const switchInputLog: string[] = [];
+		for (const side of ['p1', 'p2'] as const) {
+			const request = tab.requests?.[side === 'p1' ? 0 : 1];
+			if (request?.forceSwitch) {
+				switchInputLog.push(`>${side} ${this.choiceBuilders[side]?.toString() || 'default'}`);
+			}
+		}
+		if (!switchInputLog.length) return;
+		tab.loading = true;
+		this.forceUpdate();
+		try {
+			const previousLog = tab.log;
+			parent.inputLog.push(...switchInputLog);
+			const data = await runAnalysis({
+				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				replayNodes: this.replayNodesFor(tab, parent.id, true),
+			});
+			const requestState = getRequestState(data.requestState, data.requests);
+			const pendingMidTurnSwitches = data.pendingMidTurnSwitches as AnalysisMidTurnSwitchOption[];
+			if (!pendingMidTurnSwitches?.length && requestState !== 'switch') {
+				this.storeAnalysisNode(tab, [], parent.id);
+			}
+			tab.log = data.log || [];
+			tab.state = data.state;
+			tab.requests = data.requests;
+			tab.requestState = requestState;
+			tab.gameType = data.gameType || tab.gameType;
+			tab.midTurnSwitchOptions = pendingMidTurnSwitches?.length ? pendingMidTurnSwitches : undefined;
+			tab.midTurnSwitchOptionIndex = pendingMidTurnSwitches?.length ? 0 : undefined;
+			tab.phase = 'one-turn';
+			tab.oneTurnDestination = pendingMidTurnSwitches?.length ? 'mid-turn-switch-selection' :
+				requestState === 'switch' ? 'switch-selection' : 'default';
+			this.setAnalysisTeams(tab.requests);
+			this.setChoiceBuilders(tab.requests, tab.gameType);
+			const battle = this.battle as any;
+			const prefixMatches = previousLog.every((line, index) =>
+				tab.log[index] === line || (line.startsWith('|t:|') && tab.log[index]?.startsWith('|t:|'))
+			);
+			if (battle && prefixMatches) {
+				battle.pause();
+				for (const line of tab.log.slice(previousLog.length)) battle.add(line);
+				this.playbackStage = 'playing';
+				battle.play();
+			} else {
+				this.oneTurnStartTurn = parent.turn;
+				this.destroyBattle();
+			}
+		} catch (error: any) {
+			parent.inputLog.splice(-switchInputLog.length);
+			this.startError = error.message || 'Unable to submit replacements.';
+			tab.phase = 'switch-selection';
+		} finally {
+			tab.loading = false;
+			this.forceUpdate();
+		}
+	};
+
+	getSelectedSimulation(tab: AnalysisTab) {
+		const group = tab.simulationGroups?.[tab.selectedSimulationGroupIndex ?? 0];
+		return group?.[tab.simulationRoll || 'median'] || null;
+	}
+
+	clearSimulationState(tab: AnalysisTab) {
+		this.simulationAbortController?.abort();
+		this.simulationAbortController = null;
+		tab.loading = false;
+		tab.simulationGroups = undefined;
+		tab.turnSimulationGroups = undefined;
+		tab.stateSimulationGroups = undefined;
+		tab.simulationGroupingMode = undefined;
+		tab.simulationResultCount = undefined;
+		tab.selectedSimulationIndex = undefined;
+		tab.selectedSimulationGroupIndex = undefined;
+		tab.hoveredSimulationGroupIndex = undefined;
+		tab.simulationRoll = undefined;
+		tab.midTurnSwitchOptions = undefined;
+		tab.midTurnSwitchOptionIndex = undefined;
+		tab.oneTurnDestination = undefined;
+	}
+
+	cancelSimulationSwitchSelection = (tab: AnalysisTab) => {
+		tab.midTurnSwitchOptions = undefined;
+		tab.midTurnSwitchOptionIndex = undefined;
+		tab.phase = 'default';
+		this.forceUpdate();
+	};
+
+	selectSimulationSwitch = (tab: AnalysisTab, replacementIndex: number) => {
+		const index = tab.midTurnSwitchOptionIndex || 0;
+		const option = tab.midTurnSwitchOptions?.[index];
+		if (!option) return;
+		option.replacementIndex = replacementIndex;
+		if (index + 1 < tab.midTurnSwitchOptions!.length) {
+			tab.midTurnSwitchOptionIndex = index + 1;
+			this.forceUpdate();
+			return;
+		}
+		void this.simulateNextTurn(tab);
+	};
+
+	cancelSimulation = (tab: AnalysisTab, nodeId = tab.currentNodeId) => {
+		const inputLog = tab.simulationInputLog;
+		this.saveLeafDraft(tab, inputLog);
+		this.clearSimulationState(tab);
+		tab.simulationInputLog = undefined;
+		void this.restoreAnalysisNode(tab, nodeId);
+	};
+
+	showSimulation = (
+		tab: AnalysisTab, groupIndex: number, roll = tab.simulationRoll || 'median', scroll = false
+	) => {
+		const simulation = tab.simulationGroups?.[groupIndex]?.[roll];
+		if (!simulation) return;
 		tab.log = simulation.log;
-		tab.phase = 'simulation';
+		tab.selectedSimulationGroupIndex = groupIndex;
+		tab.simulationRoll = roll;
 		tab.selectedSimulationIndex = simulation.index;
+		tab.hoveredSimulationGroupIndex = undefined;
+		tab.phase = 'simulation-selection';
+		this.destroyBattle();
+		this.forceUpdate();
+		if (scroll) requestAnimationFrame(() => this.simulationGroupElements[groupIndex]?.scrollIntoView({ block: 'start' }));
+	};
+
+	changeSimulationGrouping = (tab: AnalysisTab, mode: AnalysisGroupingMode) => {
+		tab.simulationGroupingMode = mode;
+		tab.simulationGroups = mode === 'state' ? tab.stateSimulationGroups : tab.turnSimulationGroups;
+		this.showSimulation(tab, 0, 'median', true);
+	};
+
+	previewSimulation = (tab: AnalysisTab, groupIndex?: number) => {
+		const selectedIndex = tab.selectedSimulationGroupIndex ?? 0;
+		const simulation = tab.simulationGroups?.[groupIndex ?? selectedIndex]?.[tab.simulationRoll || 'median'];
+		if (!simulation) return;
+		tab.hoveredSimulationGroupIndex = groupIndex;
+		tab.log = simulation.log;
 		this.destroyBattle();
 		this.forceUpdate();
 	};
 
-	closeSimulation = (tab: AnalysisTab) => {
-		tab.selectedSimulationIndex = undefined;
-		void this.restoreAnalysisNode(tab, tab.currentNodeId);
+	changeSimulationRoll = (tab: AnalysisTab, roll: AnalysisSimulationRoll) => {
+		this.showSimulation(tab, tab.selectedSimulationGroupIndex ?? 0, roll);
 	};
 
-	getSelectedSimulation(tab: AnalysisTab) {
-		if (tab.selectedSimulationIndex === undefined) return null;
-		for (const group of tab.simulationGroups || []) {
-			for (const simulation of [group.min, group.median, group.max]) {
-				if (simulation.index === tab.selectedSimulationIndex) return simulation;
+	replaySimulationTurn = (tab: AnalysisTab) => {
+		const simulation = this.getSelectedSimulation(tab);
+		if (!simulation) return;
+		tab.log = simulation.log;
+		tab.phase = 'one-turn';
+		tab.oneTurnDestination = 'simulation-selection';
+		this.destroyBattle();
+		this.oneTurnStartTurn = tab.nodes[tab.currentNodeId]?.turn ?? 0;
+		this.forceUpdate();
+	};
+
+	selectSimulationOutcome = async (tab: AnalysisTab) => {
+		const simulation = this.getSelectedSimulation(tab);
+		const parent = tab.nodes[tab.currentNodeId];
+		if (!simulation || !parent || !tab.simulationInputLog) return;
+		tab.loading = true;
+		this.forceUpdate();
+		try {
+			const selectedInputLog = [...tab.simulationInputLog, ...(simulation.switchInputLog || [])];
+			const replayNodes = [
+				...this.replayNodesFor(tab, parent.id, false),
+				{ seed: simulation.seed, inputLog: selectedInputLog },
+			];
+			const data = await runAnalysis({
+				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				replayNodes,
+			});
+			parent.seed = simulation.seed;
+			parent.inputLog = selectedInputLog;
+			this.clearSimulationState(tab);
+			tab.simulationInputLog = undefined;
+			tab.log = data.log || [];
+			tab.state = data.state;
+			tab.requests = data.requests;
+			tab.requestState = getRequestState(data.requestState, data.requests);
+			tab.gameType = data.gameType || tab.gameType;
+			if (tab.requestState === 'switch') {
+				tab.phase = 'switch-selection';
+			} else {
+				this.storeAnalysisNode(tab, [], parent.id);
+				tab.phase = tab.requestState === 'teampreview' ? 'preview' : 'default';
+			}
+			this.destroyBattle();
+			this.setAnalysisTeams(tab.requests);
+			this.setChoiceBuilders(tab.requests, tab.gameType);
+		} catch (error: any) {
+			this.startError = error.message || 'Unable to select this outcome.';
+		} finally {
+			tab.loading = false;
+			this.forceUpdate();
+		}
+	};
+
+	getSimulationActions(
+		simulation: AnalysisSimulationResult, mode: AnalysisGroupingMode = 'turn', group?: AnalysisSimulationGroup
+	) {
+		const speciesByIdent = new Map<string, string>();
+		const activeByPosition = new Map<string, string>();
+		const turnStart = Math.max(0, simulation.log.length - simulation.turnLog.length);
+		for (const line of simulation.log.slice(0, turnStart)) {
+			const parts = line.split('|');
+			if (!['switch', 'drag', 'replace'].includes(parts[1])) continue;
+			const position = parts[2]?.split(':')[0];
+			const species = parts[3]?.split(',')[0];
+			if (parts[2] && species) speciesByIdent.set(parts[2], species);
+			if (position && species) activeByPosition.set(position, species);
+		}
+		const actions: SimulationActionSummary[] = [];
+		const statusNames: Record<string, string> = {
+			brn: 'Burn', par: 'Paralysis', slp: 'Sleep', frz: 'Freeze', psn: 'Poison', tox: 'Poison',
+		};
+		const statNames: Record<string, string> = {
+			atk: 'Atk', spa: 'Spa', def: 'Def', spd: 'Spd', spe: 'Spe', accuracy: 'Acc', evasion: 'Eva',
+		};
+		const trackedItems = new Set([
+			'Sitrus Berry', 'Salac Berry', 'Aguav Berry', 'Custap Berry', 'Figy Berry', 'Ganlon Berry',
+			'Lansat Berry', 'Liechi Berry', 'Mago Berry', 'Micle Berry', 'Focus Sash', 'Starf Berry', 'Oran Berry',
+		]);
+		let pendingQuickClaw = false;
+		let moveAction: SimulationActionSummary | null = null;
+		let moveDamage = false;
+		let moveResults: Record<string, SimulationActionDetail[]> = {};
+		let currentMoveKey = '';
+		const moveCounts = new Map<string, number>();
+		const getPosition = (ident: string) => ident.split(':')[0];
+		const getSide = (ident: string) => /^p([12])/.exec(ident)?.[1] || '';
+		const getSpecies = (ident: string) => speciesByIdent.get(ident) ||
+			activeByPosition.get(getPosition(ident)) || ident.replace(/^p[12][a-z]?: /, '');
+		const addResult = (category: string, label: string, ident?: string) => {
+			(moveResults[category] ||= []).push({ label, pokemon: ident ? getSpecies(ident) : undefined });
+		};
+		const finishMove = () => {
+			if (!moveAction) return;
+			const details = [
+				...(moveResults.quickclaw || []),
+				...(moveResults.miss || []),
+				...(moveResults.crit || []),
+				...(moveResults.hitcount || []),
+				...(moveDamage ? moveResults.confusion || [] : []),
+				...(moveDamage ? moveResults.status || [] : []),
+				...(moveDamage ? moveResults.boost || [] : []),
+				...(moveDamage ? moveResults.unboost || [] : []),
+				...(moveResults.enditem || []),
+			];
+			if (details.length) moveAction.details = details;
+			moveAction = null;
+			moveDamage = false;
+			moveResults = {};
+			currentMoveKey = '';
+		};
+		for (const line of simulation.turnLog) {
+			const parts = line.split('|');
+			const event = parts[1];
+			if (event === '-activate' && parts[3] === 'item: Quick Claw') {
+				if (mode === 'turn') pendingQuickClaw = true;
+				continue;
+			}
+			if (event === 'move' && moveAction && parts.slice(5).some(part => part.startsWith('[spread]')) &&
+				moveAction.side === getSide(parts[2]) && moveAction.pokemon === getSpecies(parts[2]) &&
+				moveAction.move === (parts[3] || 'Move')) {
+				continue;
+			}
+			if (event === '-damage' && parts.slice(4).includes('[from] confusion')) {
+				finishMove();
+				const side = getSide(parts[2]);
+				if (side) {
+					moveAction = { side, pokemon: getSpecies(parts[2]), type: 'cant', reason: 'Confusion' };
+					actions.push(moveAction);
+					moveDamage = true;
+				}
+				continue;
+			}
+			if (!event || (!event.startsWith('-') && event !== 'faint')) finishMove();
+			if (event === 'move') {
+				const side = getSide(parts[2]);
+				if (!side) continue;
+				const occurrence = (moveCounts.get(parts[2]) || 0) + 1;
+				moveCounts.set(parts[2], occurrence);
+				currentMoveKey = `${parts[2]}|${occurrence}`;
+				moveAction = { side, pokemon: getSpecies(parts[2]), type: 'move', move: parts[3] || 'Move' };
+				actions.push(moveAction);
+				if (pendingQuickClaw) {
+					addResult('quickclaw', 'Quick Claw');
+					pendingQuickClaw = false;
+				}
+				continue;
+			}
+			if (event === 'switch' || event === 'drag') {
+				const side = getSide(parts[2]);
+				const position = getPosition(parts[2]);
+				const switchedTo = (parts[3] || '').split(',')[0];
+				if (side) actions.push({
+					side, pokemon: activeByPosition.get(position) || getSpecies(parts[2]), type: 'switch', switchedTo,
+				});
+				if (parts[2] && switchedTo) speciesByIdent.set(parts[2], switchedTo);
+				if (position && switchedTo) activeByPosition.set(position, switchedTo);
+				continue;
+			}
+			if (event === 'cant') {
+				const side = getSide(parts[2]);
+				const reasons: Record<string, string> = {
+					flinch: 'Flinch', par: 'Paralysis', frz: 'Frozen', slp: 'Sleep',
+				};
+				const rawReason = parts[3] || 'Unable to move';
+				const reason = reasons[rawReason] || rawReason.charAt(0).toUpperCase() + rawReason.slice(1);
+				if (side) actions.push({ side, pokemon: getSpecies(parts[2]), type: 'cant', reason });
+				continue;
+			}
+			if (event === 'faint') {
+				const side = getSide(parts[2]);
+				if (side) actions.push({ side, pokemon: getSpecies(parts[2]), type: 'faint' });
+				continue;
+			}
+			if (!moveAction || !event?.startsWith('-')) continue;
+			if (event === '-damage') moveDamage = true;
+			if (event === '-miss' && (mode === 'turn' || group?.requiredMissMoves.includes(currentMoveKey))) {
+				addResult('miss', 'Miss', parts[3] || parts[2]);
+			}
+			if (event === '-crit' && (mode === 'turn' || group?.requiredCritMoves.includes(currentMoveKey))) {
+				addResult('crit', 'Crit', parts[2]);
+			}
+			if (event === '-hitcount' && mode === 'turn') addResult('hitcount', `Hit Count ${parts[3] || ''}`.trim());
+			if (event === '-start' && parts[3] === 'confusion') addResult('confusion', 'Confusion', parts[2]);
+			if (event === '-status') addResult('status', statusNames[parts[3]] || parts[3] || 'Status', parts[2]);
+			if (event === '-boost' || event === '-unboost') {
+				const amount = parts[4] || '0';
+				const stat = statNames[parts[3]] || parts[3] || 'Stat';
+				addResult(event === '-boost' ? 'boost' : 'unboost', `${event === '-boost' ? '+' : '-'}${amount} ${stat}`, parts[2]);
+			}
+			if (event === '-enditem' && trackedItems.has(parts[3])) {
+				addResult('enditem', parts[3], parts[2]);
 			}
 		}
-		return null;
+		finishMove();
+		return actions;
 	}
 
 	renderSimulationGroup(tab: AnalysisTab, group: AnalysisSimulationGroup, index: number) {
 		const simulationCount = tab.simulationResultCount || 0;
 		const proportion = simulationCount ? group.count / simulationCount : 0;
 		const errorPercentage = 100 * Math.sqrt(proportion * (1 - proportion) / simulationCount);
-		const renderRoll = (label: string, simulation: AnalysisSimulationResult) => <button
-			class={simulation.index === tab.selectedSimulationIndex ? 'cur' : ''}
-			onClick={() => this.openSimulation(tab, simulation)}
-		>
-			<strong>{label}</strong><span>{simulation.totalDamage} total damage</span><small>{simulation.seed}</small>
-		</button>;
-		return <li class="analysis-simulation-group">
-			<h3>Outcome {index + 1}</h3>
-			<p>{group.count} / {simulationCount} simulations ({group.percentage.toFixed(1)}% ± {errorPercentage.toFixed(1)}%)</p>
-			<div>{renderRoll('Min', group.min)}{renderRoll('Median', group.median)}{renderRoll('Max', group.max)}</div>
+		const simulation = group[tab.simulationRoll || 'median'];
+		const selected = index === tab.selectedSimulationGroupIndex;
+		const hovered = index === tab.hoveredSimulationGroupIndex;
+		const playbackActive = tab.phase === 'one-turn';
+		const mode = tab.simulationGroupingMode || 'turn';
+		const executions = mode === 'state' && group.executions.length > 1 ? group.executions : [simulation];
+		const visibleExecutions = selected ? executions : executions.slice(0, 2);
+		const renderActions = (execution: AnalysisSimulationResult) => <span class="analysis-simulation-actions">
+			{this.getSimulationActions(execution, mode, group).map(action => <span>
+				<PSIcon pokemon={action.pokemon} /> <b>({action.side})</b>: {action.type === 'switch' ? <>
+					Switched to <PSIcon pokemon={action.switchedTo} />
+				</> : action.type === 'cant' ? <>Can't Move ({action.reason}{action.details?.map(detail => <>
+					, {detail.label}{detail.pokemon ? <> <PSIcon pokemon={detail.pokemon} /></> : null}
+				</>)}).</> : action.type === 'faint' ? 'Fainted' : <>
+					{action.move}{action.details?.length ? <> ({action.details.map((detail, detailIndex) => <>
+						{detailIndex ? ', ' : ''}{detail.label}{detail.pokemon ? <> <PSIcon pokemon={detail.pokemon} /></> : null}
+					</>)})</> : null}
+				</>}
+			</span>)}
+		</span>;
+		return <li class="analysis-simulation-group" ref={(element: HTMLElement | null) => this.simulationGroupElements[index] = element}>
+			<button
+				class={`analysis-simulation-outcome ${selected ? 'selected' : ''}${hovered ? ' hovered' : ''}`}
+				disabled={playbackActive}
+				onMouseEnter={() => { if (!playbackActive) this.previewSimulation(tab, index); }}
+				onMouseLeave={() => { if (!playbackActive) this.previewSimulation(tab); }}
+				onClick={() => { if (!playbackActive) this.showSimulation(tab, index, undefined, true); }}
+			>
+				<strong>Outcome {index + 1}</strong>
+				<span>{group.count} / {simulationCount} simulations ({group.percentage.toFixed(1)}% ± {errorPercentage.toFixed(1)}%)</span>
+				{visibleExecutions.map((execution, executionIndex) => <>
+					{executionIndex ? <span class="analysis-execution-separator">or</span> : null}
+					{renderActions(execution)}
+				</>)}
+				{!selected && executions.length > 2 ? <span class="analysis-execution-separator">
+					... ({executions.length - 2} more possible turn{executions.length === 3 ? '' : 's'})
+				</span> : null}
+			</button>
 		</li>;
 	}
 
@@ -383,8 +967,27 @@ class AnalysisApp extends preact.Component {
 	}
 
 	finishOneTurn(tab: AnalysisTab) {
-		tab.phase = 'default';
 		this.playbackStage = null;
+		if (tab.oneTurnDestination === 'mid-turn-switch-selection') {
+			tab.oneTurnDestination = undefined;
+			tab.phase = 'mid-turn-switch-selection';
+			this.forceUpdate();
+			return;
+		}
+		if (tab.oneTurnDestination === 'switch-selection') {
+			tab.oneTurnDestination = undefined;
+			tab.phase = 'switch-selection';
+			this.setChoiceBuilders(tab.requests, tab.gameType);
+			this.forceUpdate();
+			return;
+		}
+		if (tab.oneTurnDestination === 'simulation-selection') {
+			tab.oneTurnDestination = undefined;
+			tab.phase = 'simulation-selection';
+			this.forceUpdate();
+			return;
+		}
+		tab.phase = 'default';
 		void this.restoreAnalysisNode(tab, tab.currentNodeId);
 	}
 
@@ -427,6 +1030,9 @@ class AnalysisApp extends preact.Component {
 			tab.phase = 'default';
 			this.turnView = false;
 			this.forceUpdate();
+			requestAnimationFrame(() => {
+				if (this.battle === battle && tab.phase === 'default') this.rebindChoiceTooltips();
+			});
 		} else {
 			this.forceUpdate();
 		}
@@ -459,10 +1065,12 @@ class AnalysisApp extends preact.Component {
 	};
 
 	selectPreviewPokemon = (side: 'p1' | 'p2', index: number) => {
+		const tab = this.tabs.find(entry => entry.id === this.activeTab);
 		const builder = this.choiceBuilders[side];
 		if (!builder || builder.alreadySwitchingIn.includes(index + 1)) return;
 		const error = builder.addChoice(`team ${index + 1}`);
 		if (error) this.startError = error;
+		if (tab) this.saveLeafDraft(tab);
 		this.forceUpdate();
 	};
 
@@ -501,6 +1109,7 @@ class AnalysisApp extends preact.Component {
 		this.choiceSide = null;
 		this.pendingTarget = null;
 		tab.phase = 'default';
+		this.saveLeafDraft(tab);
 		this.forceUpdate();
 	};
 
@@ -518,6 +1127,7 @@ class AnalysisApp extends preact.Component {
 		this.choiceSide = null;
 		this.pendingTarget = null;
 		tab.phase = 'default';
+		this.saveLeafDraft(tab);
 		this.forceUpdate();
 	};
 
@@ -532,18 +1142,22 @@ class AnalysisApp extends preact.Component {
 
 	replayPreviousTurn = (tab: AnalysisTab) => {
 		if (!this.battle) return;
+		const parentId = tab.nodes[tab.currentNodeId]?.parentId;
 		tab.phase = 'one-turn';
 		this.destroyBattle();
+		this.oneTurnStartTurn = parentId ? tab.nodes[parentId]?.turn ?? 0 : 0;
 		this.forceUpdate();
 	};
 
 	skipOneTurn = (tab: AnalysisTab) => {
-		this.finishOneTurn(tab);
+		this.playbackStage = null;
+		(this.battle as any)?.seekTurn(Infinity);
+		if (tab.phase === 'one-turn') this.finishOneTurn(tab);
 	};
 
 	previousNode = (tab: AnalysisTab) => {
 		const parentId = tab.nodes[tab.currentNodeId]?.parentId;
-		if (parentId) void this.restoreAnalysisNode(tab, parentId);
+		if (parentId) this.selectAnalysisNode(tab, parentId);
 	};
 
 	openTurn = () => {
@@ -686,6 +1300,14 @@ class AnalysisApp extends preact.Component {
 		this.choiceTooltipsFrame = tooltipFrame;
 	}
 
+	rebindChoiceTooltips() {
+		if (this.choiceTooltips && this.choiceTooltipsFrame) this.choiceTooltips.unlisten(this.choiceTooltipsFrame);
+		this.choiceTooltips = null;
+		this.choiceTooltipsFrame = null;
+		this.syncChoiceTooltips();
+		this.upgradeBattleTooltips();
+	}
+
 	upgradeBattleTooltips() {
 		if (!this.battleFrame || !this.battle) return;
 		const battle = this.battle as any;
@@ -758,11 +1380,24 @@ class AnalysisApp extends preact.Component {
 		const scale = this.layout.battleHeight / 360;
 		(this.battle as any)?.scene?.$frame?.css('transform', `scale(${scale})`);
 		this.battleTabId = tab.id;
+		if (this.pendingHydration?.tabId === tab.id) {
+			const inputLog = this.pendingHydration.inputLog;
+			this.pendingHydration = null;
+			this.hydrateInputLog(tab, inputLog);
+			this.forceUpdate();
+		}
 		if (tab.phase === 'replay') {
 			(this.battle as any).seekTurn(0);
 		} else if (tab.phase === 'one-turn') {
-			this.playbackStage = 'seek-end';
-			(this.battle as any).seekTurn(Infinity);
+			if (this.oneTurnStartTurn !== null) {
+				const startTurn = this.oneTurnStartTurn;
+				this.oneTurnStartTurn = null;
+				this.playbackStage = 'seek-previous';
+				(this.battle as any).seekTurn(startTurn);
+			} else {
+				this.playbackStage = 'seek-end';
+				(this.battle as any).seekTurn(Infinity);
+			}
 		} else {
 			(this.battle as any).seekTurn(Infinity);
 		}
@@ -1007,7 +1642,7 @@ class AnalysisApp extends preact.Component {
 		).join(', ');
 	}
 
-	renderSwitchChoices(tab: AnalysisTab) {
+	renderSwitchChoices(tab: AnalysisTab, onSubmit?: (tab: AnalysisTab) => void) {
 		const renderSide = (side: 'p1' | 'p2') => {
 			const request = tab.requests?.[side === 'p1' ? 0 : 1];
 			const builder = this.choiceBuilders[side];
@@ -1022,6 +1657,7 @@ class AnalysisApp extends preact.Component {
 						if (replacementSlot < 0) return;
 						this.switchChoicesBySlot[side][replacementSlot] = `switch ${index + 1}`;
 						this.rebuildSwitchBuilder(side, request);
+						if (tab.phase !== 'switch-selection') this.saveLeafDraft(tab);
 						this.forceUpdate();
 					}}>{PSIcon({ pokemon: (pokemon.details || pokemon.name || '').split(',')[0] })}{pokemon.name || pokemon.details}</button>;
 				})}</div>
@@ -1032,11 +1668,48 @@ class AnalysisApp extends preact.Component {
 			const request = tab.requests?.[side === 'p1' ? 0 : 1];
 			return !request?.forceSwitch || !!this.choiceBuilders[side as 'p1' | 'p2']?.isDone();
 		});
+		const hasChoices = ['p1', 'p2'].some(side =>
+			!this.choiceBuilders[side as 'p1' | 'p2']?.isEmpty()
+		);
 		return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
+			{hasChoices ? <button class="button" onClick={() => {
+				this.setChoiceBuilders(tab.requests, tab.gameType);
+				this.forceUpdate();
+			}}>Back</button> : null}
 			{renderSide('p1')}{renderSide('p2')}
 			<button class="button" disabled={!ready} onClick={() => {
-				if (ready) this.submitChoices(tab, this.choiceBuilders.p1?.toString() || 'default', this.choiceBuilders.p2?.toString() || 'default');
+				if (ready) {
+					if (onSubmit) onSubmit(tab);
+					else this.submitChoices(tab, this.choiceBuilders.p1?.toString() || 'default', this.choiceBuilders.p2?.toString() || 'default');
+				}
 			}}>Submit replacements</button>
+		</div>;
+	}
+
+	renderMidTurnSwitchChoice(tab: AnalysisTab, simulation: boolean) {
+		const option = tab.midTurnSwitchOptions?.[tab.midTurnSwitchOptionIndex || 0];
+		if (!option) return null;
+		const request = tab.requests?.[option.side === 'p1' ? 0 : 1];
+		const pokemon = request?.side?.pokemon || [];
+		return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
+			{simulation ? <div><button class="button" onClick={() => this.cancelSimulationSwitchSelection(tab)}>Cancel</button></div> : null}
+			<div class="switchcontrols">
+				<h3 class="switchselect">{option.side.toUpperCase()} Choose Replacement ({option.pokemon}: {option.reasonName})</h3>
+				<div class="switchmenu">{pokemon.map((replacement: any, index: number) => {
+					const alreadySelected = !simulation && tab.midTurnSwitchOptions?.some((entry, entryIndex) =>
+						entryIndex < (tab.midTurnSwitchOptionIndex || 0) && entry.side === option.side &&
+						entry.replacementIndex === index
+					);
+					const unavailable = index === option.pokemonIndex ||
+						(!simulation && (replacement.fainted || replacement.active || alreadySelected));
+					return <button class={`has-tooltip${unavailable ? ' disabled' : ''}`} disabled={unavailable}
+						data-tooltip={`analysispokemon|${option.side === 'p1' ? 0 : 1}|${index}`}
+						onClick={() => simulation ? this.selectSimulationSwitch(tab, index) : this.selectMidTurnSwitch(tab, index)}>
+						{PSIcon({ pokemon: (replacement.details || replacement.name || '').split(',')[0] })}
+						{replacement.name || replacement.details}
+					</button>;
+				})}</div>
+			</div>
 		</div>;
 	}
 
@@ -1089,8 +1762,8 @@ class AnalysisApp extends preact.Component {
 		const ready = !!this.choiceBuilders.p1?.isDone() && !!this.choiceBuilders.p2?.isDone();
 		return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
 			{(this.choiceBuilders.p1?.alreadySwitchingIn.length || this.choiceBuilders.p2?.alreadySwitchingIn.length) ? <button class="button" onClick={() => {
-				if (this.choiceBuilders.p1?.alreadySwitchingIn.length) this.choiceBuilders.p1 = this.choiceBuilders.p1.previous();
-				if (this.choiceBuilders.p2?.alreadySwitchingIn.length) this.choiceBuilders.p2 = this.choiceBuilders.p2.previous();
+				this.setChoiceBuilders(tab.requests, tab.gameType);
+				this.saveLeafDraft(tab);
 				this.forceUpdate();
 			}}>Back</button> : null}
 			{renderSide('p1')}{renderSide('p2')}
@@ -1101,12 +1774,37 @@ class AnalysisApp extends preact.Component {
 	}
 
 	renderBattleControls(tab: AnalysisTab, requestState: string) {
-		if (tab.phase === 'simulation') {
-			return <div class="analysis-choice-controls"><button class="button" onClick={() => this.closeSimulation(tab)}>Return to Position</button></div>;
+		if (tab.phase === 'simulating') {
+			return <div class="analysis-choice-controls">
+				<div><button class="button" onClick={() => this.cancelSimulation(tab)}>Cancel</button></div>
+				<p>Simulating...</p>
+			</div>;
 		}
 		if (tab.phase === 'one-turn') {
 			return <div class="analysis-choice-controls"><button class="button" onClick={() => this.skipOneTurn(tab)}>Skip Turn</button></div>;
 		}
+		if (tab.phase === 'simulation-switch-selection') return this.renderMidTurnSwitchChoice(tab, true);
+		if (tab.phase === 'mid-turn-switch-selection') return this.renderMidTurnSwitchChoice(tab, false);
+		if (tab.phase === 'simulation-selection') {
+			const selectedIndex = tab.selectedSimulationGroupIndex ?? 0;
+			const groupCount = tab.simulationGroups?.length || 0;
+			const roll = tab.simulationRoll || 'median';
+			return <div class="analysis-choice-controls">
+				<div>
+					<button class="button" onClick={() => this.cancelSimulation(tab)}>Cancel</button>
+					<button class="button" disabled={selectedIndex <= 0} onClick={() => this.showSimulation(tab, selectedIndex - 1, roll, true)}>Prev</button>
+					<button class="button" disabled={selectedIndex >= groupCount - 1} onClick={() => this.showSimulation(tab, selectedIndex + 1, roll, true)}>Next</button>
+					<button class="button" onClick={() => this.replaySimulationTurn(tab)}>Replay Turn</button>
+					<button class="button" disabled={tab.loading} onClick={() => void this.selectSimulationOutcome(tab)}>Select Outcome</button>
+				</div>
+				<fieldset class="analysis-radio-group"><legend>Damage Rolls</legend>
+					<label><input type="radio" name={`damage-roll-${tab.id}`} checked={roll === 'min'} onChange={() => this.changeSimulationRoll(tab, 'min')} /> Min</label>
+					<label><input type="radio" name={`damage-roll-${tab.id}`} checked={roll === 'median'} onChange={() => this.changeSimulationRoll(tab, 'median')} /> Median</label>
+					<label><input type="radio" name={`damage-roll-${tab.id}`} checked={roll === 'max'} onChange={() => this.changeSimulationRoll(tab, 'max')} /> Max</label>
+				</fieldset>
+			</div>;
+		}
+		if (tab.phase === 'switch-selection') return this.renderSwitchChoices(tab, this.submitSwitchChoices);
 		if (tab.phase === 'replay') return <AnalysisReplayControls
 			battle={this.battle} turnView={this.turnView} speed={this.getReplaySpeed()}
 			onOpenTurn={this.openTurn} onCloseTurn={this.closeTurn} onGoToTurn={this.goToTurn}
@@ -1139,8 +1837,8 @@ class AnalysisApp extends preact.Component {
 			<p class="analysis-muted">Click an active Pokemon to choose its actions.</p>
 			<div>
 				<button class="button" disabled={!ready || tab.loading} onClick={() => this.submitChoices(tab, this.actionChoiceString(tab, 'p1'), this.actionChoiceString(tab, 'p2'))}>Submit Choices</button>
-				<button class="button" disabled={!ready || tab.loading} onClick={() => this.simulateNextTurn(tab)}>{tab.loading ? 'Simulating...' : 'Simulate Possible Turns'}</button>{' '}
-				<label>Number of Simulations: <input class="textbox" type="number" min="1" step="1" value={tab.simulationCount} onInput={(event) => {
+				<button class="button" disabled={!ready || tab.loading} onClick={() => this.prepareSimulation(tab)}>{tab.loading ? 'Simulating...' : 'Simulate Possible Turns'}</button>{' '}
+				<label># Simulations: <input class="textbox" type="number" min="1" step="1" value={tab.simulationCount} onInput={(event) => {
 					tab.simulationCount = Math.max(1, Number((event.target as HTMLInputElement).value) || 1);
 					this.forceUpdate();
 				}} /></label>
@@ -1162,12 +1860,27 @@ class AnalysisApp extends preact.Component {
 				</div>
 			</div>,
 			<div class="ps-room ps-room-light scrollable" style={`top:56px;left:${mainWidth + 1}px;width:${treeWidth}px;right:auto;bottom:0;display:block;`}>
-				<h2>Lines</h2>
-				{tab.simulationGroups ? <ol class="analysis-simulation-list">{tab.simulationGroups.map((group, index) =>
-					this.renderSimulationGroup(tab, group, index)
-				)}</ol> : <AnalysisNodeTree tab={tab} onSelect={nodeId => void this.restoreAnalysisNode(tab, nodeId)} />}
-				<h2>{tab.simulationGroups ? 'Selected Simulation Result' : 'Selected Node Data'}</h2>
-				<pre class="analysis-debug-log">{JSON.stringify(selectedData, null, 2)}</pre>
+				<div class ="pad">
+					<h2>{tab.simulationGroups ? 'Simulation Outcomes' : 'Lines'}</h2>
+					{tab.simulationGroups ? <fieldset class="analysis-radio-group analysis-grouping-mode"><legend>Group Outcomes</legend>
+						<label>
+							<input type="radio" name={`grouping-${tab.id}`} checked={(tab.simulationGroupingMode || 'turn') === 'turn'} disabled={tab.phase === 'one-turn'} onChange={() => this.changeSimulationGrouping(tab, 'turn')} /> By Turn Events
+							<span class="analysis-grouping-help" data-help="Groups outcomes by the events on the turn, ignoring damage rolls that don't alter the game state at the end of the turn." aria-label="About grouping by turn execution"><i class="fa fa-info-circle" aria-hidden="true" /></span>
+						</label>
+						<label>
+							<input type="radio" name={`grouping-${tab.id}`} checked={tab.simulationGroupingMode === 'state'} disabled={tab.phase === 'one-turn'} onChange={() => this.changeSimulationGrouping(tab, 'state')} /> By Game State
+							<span class="analysis-grouping-help" data-help="Groups outcomes by the game state at the end of the turn. This ignores damage rolls, critical hits, move misses, failures to move (e.g. due to flinching, paralysis, or confusion), multihit move counts, speed ties, and Quick Claw activations that don't alter the game state at the end of the turn. Item consumption dependent on HP and turn events that cause a Pokemon holding the item Focus Sash or with the ability Sturdy, Multiscale, Shadow Shield, or Tera Shell to fall below full health are distinguished as game states." aria-label="About grouping by game state"><i class="fa fa-info-circle" aria-hidden="true" /></span>
+						</label>
+					</fieldset> : null}
+					{tab.simulationGroups ? <ol class="analysis-simulation-list">{tab.simulationGroups.map((group, index) =>
+						this.renderSimulationGroup(tab, group, index)
+					)}</ol> : <AnalysisNodeTree tab={tab} onSelect={nodeId => {
+						if (tab.phase === 'simulating') this.cancelSimulation(tab, nodeId);
+						else this.selectAnalysisNode(tab, nodeId);
+					}} />}
+					<h2>{tab.simulationGroups ? 'Selected Simulation Result' : 'Selected Node Data'}</h2>
+					<pre class="analysis-debug-log">{JSON.stringify(selectedData, null, 2)}</pre>
+				</div>
 			</div>
 		];
 	}
