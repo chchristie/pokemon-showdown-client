@@ -18,13 +18,45 @@ export function replayNodesFor(tab: AnalysisTab, nodeId: string, includeNode: bo
 	}));
 }
 
-export function getPrimaryNodeChain(tab: AnalysisTab) {
-	const chain: AnalysisNode[] = [];
-	let node: AnalysisNode | undefined = Object.values(tab.nodes).find(candidate => candidate.parentId === null);
-	while (node) {
-		chain.unshift(node);
-		const children = Object.values(tab.nodes).filter(child => child.parentId === node!.id);
-		node = children[0];
-	}
-	return chain;
+export interface AnalysisNodeTreeRow {
+	node: AnalysisNode;
+	depth: number;
+}
+
+export type AnalysisNodeTreeItem = { node: AnalysisNode } | { branch: AnalysisNodeTreeItem[] };
+
+export function getAnalysisNodeTreeItems(tab: AnalysisTab) {
+	const nodes = Object.values(tab.nodes);
+	const root = nodes.find(node => node.parentId === null);
+	if (!root) return [];
+
+	const appendChildren = (parent: AnalysisNode): AnalysisNodeTreeItem[] => {
+		const children = nodes.filter(node => node.parentId === parent.id);
+		const firstChild = children[0];
+		if (!firstChild) return [];
+		const items: AnalysisNodeTreeItem[] = [{ node: firstChild }];
+		for (const child of children.slice(1)) items.push({ branch: appendBranch(child) });
+		items.push(...appendChildren(firstChild));
+		return items;
+	};
+	const appendBranch = (node: AnalysisNode): AnalysisNodeTreeItem[] => {
+		return [{ node }, ...appendChildren(node)];
+	};
+
+	return appendChildren(root);
+}
+
+export function getAnalysisNodeTreeRows(tab: AnalysisTab) {
+	const rows: AnalysisNodeTreeRow[] = [];
+	const appendItems = (items: AnalysisNodeTreeItem[], depth: number) => {
+		for (const item of items) {
+			if ('node' in item) {
+				rows.push({ node: item.node, depth });
+			} else {
+				appendItems(item.branch, depth + 1);
+			}
+		}
+	};
+	appendItems(getAnalysisNodeTreeItems(tab), 0);
+	return rows;
 }

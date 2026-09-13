@@ -1,11 +1,26 @@
 export type StartMode = 'setup' | 'teams' | 'replay';
 
+export interface AnalysisChoiceSummary {
+	side: 'p1' | 'p2';
+	slot: number;
+	pokemon: string;
+	action: string;
+	targetPokemon?: string;
+}
+
+export interface AnalysisTeamSelectionSummary {
+	p1: string[];
+	p2: string[];
+}
+
 export interface AnalysisNode {
 	id: string;
 	parentId: string | null;
 	seed: string | null;
 	turn: number;
 	inputLog: string[];
+	choiceSummary?: AnalysisChoiceSummary[];
+	teamSelectionSummary?: AnalysisTeamSelectionSummary;
 }
 
 export interface AnalysisSimulationResult {
