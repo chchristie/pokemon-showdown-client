@@ -605,7 +605,9 @@ export class BattleTextParser {
 		return effect.trim();
 	}
 
-	textName(table: keyof BattleTextData, name: string) {
+	textName(table: keyof BattleTextData, name?: string) {
+		// DigiPen fork: same guard as upstream 951cc158 (e.g. `|cant|POKEMON|flinch` has no move); take upstream's version on merge
+		if (!name) return '';
 		name = name.trim();
 		const id = toID(name);
 		const localized = BattleText[this.language]?.[table]?.[id]?.name;
