@@ -42,13 +42,16 @@ export type AnalysisBoostsTable = { [stat in Dex.BoostStatName]?: number };
  */
 export interface AnalysisEdits {
 	teams?: { p1?: Dex.PokemonSet[], p2?: Dex.PokemonSet[] };
+	/** team slot per active position; `null` leaves that position alone */
 	active?: { p1?: (number | null)[], p2?: (number | null)[] };
-	pokemon?: { [sideAndIndex: string]: AnalysisPokemonStateEdit };
+	/** keyed `p1:<teamSlot>` (see AnalysisPokemonSnapshot) */
+	pokemon?: { [sideAndTeamSlot: string]: AnalysisPokemonStateEdit };
 	field?: AnalysisFieldStateEdit;
 }
 
 export interface AnalysisPokemonStateEdit {
 	hp?: number;
+	/** by move slot; `null` leaves that slot alone */
 	pp?: (number | null)[];
 	status?: '' | 'brn' | 'par' | 'slp' | 'frz' | 'psn' | 'tox';
 	toxicStage?: number;
@@ -56,7 +59,7 @@ export interface AnalysisPokemonStateEdit {
 	terastallized?: boolean;
 	megaEvolved?: boolean;
 	boosts?: AnalysisBoostsTable;
-	volatiles?: { [id: string]: false | { [param: string]: number | string | boolean } };
+	volatiles?: { [id: string]: null | { [param: string]: number | string | boolean } };
 }
 
 /** Turns remaining (including the current turn) and layers; each defaults to the condition's standard value. */
@@ -138,7 +141,10 @@ export interface AnalysisEffectSnapshot {
 }
 
 export interface AnalysisPokemonSnapshot {
+	/** current position in the team (request order); changes when Pokémon switch */
 	index: number;
+	/** position in the original team, which never changes: edits name a Pokémon by it */
+	teamSlot: number;
 	ident: string;
 	name: string;
 	species: string;

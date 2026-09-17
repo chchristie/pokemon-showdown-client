@@ -688,9 +688,7 @@ export class BattleScene implements BattleSceneStub {
 		for (let i = 0; i < sidebarIcons.length; i++) {
 			const [iconType, pokeIndex] = sidebarIcons[i];
 			const poke = pokeIndex !== null ? side.pokemon[pokeIndex] : null;
-			const exactTeam = side.n === 0 ? this.battle.myPokemon : side.n === 1 ? this.battle.myAllyPokemon : null;
-			const tooltipType = exactTeam ? (side.n === 0 ? 'switchpokemon|' : 'allypokemon|') : `pokemon|${side.n}|`;
-			const tooltipCode = ` class="picon has-tooltip" data-tooltip="${tooltipType}${pokeIndex!}${iconType === 'pokemon-illusion' ? '|illusion' : ''}"`;
+			const tooltipCode = ` class="picon has-tooltip" data-tooltip="pokemon|${side.n}|${pokeIndex!}${iconType === 'pokemon-illusion' ? '|illusion' : ''}"`;
 			if (iconType === 'empty') {
 				pokemonhtml += `<span class="picon" style="${Dex.getPokemonIcon('pokeball-none')}"></span>`;
 			} else if (noShow) {

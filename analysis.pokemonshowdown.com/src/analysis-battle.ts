@@ -2,7 +2,10 @@
  * The battle renderer for the analysis page. Lives here rather than in upstream battle.ts to keep that file
  * mergeable.
  *
- * State edits (tools/analysis-edits.ts) can set how many turns a field effect has left, but the protocol has
+ * State edits (tools/analysis-edits.ts) can set state the protocol has no way to express, and send it as
+ * extra keywords and `analysiscounter` lines that only this renderer reads.
+ *
+ * They can set how many turns a field effect has left, but the protocol has
  * no way to say that: the client estimates durations from `-weather`/`-fieldstart`/`-sidestart` (e.g.
  * "Reflect (5 or 8 turns)"). The server's `Analysis edits` message carries the exact values in
  * `[analysisdurations]`, and this applies them to the same counters the client counts down each turn, so the
@@ -16,6 +19,15 @@ export class AnalysisBattleRenderer extends Battle {
 	override runMinor(args: Args, kwArgs: KWArgs, nextArgs?: Args, nextKwargs?: KWArgs) {
 		super.runMinor(args, kwArgs, nextArgs, nextKwargs);
 		if (args[0] === '-message' && kwArgs.analysisdurations) this.applyAnalysisDurations(kwArgs.analysisdurations);
+		// `|-message|analysiscounter|POKEMON|toxic|3|[silent]`: the toxic and sleep counters an edit set
+		if (args[0] === '-message' && args[1] === 'analysiscounter') {
+			const pokemon = this.getPokemon(args[2]);
+			const turns = Number(args[4]);
+			if (pokemon && turns >= 0) {
+				if (args[3] === 'toxic') pokemon.statusData.toxicTurns = turns;
+				if (args[3] === 'sleep') pokemon.statusData.sleepTurns = turns;
+			}
+		}
 	}
 
 	/** `weather:3`, `trickroom:2` (pseudo-weather or terrain id), `p1:reflect:5` */

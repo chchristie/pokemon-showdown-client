@@ -7,7 +7,7 @@ import { Teams } from '../../play.pokemonshowdown.com/src/battle-teams';
 import {
 	FORMATS, LAYOUT, getRequestState,
 	type AnalysisBattle, type AnalysisCalcMode, type AnalysisCalcState, type AnalysisChoiceSummary,
-	type AnalysisFieldStateEdit, type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisNode,
+	type AnalysisEdits, type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisNode,
 	type AnalysisPhase, type AnalysisSideID, type AnalysisSimulationGroup, type AnalysisSimulationRoll, type AnalysisTab,
 	type LocalTeam, type PlaybackStage, type StartMode,
 } from './analysis-model';
@@ -16,6 +16,9 @@ import { AnalysisBattleRenderer } from './analysis-battle';
 import { AnalysisChoiceDraft, sideIndex } from './analysis-choices';
 import { AnalysisChoiceSummaryView } from './analysis-choice-summary';
 import { AnalysisFieldEditor, AnalysisFieldFormState, mergeFieldEdits } from './analysis-field-editor';
+import {
+	AnalysisPokemonEditor, AnalysisPokemonFormState, mergePokemonEdits, type AnalysisPokemonTarget,
+} from './analysis-pokemon-editor';
 import { AnalysisHeader } from './analysis-header';
 import { hasChildNodes, replayNodesFor } from './analysis-nodes';
 import { AnalysisNodeTree } from './analysis-node-tree';
@@ -68,11 +71,17 @@ class AnalysisApp extends preact.Component {
 	calcAbortController: AbortController | null = null;
 	choiceTooltipsFrame: HTMLElement | null = null;
 	draft = new AnalysisChoiceDraft();
-	/** field edit form for the current decision point (unsaved changes) */
+	/** state edit forms for the current decision point (unsaved changes) */
 	fieldForm = new AnalysisFieldFormState();
+	pokemonForm = new AnalysisPokemonFormState();
+	/** the Pokémon whose form replaces the field form, if any */
+	editPokemon: AnalysisPokemonTarget | null = null;
 	showMoreFieldEffects = false;
-	fieldEditError = '';
-	pendingHydration: { tabId: string, inputLog: string[] } | null = null;
+	editError = '';
+	/** `clearedSlots` drops choices for slots whose Pokémon an edit replaced */
+	pendingHydration: {
+		tabId: string, inputLog: string[], clearedSlots?: { side: AnalysisSideID, slot: number }[],
+	} | null = null;
 	simulationGroupElements: Record<number, HTMLElement | null> = {};
 	/** outcome-list scroll adjustment to apply after the next render (see applyOutcomeScroll) */
 	pendingOutcomeScroll: OutcomeScroll | null = null;
@@ -235,7 +244,8 @@ class AnalysisApp extends preact.Component {
 				seed: tab.rootSeed, replayNodes: replayNodesFor(tab, nodeId, false),
 			});
 			tab.currentNodeId = nodeId;
-			this.fieldEditError = '';
+			this.editError = '';
+			this.editPokemon = null;
 			const requestState = this.applyBattleResponse(tab, data);
 			tab.phase = requestState === 'teampreview' ? 'preview' : 'default';
 			this.pendingHydration = { tabId: tab.id, inputLog: [...(inputLog ?? node.inputLog)] };
@@ -430,24 +440,48 @@ class AnalysisApp extends preact.Component {
 	 * State edits
 	 *********************************************************/
 
+	/** Opens the form for the Pokémon at `index` in the side's current team order (as tooltips address them). */
+	openPokemonEditorAt(tab: AnalysisTab, side: AnalysisSideID, index: number) {
+		const pokemon = tab.snapshot?.sides[sideIndex(side)]?.pokemon[index];
+		if (pokemon) this.openPokemonEditor(tab, { side, teamSlot: pokemon.teamSlot });
+	}
+
+	/** Opens the Pokémon edit form in place of the field form, leaving the action menu if one is open. */
+	openPokemonEditor = (tab: AnalysisTab, target: AnalysisPokemonTarget) => {
+		if (tab.phase === 'selection') this.cancelActionSelection(tab);
+		if (tab.phase !== 'default') return;
+		this.editPokemon = target;
+		this.editError = '';
+		this.forceUpdate();
+	};
+
+	/** The team index of the Pokémon in active slot `slot`, for tooltips and the edit form. */
+	activeTeamIndex(tab: AnalysisTab, side: AnalysisSideID, slot: number) {
+		const pokemonList = tab.requests?.[sideIndex(side)]?.side?.pokemon || [];
+		const active = pokemonList.filter((pokemon: any) => pokemon.active)[slot];
+		const index = pokemonList.indexOf(active);
+		return index < 0 ? null : index;
+	}
+
 	/**
-	 * Merges field changes into the current node's edits (copy-on-edit if it has children), then rebuilds the
+	 * Merges form changes into the current node's edits (copy-on-edit if it has children), then rebuilds the
 	 * position. The server reports what the edits actually changed, which replaces the stored edits.
 	 */
-	saveFieldEdits = async (tab: AnalysisTab, changes: AnalysisFieldStateEdit) => {
+	saveEdits = async (tab: AnalysisTab, changes: AnalysisEdits) => {
 		const original = tab.nodes[tab.currentNodeId];
 		if (!original || tab.loading) return;
 		this.saveLeafDraft(tab);
 		const { edits: originalEdits, editSummary: originalSummary } = original;
 		const node = this.editCurrentNode(tab, target => {
-			target.edits = { ...target.edits, field: mergeFieldEdits(target.edits?.field, changes) };
+			target.edits = mergePokemonEdits(target.edits || {}, changes);
+			if (changes.field) target.edits.field = mergeFieldEdits(target.edits.field, changes.field);
 			// a copy of an executed node is a new, undecided decision point
 			target.seed = null;
 			target.turnEventSummary = undefined;
 		})!;
 		const copied = node !== original;
 		tab.loading = true;
-		this.fieldEditError = '';
+		this.editError = '';
 		this.forceUpdate();
 		try {
 			const data = await runAnalysis({
@@ -456,8 +490,7 @@ class AnalysisApp extends preact.Component {
 			});
 			// the node's own record is the last one, since it has edits
 			const applied = data.appliedEdits?.[data.appliedEdits.length - 1];
-			const edits = { ...node.edits, field: applied?.edits.field };
-			if (!edits.field) delete edits.field;
+			const edits: AnalysisEdits = applied?.edits || {};
 			if (Object.keys(edits).length) {
 				node.edits = edits;
 				node.editSummary = applied?.summary;
@@ -471,7 +504,17 @@ class AnalysisApp extends preact.Component {
 			}
 			this.applyBattleResponse(tab, data);
 			tab.phase = 'default';
-			this.pendingHydration = { tabId: tab.id, inputLog: [...tab.nodes[tab.currentNodeId].inputLog] };
+			// a slot's chosen action belonged to the Pokémon that was there, so replacing it clears the choice
+			const clearedSlots: { side: AnalysisSideID, slot: number }[] = [];
+			for (const side of ['p1', 'p2'] as const) {
+				const slots = applied?.edits.active?.[side] || [];
+				for (let slot = 0; slot < slots.length; slot++) {
+					if (slots[slot] !== null && slots[slot] !== undefined) clearedSlots.push({ side, slot });
+				}
+			}
+			this.pendingHydration = {
+				tabId: tab.id, inputLog: [...tab.nodes[tab.currentNodeId].inputLog], clearedSlots,
+			};
 			this.destroyBattle();
 		} catch (error: any) {
 			if (copied) {
@@ -481,7 +524,7 @@ class AnalysisApp extends preact.Component {
 				node.edits = originalEdits;
 				node.editSummary = originalSummary;
 			}
-			this.fieldEditError = error.message || 'Unable to apply the edits.';
+			this.editError = error.message || 'Unable to apply the edits.';
 		} finally {
 			tab.loading = false;
 			this.forceUpdate();
@@ -999,6 +1042,11 @@ class AnalysisApp extends preact.Component {
 		const tooltip = marker?.dataset.tooltip;
 		if (!tooltip) return;
 		const args = tooltip.split('|');
+		// the team icons in the sidebar edit that Pokémon; the sprites below choose its action
+		if (args[0] === 'analysispokemon' && marker.classList.contains('picon')) {
+			this.openPokemonEditorAt(tab, Number(args[1]) === 0 ? 'p1' : 'p2', Number(args[2]));
+			return;
+		}
 		if (args[0] === 'analysispokemon') {
 			const sideNumber = Number(args[1]);
 			const teamIndex = Number(args[2]);
@@ -1293,6 +1341,7 @@ class AnalysisApp extends preact.Component {
 		this.choiceTooltips = new AnalysisTooltips(this.battle as any, {
 			getCalcs: () => this.calcs,
 			getCalcMode: this.getCalcMode,
+			getSnapshot: () => this.tabs.find(entry => entry.id === this.activeTab)?.snapshot,
 		});
 		this.choiceTooltips.listen(tooltipFrame);
 		this.choiceTooltipsFrame = tooltipFrame;
@@ -1375,10 +1424,17 @@ class AnalysisApp extends preact.Component {
 		battle.scene?.$frame?.css('transform', `scale(${this.layout.battleHeight / 360})`);
 		this.battleTabId = tab.id;
 		if (this.pendingHydration?.tabId === tab.id) {
-			const inputLog = this.pendingHydration.inputLog;
+			const { inputLog, clearedSlots } = this.pendingHydration;
 			this.pendingHydration = null;
 			this.draft.hydrate(inputLog);
+			for (const { side, slot } of clearedSlots || []) {
+				this.draft.moveChoicesBySlot[side][slot] = null;
+				this.draft.switchChoicesBySlot[side][slot] = null;
+				const request = tab.requests?.[sideIndex(side)];
+				if (request?.active) this.draft.rebuildMoveBuilder(side, request);
+			}
 			this.updateCurrentNodeSummary(tab);
+			if (clearedSlots?.length) this.saveLeafDraft(tab);
 			this.forceUpdate();
 		}
 		if (tab.phase === 'replay') {
@@ -2002,6 +2058,7 @@ class AnalysisApp extends preact.Component {
 			const sidePokemon = side ? tab.requests?.[sideIndex(side)]?.side?.pokemon || [] : [];
 			const pokemon = sidePokemon.filter((entry: any) => entry.active)[slot];
 			const name = (pokemon?.name || pokemon?.details || `Pokemon ${slot + 1}`).split(',')[0];
+			const teamIndex = side ? this.activeTeamIndex(tab, side, slot) : null;
 			return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
 				<div class="analysis-selection-heading">
 					<button
@@ -2009,6 +2066,10 @@ class AnalysisApp extends preact.Component {
 						onClick={() => this.draft.pendingTarget ? this.cancelIntermediateSelection(tab) : this.cancelActionSelection(tab)}
 					>Cancel</button>
 					{choiceSide && <span>What will <strong>{name}</strong> ({side === 'p1' ? 1 : 2}) do?</span>}
+					{side && teamIndex !== null && <button
+						class="button analysis-selection-edit"
+						onClick={() => this.openPokemonEditorAt(tab, side, teamIndex)}
+					>Edit Pokémon</button>}
 				</div>
 				{requestState === 'switch' ? this.renderSwitchChoices(tab) : this.renderMoveChoices(tab)}
 			</div>;
@@ -2055,12 +2116,19 @@ class AnalysisApp extends preact.Component {
 				</label>
 			</div>
 			{requestState === 'move' && (currentNode?.turn ?? 0) >= 1 && tab.snapshot && tab.editOptions &&
-				<AnalysisFieldEditor
-					state={this.fieldForm} snapshot={tab.snapshot} options={tab.editOptions.field}
-					showMore={this.showMoreFieldEffects} disabled={!!tab.loading} error={this.fieldEditError}
-					onToggleShowMore={() => { this.showMoreFieldEffects = !this.showMoreFieldEffects; this.forceUpdate(); }}
-					onSave={changes => void this.saveFieldEdits(tab, changes)}
-				/>}
+				(this.editPokemon ?
+					<AnalysisPokemonEditor
+						state={this.pokemonForm} snapshot={tab.snapshot} target={this.editPokemon}
+						disabled={!!tab.loading} error={this.editError}
+						onClose={() => { this.editPokemon = null; this.editError = ''; this.forceUpdate(); }}
+						onSave={changes => void this.saveEdits(tab, changes)}
+					/> :
+					<AnalysisFieldEditor
+						state={this.fieldForm} snapshot={tab.snapshot} options={tab.editOptions.field}
+						showMore={this.showMoreFieldEffects} disabled={!!tab.loading} error={this.editError}
+						onToggleShowMore={() => { this.showMoreFieldEffects = !this.showMoreFieldEffects; this.forceUpdate(); }}
+						onSave={changes => void this.saveEdits(tab, { field: changes })}
+					/>)}
 		</div>;
 	}
 

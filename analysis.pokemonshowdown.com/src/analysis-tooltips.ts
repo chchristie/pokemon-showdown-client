@@ -14,7 +14,7 @@ import { Dex } from '../../play.pokemonshowdown.com/src/battle-dex';
 import type { Battle } from '../../play.pokemonshowdown.com/src/battle';
 import {
 	ANALYSIS_CALC_ATTACKER, ANALYSIS_CALC_DEFENDER, type AnalysisCalcMode, type AnalysisCalcPokemonRef,
-	type AnalysisCalcState,
+	type AnalysisCalcState, type AnalysisSnapshot,
 } from './analysis-model';
 
 export type AnalysisCalcUsage = 'hover' | 'selected';
@@ -26,6 +26,8 @@ export interface AnalysisTooltipSources {
 	 * the chosen move's modifier for 'selected'.
 	 */
 	getCalcMode(sideIndex: number, slot: number, usage: AnalysisCalcUsage): AnalysisCalcMode;
+	/** exact state for this position, for PP the renderer can't know (edits, unused moves) */
+	getSnapshot(): AnalysisSnapshot | null | undefined;
 }
 
 export class AnalysisTooltips extends BattleTooltips {
@@ -41,9 +43,13 @@ export class AnalysisTooltips extends BattleTooltips {
 		let buf: string;
 		switch (args[0]) {
 		case 'analysispokemon': {
-			const serverPokemon = this.serverTeam(parseInt(args[1], 10))?.[parseInt(args[2], 10)];
+			const sideIndex = parseInt(args[1], 10);
+			const index = parseInt(args[2], 10);
+			const serverPokemon = this.serverTeam(sideIndex)?.[index];
 			if (!serverPokemon) return false;
-			buf = this.showPokemonTooltip(this.battle.findCorrespondingPokemon(serverPokemon), serverPokemon);
+			const clientPokemon = this.battle.findCorrespondingPokemon(serverPokemon);
+			this.syncMoveTrack(clientPokemon, sideIndex, index);
+			buf = this.showPokemonTooltip(clientPokemon, serverPokemon);
 			break;
 		}
 		case 'analysismove':
@@ -70,6 +76,16 @@ export class AnalysisTooltips extends BattleTooltips {
 		const elem = BattleTooltips.parentElem;
 		if (!BattleTooltips.elem || !elem?.isConnected || !elem.dataset.tooltip?.startsWith('analysis')) return;
 		this.showTooltip(elem);
+	}
+
+	/**
+	 * The renderer only knows the PP of moves it saw used, so a PP edit wouldn't show. The snapshot has the
+	 * exact values, so fill in the move track from it before the tooltip is built.
+	 */
+	syncMoveTrack(pokemon: { moveTrack: [string, number | [number, number]][] } | null, sideIndex: number, index: number) {
+		const snapshot = this.sources.getSnapshot()?.sides[sideIndex]?.pokemon[index];
+		if (!pokemon || !snapshot) return;
+		pokemon.moveTrack = snapshot.moves.map(move => [move.name, move.maxpp - move.pp]);
 	}
 
 	serverTeam(sideIndex: number) {

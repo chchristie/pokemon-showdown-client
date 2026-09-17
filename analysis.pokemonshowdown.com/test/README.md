@@ -27,6 +27,7 @@ npm run smoke            # core flow (smoke.js)
 npm run calc             # damage calc tooltips (calc.js)
 npm run turn-events      # turn outcome summaries from hand-written logs (turn-events.js)
 npm run edits            # field state edit form (edits.js)
+npm run pokemon-edits    # Pokémon state edit form (pokemon-edits.js)
 ```
 
 Server-side edit logic (what gets written to the sim and which protocol lines are emitted) has its own mocha test in the server repo: `npx mocha --no-config --exit test/main.js test/tools/analysis/edits.js`.
@@ -100,6 +101,22 @@ The field state edit form (docs/analysis/plan.md, Phase 2a), gen9ou with the smo
 9. **Copy-on-edit:** saving Trick Room at Turn 1 (which has a continuation) creates a sibling branch whose tooltip lists the earlier edits plus Trick Room; the original Turn 1 and its Turn 2 are unchanged.
 
 Selectors: effect buttons have `data-field-effect` (`weather:raindance`, `trickroom`, `p2:stealthrock`, `p1:spikes:2`), turns inputs `data-field-turns` (`weather`, `p1:reflect`, …).
+
+## What `pokemon-edits.js` covers
+
+The Pokémon state edit form (docs/analysis/plan.md, Phase 2b-1), gen9ou with the smoke team:
+
+1. **Opening it:** clicking p1's first team icon in the sidebar opens that Pokémon's form, with Save disabled and all 7 boost dropdowns. The icons carry `analysispokemon|side|index` in the team's current order, which is not the order the icons are drawn in.
+2. **Editing:** setting HP by percent fills in the HP box; burn, a Speed boost and a PP change save and come back from the server, leaving the form clean.
+3. **Battle window:** it shows the edited HP (50%) and the burn; the move button shows the edited PP.
+4. **Action menu:** its **Edit Pokémon** button opens the form for the Pokémon whose action was being chosen.
+5. **Benched Pokémon:** no boost dropdowns, and **Send out** makes it active.
+6. **Lines tooltip:** the Pokémon's edits are listed under its team.
+7. **Cancel** goes back to the field form.
+
+Regression checks from the first review: the Pokémon tooltip shows edited PP, a second save keeps the first save's boosts, and after a Set Active swap the icons and the stored edits still point at the Pokémon they were made for, with that slot's drafted action cleared.
+
+Selectors: `data-pokemon-field` (HP, `HP percent`, `Hydro Pump PP`, `Toxic stage`, `Sleep turns`), `data-pokemon-boost` (`atk`…`evasion`), and `data-field-effect` for the buttons (`status:brn`, `active:0`, `terastallized`).
 
 ## Writing or extending tests
 

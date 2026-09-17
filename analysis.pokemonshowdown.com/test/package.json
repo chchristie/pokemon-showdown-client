@@ -6,7 +6,8 @@
 		"smoke": "node smoke.js",
 		"calc": "node calc.js",
 		"turn-events": "node turn-events.js",
-		"edits": "node edits.js"
+		"edits": "node edits.js",
+		"pokemon-edits": "node pokemon-edits.js"
 	},
 	"dependencies": {
 		"puppeteer-core": "^25.0.0"
