@@ -1793,6 +1793,13 @@ process.stdout.write("Building `data/pokedex.js`... ");
 	
 	for (const id in fnafDex.data.Pokedex) {
 		const species = fnafDex.species.get(id);
+		// Mod data includes every inherited species; only inject ones that aren't already in the dex
+		// (overwriting would strip baseSpecies/forme/evos from base and DigiPen entries)
+		if (Pokedex[id]) {
+			if (species.digipenSprite) Pokedex[id].digipenSprite = true;
+			if (species.digipenIcon !== undefined) Pokedex[id].digipenIcon = species.digipenIcon;
+			continue;
+		}
 		// Inject new FNAF pokemon
 		Pokedex[id] = {
 			num: species.num,
@@ -1806,6 +1813,15 @@ process.stdout.write("Building `data/pokedex.js`... ");
 			eggGroups: species.eggGroups,
 			isNonstandard: species.isNonstandard,
 		};
+		if (species.gender) Pokedex[id].gender = species.gender;
+		if (species.abilities[1]) Pokedex[id].abilities[1] = species.abilities[1];
+		if (species.abilities.H) Pokedex[id].abilities.H = species.abilities.H;
+		if (species.baseSpecies && species.baseSpecies !== species.name) Pokedex[id].baseSpecies = species.baseSpecies;
+		if (species.forme) Pokedex[id].forme = species.forme;
+		if (species.prevo) Pokedex[id].prevo = species.prevo;
+		if (species.evos && species.evos.length) Pokedex[id].evos = species.evos;
+		if (species.otherFormes && species.otherFormes.length) Pokedex[id].otherFormes = species.otherFormes;
+		if (species.formeOrder && species.formeOrder.length) Pokedex[id].formeOrder = species.formeOrder;
 		if (species.digipenSprite) Pokedex[id].digipenSprite = true;
 		if (species.digipenIcon) Pokedex[id].digipenIcon = species.digipenIcon;
 		const formatsEntry = FnafModFormatsData[id];
