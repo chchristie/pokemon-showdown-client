@@ -26,7 +26,10 @@ cd pokemon-showdown-client/analysis.pokemonshowdown.com/test
 npm run smoke            # core flow (smoke.js)
 npm run calc             # damage calc tooltips (calc.js)
 npm run turn-events      # turn outcome summaries from hand-written logs (turn-events.js)
+npm run edits            # field state edit form (edits.js)
 ```
+
+Server-side edit logic (what gets written to the sim and which protocol lines are emitted) has its own mocha test in the server repo: `npx mocha --no-config --exit test/main.js test/tools/analysis/edits.js`.
 
 - The output lists one `- step` line per passed step, then `PASS`, or `FAIL: <reason>`. Exit code 1 means failure.
 - On failure, it prints the controls text, the Lines text and the recent battle log, and saves `output/<test>-failure.png`. A successful smoke run saves `output/smoke-final.png`. `output/` is gitignored.
@@ -55,7 +58,7 @@ The test uses gen9ou with the same team on both sides: Garchomp, Rotom-Wash and 
 6. **Mid-turn replacement on turn 3:** Volt Switch vs Iron Head, then pick the Volt Switch replacement.
    - If rolls cause KOs, it also submits the end-of-turn faint replacements.
    - A Turn 4 node appears.
-7. **Navigation:** click Turn 1 in Lines. The node is selected, its outcome tooltip shows to the left of the button inside the window, and later nodes are still there.
+8. **Navigation:** click Turn 1 in Lines. The node is selected, its outcome tooltip shows to the left of the button inside the window, and later nodes are still there.
 
 ## What `calc.js` covers
 
@@ -82,6 +85,22 @@ Damage calc tooltips (docs/analysis/plan.md, Phase 1), with the same team as the
 
 Add a case here when changing how turn outcomes are summarized.
 
+## What `edits.js` covers
+
+The field state edit form (docs/analysis/plan.md, Phase 2a), gen9ou with the smoke team, Rotom-Wash vs Kingambit:
+
+1. **Clean start:** Save/Cancel are disabled; gen 9 offers Snow but not Hail; uncommon effects (Magic Room, pledges) appear only after **Show more**, and G-Max/Mud Sport/primal weathers never do.
+2. **Buttons:** Rain defaults to 5 turns; clicking it again clears it; Cancel restores the form.
+3. **Unsaved changes** (Rain for 3 turns, Stealth Rock on p2, 2 Spikes on p1, Tailwind on p2 for 2 turns) survive opening and cancelling an action menu.
+4. **Save:** the log shows `Analysis edits: …`, the form shows the saved state and is clean again, Turn 1's Lines tooltip lists `Rain (3 Turns)`, then Team 1 `Spikes (2 Layers)` and Team 2 `Tailwind (2 Turns)`, `Stealth Rock (On)`, and the battle window's field text shows `Rain (3 turns)` and `Tailwind (2 turns)` rather than the client's estimates.
+5. **Calcs:** Hydro Pump's hover calc says "in Rain".
+6. **Countdown:** after a turn (Protect vs Swords Dance), Turn 2's form shows Rain with 2 turns, and the battle window shows `Rain (2 turns)` and `Tailwind (1 turn)`.
+7. **Playback:** Replay Prev Turn; once the edits have played, the battle window still shows `Rain (3 turns)` and `Tailwind (2 turns)` while the turn animates (the weather fade used to bring back the estimates).
+8. **Navigation:** an unsaved Trick Room toggle is discarded when selecting Turn 1.
+9. **Copy-on-edit:** saving Trick Room at Turn 1 (which has a continuation) creates a sibling branch whose tooltip lists the earlier edits plus Trick Room; the original Turn 1 and its Turn 2 are unchanged.
+
+Selectors: effect buttons have `data-field-effect` (`weather:raindance`, `trickroom`, `p2:stealthrock`, `p1:spikes:2`), turns inputs `data-field-turns` (`weather`, `p1:reflect`, …).
+
 ## Writing or extending tests
 
 `lib.js` has the reusable pieces. Use them from new scenario files (e.g. `calc.js`) or new steps in `smoke.js`:
@@ -105,4 +124,5 @@ Add a case here when changing how turn outcomes are summarized.
 - **Stale controls.** Right after Submit Choices, the controls still show the previous decision's text for a moment. Before calling `waitForDecision`, wait for proof that the request finished, e.g. the new Turn node appearing in Lines. The exception: if the turn can end in a faint, the new node only appears after replacements, so wait for the controls to change instead (see the Volt Switch step).
 - **Clicks during turn animations are ignored** by the page. `openActionMenu` retries for this reason.
 - **Team preview buttons react to `mouseup`**, not `click`. `clickButton` and `selectLeads` send both.
+- **The Lines branch appears before the save finishes.** Copy-on-edit adds the sibling node immediately; wait for its edit summary before checking it.
 - **Selectors use visible text and CSS classes** from `analysis.tsx` (`.battle-controls`, `.analysis-node-tree`, `.movemenu`, `data-tooltip="analysispokemon|…"`). If you rename buttons or classes, update `lib.js` and `smoke.js` in the same change.

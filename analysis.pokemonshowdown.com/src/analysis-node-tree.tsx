@@ -1,4 +1,5 @@
 /** @jsx preact.h */
+/** @jsxFrag preact.Fragment */
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
 import type { AnalysisNode, AnalysisTab } from './analysis-model';
 import { AnalysisChoiceSummaryView, AnalysisTeamSelectionSummaryView } from './analysis-choice-summary';
@@ -29,21 +30,38 @@ function NodeSummary(props: {
 	const tooltipId = `analysis-node-events-${node.id}`;
 	const hasChild = hasChildNodes(tab, node.id);
 	const showTurnEvents = node.turn > 0 && hasChild && !!node.turnEventSummary;
+	// edits apply at the start of the turn, so they're shown before the turn has been played
+	const summary = node.editSummary;
+	const editSummary = node.turn > 0 && summary && (summary.field.length || summary.p1.length || summary.p2.length) ?
+		summary : null;
+	const showTooltip = showTurnEvents || !!editSummary;
 	return <li class={`analysis-node-entry${node.id === tab.currentNodeId ? ' analysis-node-current' : ''}`}>
 		<button
 			class="analysis-node-button" onClick={() => onSelect(node.id)}
-			onMouseEnter={showTurnEvents ? positionNodeTooltip : undefined}
-			onFocus={showTurnEvents ? positionNodeTooltip : undefined}
-			aria-describedby={showTurnEvents ? tooltipId : undefined}
+			onMouseEnter={showTooltip ? positionNodeTooltip : undefined}
+			onFocus={showTooltip ? positionNodeTooltip : undefined}
+			aria-describedby={showTooltip ? tooltipId : undefined}
 		>
 			<strong>{node.turn === 0 ? 'Team Preview' : `Turn ${node.turn}`}</strong>
 			{node.turn === 0 ?
 				<AnalysisTeamSelectionSummaryView teams={node.teamSelectionSummary || { p1: [], p2: [] }} /> :
 				<AnalysisChoiceSummaryView choices={node.choiceSummary || []} gameType={tab.gameType} />}
 		</button>
-		{showTurnEvents ? <div id={tooltipId} class="analysis-node-tooltip" role="tooltip">
-			<strong>Turn {node.turn} → Turn {node.turn + 1}</strong>
-			<AnalysisTurnEventSummaryView actions={node.turnEventSummary!} />
+		{showTooltip ? <div id={tooltipId} class="analysis-node-tooltip" role="tooltip">
+			{editSummary ? <div class="analysis-node-edits">
+				<strong>Turn {node.turn} Edits:</strong>
+				{editSummary.field.map(line => <span>{line}</span>)}
+				{editSummary.p1.length || editSummary.p2.length ? <div class="analysis-node-edits-teams">
+					{(['p1', 'p2'] as const).map((side, index) => <div>
+						<em>Side {index + 1}</em>
+						{editSummary[side].map(line => <span>{line}</span>)}
+					</div>)}
+				</div> : null}
+			</div> : null}
+			{showTurnEvents ? <>
+				<strong>Turn {node.turn} → Turn {node.turn + 1}</strong>
+				<AnalysisTurnEventSummaryView actions={node.turnEventSummary!} />
+			</> : null}
 		</div> : null}
 	</li>;
 }

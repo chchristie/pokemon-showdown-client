@@ -1,6 +1,6 @@
 import {
-	ANALYSIS_API, type AnalysisCalcMoveResult, type AnalysisMidTurnSwitchOption, type AnalysisReplayRecord,
-	type AnalysisSimulationGroup, type AnalysisSnapshot,
+	ANALYSIS_API, type AnalysisAppliedEdits, type AnalysisCalcMoveResult, type AnalysisFieldEffectOption,
+	type AnalysisMidTurnSwitchOption, type AnalysisReplayRecord, type AnalysisSimulationGroup, type AnalysisSnapshot,
 } from './analysis-model';
 
 export interface AnalysisRequest {
@@ -40,6 +40,9 @@ export interface AnalysisStartResponse {
 	snapshot: AnalysisSnapshot;
 	/** edits the server skipped because earlier layers invalidated them */
 	droppedEdits: string[];
+	/** one entry per `replayNodes` record: what its edits changed (null if it had none) */
+	appliedEdits: (AnalysisAppliedEdits | null)[];
+	editOptions: { field: AnalysisFieldEffectOption[] };
 	requestState: string;
 	requests: any[];
 	pendingMidTurnSwitches: AnalysisMidTurnSwitchOption[];

@@ -2,17 +2,20 @@
 /** @jsxFrag preact.Fragment */
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
 import { BattleChoiceBuilder } from '../../play.pokemonshowdown.com/src/battle-choices';
+import type { ID } from '../../play.pokemonshowdown.com/src/battle-dex';
 import { Teams } from '../../play.pokemonshowdown.com/src/battle-teams';
 import {
 	FORMATS, LAYOUT, getRequestState,
 	type AnalysisBattle, type AnalysisCalcMode, type AnalysisCalcState, type AnalysisChoiceSummary,
-	type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisNode, type AnalysisPhase,
-	type AnalysisSideID, type AnalysisSimulationGroup, type AnalysisSimulationRoll, type AnalysisTab,
+	type AnalysisFieldStateEdit, type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisNode,
+	type AnalysisPhase, type AnalysisSideID, type AnalysisSimulationGroup, type AnalysisSimulationRoll, type AnalysisTab,
 	type LocalTeam, type PlaybackStage, type StartMode,
 } from './analysis-model';
 import { runAnalysis, runAnalysisBatch, runAnalysisCalc, type AnalysisStartResponse } from './analysis-api';
+import { AnalysisBattleRenderer } from './analysis-battle';
 import { AnalysisChoiceDraft, sideIndex } from './analysis-choices';
 import { AnalysisChoiceSummaryView } from './analysis-choice-summary';
+import { AnalysisFieldEditor, AnalysisFieldFormState, mergeFieldEdits } from './analysis-field-editor';
 import { AnalysisHeader } from './analysis-header';
 import { hasChildNodes, replayNodesFor } from './analysis-nodes';
 import { AnalysisNodeTree } from './analysis-node-tree';
@@ -65,6 +68,10 @@ class AnalysisApp extends preact.Component {
 	calcAbortController: AbortController | null = null;
 	choiceTooltipsFrame: HTMLElement | null = null;
 	draft = new AnalysisChoiceDraft();
+	/** field edit form for the current decision point (unsaved changes) */
+	fieldForm = new AnalysisFieldFormState();
+	showMoreFieldEffects = false;
+	fieldEditError = '';
 	pendingHydration: { tabId: string, inputLog: string[] } | null = null;
 	simulationGroupElements: Record<number, HTMLElement | null> = {};
 	/** outcome-list scroll adjustment to apply after the next render (see applyOutcomeScroll) */
@@ -228,6 +235,7 @@ class AnalysisApp extends preact.Component {
 				seed: tab.rootSeed, replayNodes: replayNodesFor(tab, nodeId, false),
 			});
 			tab.currentNodeId = nodeId;
+			this.fieldEditError = '';
 			const requestState = this.applyBattleResponse(tab, data);
 			tab.phase = requestState === 'teampreview' ? 'preview' : 'default';
 			this.pendingHydration = { tabId: tab.id, inputLog: [...(inputLog ?? node.inputLog)] };
@@ -247,6 +255,7 @@ class AnalysisApp extends preact.Component {
 	applyBattleResponse(tab: AnalysisTab, data: AnalysisStartResponse) {
 		tab.log = data.log || [];
 		tab.snapshot = data.snapshot;
+		tab.editOptions = data.editOptions || tab.editOptions;
 		tab.requests = data.requests;
 		tab.requestState = getRequestState(data.requestState, data.requests);
 		tab.gameType = data.gameType || tab.gameType;
@@ -415,6 +424,68 @@ class AnalysisApp extends preact.Component {
 			}
 		}
 		await this.submitReplacements(tab, switchInputLog, 'switch-selection');
+	};
+
+	/*********************************************************
+	 * State edits
+	 *********************************************************/
+
+	/**
+	 * Merges field changes into the current node's edits (copy-on-edit if it has children), then rebuilds the
+	 * position. The server reports what the edits actually changed, which replaces the stored edits.
+	 */
+	saveFieldEdits = async (tab: AnalysisTab, changes: AnalysisFieldStateEdit) => {
+		const original = tab.nodes[tab.currentNodeId];
+		if (!original || tab.loading) return;
+		this.saveLeafDraft(tab);
+		const { edits: originalEdits, editSummary: originalSummary } = original;
+		const node = this.editCurrentNode(tab, target => {
+			target.edits = { ...target.edits, field: mergeFieldEdits(target.edits?.field, changes) };
+			// a copy of an executed node is a new, undecided decision point
+			target.seed = null;
+			target.turnEventSummary = undefined;
+		})!;
+		const copied = node !== original;
+		tab.loading = true;
+		this.fieldEditError = '';
+		this.forceUpdate();
+		try {
+			const data = await runAnalysis({
+				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				replayNodes: replayNodesFor(tab, node.id, false),
+			});
+			// the node's own record is the last one, since it has edits
+			const applied = data.appliedEdits?.[data.appliedEdits.length - 1];
+			const edits = { ...node.edits, field: applied?.edits.field };
+			if (!edits.field) delete edits.field;
+			if (Object.keys(edits).length) {
+				node.edits = edits;
+				node.editSummary = applied?.summary;
+			} else if (copied) {
+				// nothing changed after all: drop the copy and stay on the original line
+				delete tab.nodes[node.id];
+				tab.currentNodeId = original.id;
+			} else {
+				delete node.edits;
+				delete node.editSummary;
+			}
+			this.applyBattleResponse(tab, data);
+			tab.phase = 'default';
+			this.pendingHydration = { tabId: tab.id, inputLog: [...tab.nodes[tab.currentNodeId].inputLog] };
+			this.destroyBattle();
+		} catch (error: any) {
+			if (copied) {
+				delete tab.nodes[node.id];
+				tab.currentNodeId = original.id;
+			} else {
+				node.edits = originalEdits;
+				node.editSummary = originalSummary;
+			}
+			this.fieldEditError = error.message || 'Unable to apply the edits.';
+		} finally {
+			tab.loading = false;
+			this.forceUpdate();
+		}
 	};
 
 	/*********************************************************
@@ -1148,7 +1219,8 @@ class AnalysisApp extends preact.Component {
 	calcKey(tab: AnalysisTab | undefined) {
 		if (!tab || (tab.phase !== 'default' && tab.phase !== 'selection')) return null;
 		if (getRequestState(tab.requestState, tab.requests) !== 'move') return null;
-		return [tab.id, tab.currentNodeId, ...this.draft.toInputLog(tab.requests)].join('\n');
+		const edits = JSON.stringify(tab.nodes[tab.currentNodeId]?.edits || null);
+		return [tab.id, tab.currentNodeId, edits, ...this.draft.toInputLog(tab.requests)].join('\n');
 	}
 
 	/**
@@ -1280,11 +1352,10 @@ class AnalysisApp extends preact.Component {
 		this.refreshCalcs(tab);
 		if (!tab || !this.battleFrame || !this.battleLogFrame || !tab.log.length || this.battleTabId === tab.id) return;
 		this.destroyBattle();
-		const BattleConstructor = (window as any).Battle;
 		const $ = (window as any).$;
-		if (!BattleConstructor || !$) return;
-		this.battle = new BattleConstructor({
-			id: tab.id,
+		if (!$) return;
+		this.battle = new AnalysisBattleRenderer({
+			id: tab.id as ID,
 			$frame: $(this.battleFrame),
 			$logFrame: $(this.battleLogFrame),
 			log: tab.log,
@@ -1983,6 +2054,13 @@ class AnalysisApp extends preact.Component {
 					/>
 				</label>
 			</div>
+			{requestState === 'move' && (currentNode?.turn ?? 0) >= 1 && tab.snapshot && tab.editOptions &&
+				<AnalysisFieldEditor
+					state={this.fieldForm} snapshot={tab.snapshot} options={tab.editOptions.field}
+					showMore={this.showMoreFieldEffects} disabled={!!tab.loading} error={this.fieldEditError}
+					onToggleShowMore={() => { this.showMoreFieldEffects = !this.showMoreFieldEffects; this.forceUpdate(); }}
+					onSave={changes => void this.saveFieldEdits(tab, changes)}
+				/>}
 		</div>;
 	}
 
@@ -2046,11 +2124,11 @@ class AnalysisApp extends preact.Component {
 					/>
 					{(requestState === 'move' || requestState === 'switch') &&
 						<div class="battle-controls" style={controlsStyle} role="complementary" aria-label="Battle Controls">
-							{this.renderBattleControls(tab, requestState)}
+							<div class="pad">{this.renderBattleControls(tab, requestState)}</div>
 						</div>}
 					{(requestState === 'teampreview' || tab.requests?.[0]?.teamPreview) &&
 						<div class="battle-controls" style={controlsStyle} role="complementary" aria-label="Battle Controls">
-							{this.renderTeamPreviewChoices(tab)}
+							<div class="pad">{this.renderTeamPreviewChoices(tab)}</div>
 						</div>}
 					<div
 						class="battle-log" aria-label="Battle Log" role="complementary" ref={setBattleLogFrame}

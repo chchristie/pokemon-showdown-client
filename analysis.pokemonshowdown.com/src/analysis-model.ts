@@ -59,11 +59,54 @@ export interface AnalysisPokemonStateEdit {
 	volatiles?: { [id: string]: false | { [param: string]: number | string | boolean } };
 }
 
+/** Turns remaining (including the current turn) and layers; each defaults to the condition's standard value. */
+export interface AnalysisConditionEdit {
+	duration?: number;
+	layers?: number;
+}
+
+export interface AnalysisWeatherEdit extends AnalysisConditionEdit {
+	id: string;
+}
+
+/** `null` removes the effect; a missing key leaves it as is. */
 export interface AnalysisFieldStateEdit {
-	weather?: string;
-	terrain?: string;
-	pseudoWeather?: { [id: string]: boolean };
-	sides?: { p1?: { [id: string]: boolean | number }, p2?: { [id: string]: boolean | number } };
+	weather?: AnalysisWeatherEdit | null;
+	terrain?: AnalysisWeatherEdit | null;
+	pseudoWeather?: { [id: string]: AnalysisConditionEdit | null };
+	sides?: { p1?: { [id: string]: AnalysisConditionEdit | null }, p2?: { [id: string]: AnalysisConditionEdit | null } };
+}
+
+/** Edit summary lines (`Rain (3 Turns)`, `Spikes (2 Layers)`): field-wide, then each team's. */
+export interface AnalysisEditSummary {
+	field: string[];
+	p1: string[];
+	p2: string[];
+}
+
+/** What a node's edits actually changed, as returned per replay record. Mirrors tools/analysis-edits.ts. */
+export interface AnalysisAppliedEdits {
+	edits: AnalysisEdits;
+	summary: AnalysisEditSummary;
+}
+
+export type AnalysisFieldEffectKind = 'weather' | 'terrain' | 'pseudoWeather' | 'sideCondition';
+
+/** A field effect the edit form can set in this format. Mirrors tools/analysis-edits.ts. */
+export interface AnalysisFieldEffectOption {
+	id: string;
+	kind: AnalysisFieldEffectKind;
+	name: string;
+	/** button label; options that share a `group` form one segmented row */
+	label: string;
+	group: string;
+	/** visible options with the same `row` share a line, with turns inputs below their buttons */
+	row?: string;
+	/** shown without "Show more" */
+	common: boolean;
+	/** turns remaining when newly set; absent if the effect doesn't expire */
+	duration?: number;
+	maxLayers?: number;
 }
 
 export interface AnalysisNode {
@@ -73,6 +116,8 @@ export interface AnalysisNode {
 	turn: number;
 	inputLog: string[];
 	edits?: AnalysisEdits;
+	/** what `edits` changed, for the Lines tooltip ("Turn N Edits") */
+	editSummary?: AnalysisEditSummary;
 	choiceSummary?: AnalysisChoiceSummary[];
 	teamSelectionSummary?: AnalysisTeamSelectionSummary;
 	turnEventSummary?: AnalysisTurnEventSummary[];
@@ -231,6 +276,8 @@ export interface AnalysisTab {
 	format: string;
 	log: string[];
 	snapshot?: AnalysisSnapshot;
+	/** what the state edit forms can set in this format */
+	editOptions?: { field: AnalysisFieldEffectOption[] };
 	team1: string;
 	team2: string;
 	loading?: boolean;
