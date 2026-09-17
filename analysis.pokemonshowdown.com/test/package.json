@@ -1,0 +1,11 @@
+{
+	"name": "analysis-browser-tests",
+	"private": true,
+	"description": "Headless-Chrome tests for the DigiPen analysis tool (see README.md)",
+	"scripts": {
+		"smoke": "node smoke.js"
+	},
+	"dependencies": {
+		"puppeteer-core": "^25.0.0"
+	}
+}
