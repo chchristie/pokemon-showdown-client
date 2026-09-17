@@ -5,9 +5,10 @@ import { BattleChoiceBuilder } from '../../play.pokemonshowdown.com/src/battle-c
 import { Teams } from '../../play.pokemonshowdown.com/src/battle-teams';
 import {
 	FORMATS, LAYOUT, getRequestState,
-	type AnalysisBattle, type AnalysisCalcState, type AnalysisChoiceSummary, type AnalysisGroupingMode,
-	type AnalysisMidTurnSwitchOption, type AnalysisNode, type AnalysisPhase, type AnalysisSideID, type AnalysisSimulationGroup,
-	type AnalysisSimulationRoll, type AnalysisTab, type LocalTeam, type PlaybackStage, type StartMode,
+	type AnalysisBattle, type AnalysisCalcMode, type AnalysisCalcState, type AnalysisChoiceSummary,
+	type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisNode, type AnalysisPhase,
+	type AnalysisSideID, type AnalysisSimulationGroup, type AnalysisSimulationRoll, type AnalysisTab,
+	type LocalTeam, type PlaybackStage, type StartMode,
 } from './analysis-model';
 import { runAnalysis, runAnalysisBatch, runAnalysisCalc, type AnalysisStartResponse } from './analysis-api';
 import { AnalysisChoiceDraft, sideIndex } from './analysis-choices';
@@ -1111,6 +1112,24 @@ class AnalysisApp extends preact.Component {
 		return [tab.id, tab.currentNodeId, ...this.draft.toInputLog(tab.requests)].join('\n');
 	}
 
+	/**
+	 * Which of the attacker's calc variants a tooltip shows: while its move menu is open, the Mega/Tera
+	 * checkbox state; for a chosen move, that choice's modifier.
+	 */
+	getCalcMode = (sideNumber: number, slot: number, usage: 'hover' | 'selected'): AnalysisCalcMode => {
+		const side = sideNumber === 0 ? 'p1' : 'p2';
+		if (usage === 'hover') {
+			const { choiceSide } = this.draft;
+			const current = this.draft.builders[side]?.current;
+			if (!current || choiceSide?.side !== side || choiceSide.index !== slot) return '';
+			return current.tera ? 'tera' : current.megax ? 'megax' : current.megay ? 'megay' : current.mega ? 'mega' : '';
+		}
+		const choice = this.draft.moveChoicesBySlot[side][slot] || '';
+		if (/\bterastallize\b/.test(choice)) return 'tera';
+		const mega = /\b(megax|megay|mega)\b/.exec(choice);
+		return mega ? mega[1] as AnalysisCalcMode : '';
+	};
+
 	/** Fetches calcs when the decision point or draft choices change, so tooltips can show them instantly. */
 	refreshCalcs(tab: AnalysisTab | undefined) {
 		const key = this.calcKey(tab);
@@ -1160,7 +1179,10 @@ class AnalysisApp extends preact.Component {
 			if (this.battleFrame) $(this.battleFrame).off('.battleTooltips');
 		}
 		if (this.choiceTooltips && this.choiceTooltipsFrame) this.choiceTooltips.unlisten(this.choiceTooltipsFrame);
-		this.choiceTooltips = new AnalysisTooltips(this.battle as any, () => this.calcs);
+		this.choiceTooltips = new AnalysisTooltips(this.battle as any, {
+			getCalcs: () => this.calcs,
+			getCalcMode: this.getCalcMode,
+		});
 		this.choiceTooltips.listen(tooltipFrame);
 		this.choiceTooltipsFrame = tooltipFrame;
 	}

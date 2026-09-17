@@ -4,6 +4,7 @@
  * - move button hover: calc lines for all potential targets (foes for single-target, everything hit for spread)
  * - status moves: no calc lines
  * - choice-summary cell hover: calc lines only for the chosen targets; no tooltip without a chosen move
+ * - the move menu's Terastallize checkbox (and a chosen move's tera modifier) picks the tera calc
  * Usage and prerequisites: see README.md in this folder.
  */
 const {
@@ -43,6 +44,15 @@ async function singles(page) {
 	expect((hydroPump.html.match(/class="picon"/g) || []).length >= 2, 'calc line lacks Pokémon icons');
 	step(`singles move hover: ${hydroPump.text.slice(hydroPump.text.lastIndexOf('Hydro Pump vs.') - 6).trim()}`);
 
+	expect(!hydroPump.text.includes('Tera '), 'untoggled Hydro Pump calc should not be terastallized');
+	await page.evaluate(() => [...document.querySelectorAll('.megaevo-box label')]
+		.find(label => label.textContent.includes('Terastallize')).querySelector('input').click());
+	const teraHydroPump = await hoverTooltip(page, '.movemenu button', {
+		text: 'Hydro Pump', until: text => hasCalc(text) && text.includes('Tera Electric'),
+	});
+	expect(teraHydroPump, 'toggling Terastallize should switch the hover calc to Tera Electric');
+	step('Terastallize checkbox switches the move hover calc');
+
 	const protect = await hoverTooltip(page, '.movemenu button', { text: 'Protect', until: text => text.includes('Protect') });
 	expect(protect && calcLineCount(protect.html) === 0, 'status move tooltip should have no calc lines');
 	step('status move hover has no calc lines');
@@ -53,7 +63,8 @@ async function singles(page) {
 	expect(cells.length === 1, `expected 1 summary cell with a tooltip (only p1 chose), got ${cells.length}`);
 	const cell = await hoverTooltip(page, '.analysis-choice-summary.has-tooltip', { until: hasCalc });
 	expect(cell && calcLineCount(cell.html) === 1, 'summary cell tooltip should show 1 calc line');
-	step('singles summary cell hover shows the chosen target only');
+	expect(cell.text.includes('Tera Electric'), 'summary cell calc should use the chosen move\'s tera modifier');
+	step('singles summary cell hover shows the chosen target only, with the chosen tera');
 }
 
 async function doubles(page) {

@@ -13,15 +13,27 @@ import { BattleLog } from '../../play.pokemonshowdown.com/src/battle-log';
 import { Dex } from '../../play.pokemonshowdown.com/src/battle-dex';
 import type { Battle } from '../../play.pokemonshowdown.com/src/battle';
 import {
-	ANALYSIS_CALC_ATTACKER, ANALYSIS_CALC_DEFENDER, type AnalysisCalcPokemonRef, type AnalysisCalcState,
+	ANALYSIS_CALC_ATTACKER, ANALYSIS_CALC_DEFENDER, type AnalysisCalcMode, type AnalysisCalcPokemonRef,
+	type AnalysisCalcState,
 } from './analysis-model';
 
-export class AnalysisTooltips extends BattleTooltips {
-	getCalcs: () => AnalysisCalcState | null;
+export type AnalysisCalcUsage = 'hover' | 'selected';
 
-	constructor(battle: Battle, getCalcs: () => AnalysisCalcState | null) {
+export interface AnalysisTooltipSources {
+	getCalcs(): AnalysisCalcState | null;
+	/**
+	 * The attacker's transformation for this tooltip: the move menu's Mega/Tera checkboxes for 'hover',
+	 * the chosen move's modifier for 'selected'.
+	 */
+	getCalcMode(sideIndex: number, slot: number, usage: AnalysisCalcUsage): AnalysisCalcMode;
+}
+
+export class AnalysisTooltips extends BattleTooltips {
+	sources: AnalysisTooltipSources;
+
+	constructor(battle: Battle, sources: AnalysisTooltipSources) {
 		super(battle);
-		this.getCalcs = getCalcs;
+		this.sources = sources;
 	}
 
 	override showTooltip(elem: HTMLElement) {
@@ -72,16 +84,20 @@ export class AnalysisTooltips extends BattleTooltips {
 	}
 
 	/** Calc lines for a move tooltip; nothing for status moves. */
-	renderCalcLines(sideIndex: number, slot: number, move: Dex.Move, mode: 'hover' | 'selected') {
+	renderCalcLines(sideIndex: number, slot: number, move: Dex.Move, usage: AnalysisCalcUsage) {
 		if (move.category === 'Status') return '';
-		const calcs = this.getCalcs();
+		const calcs = this.sources.getCalcs();
 		const section = (content: string) => `<p class="tooltip-section analysis-calc-lines">${content}</p>`;
 		if (!calcs || calcs.loading) return section('<small><em>Calculating damage…</em></small>');
 		if (calcs.error) return section(`<small>Damage calc failed: ${BattleLog.escapeHTML(calcs.error)}</small>`);
 		const side = sideIndex === 0 ? 'p1' : 'p2';
-		const result = calcs.results?.find(entry =>
-			entry.attacker.side === side && entry.attacker.slot === slot && entry.moveId === move.id);
-		const targets = result?.targets.filter(target => mode === 'hover' ? target.onMoveHover : target.selected) || [];
+		const mode = this.sources.getCalcMode(sideIndex, slot, usage);
+		const matches = (entryMode: AnalysisCalcMode) => calcs.results?.find(entry =>
+			entry.attacker.side === side && entry.attacker.slot === slot && entry.moveId === move.id &&
+			entry.mode === entryMode);
+		// fall back to the untransformed result if that mode isn't available
+		const result = matches(mode) || matches('');
+		const targets = result?.targets.filter(target => usage === 'hover' ? target.onMoveHover : target.selected) || [];
 		if (!result || !targets.length) return '';
 		const lines = targets.map(target => {
 			if (!target.text) return `<small>Damage calc failed: ${BattleLog.escapeHTML(target.error || 'unknown error')}</small>`;

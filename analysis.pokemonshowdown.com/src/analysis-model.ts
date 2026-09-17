@@ -165,8 +165,12 @@ export interface AnalysisCalcTargetResult {
 	error?: string;
 }
 
+/** Attacker's own transformation this turn; results exist for each mode it can still use. */
+export type AnalysisCalcMode = '' | 'tera' | 'mega' | 'megax' | 'megay';
+
 export interface AnalysisCalcMoveResult {
 	attacker: AnalysisCalcPokemonRef;
+	mode: AnalysisCalcMode;
 	moveSlot: number;
 	moveId: string;
 	moveName: string;

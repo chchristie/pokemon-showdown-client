@@ -62,8 +62,9 @@ Damage calc tooltips (docs/analysis/plan.md, Phase 1), with the same team as the
 
 1. **Singles (gen9ou), Rotom-Wash vs Kingambit:**
    - Hovering Hydro Pump shows exactly 1 calc line, with icons, `(1)`/`(2)` and no EVs.
+   - Ticking the move menu's Terastallize checkbox switches the Hydro Pump hover calc to Tera Electric.
    - Hovering Protect (a status move) shows no calc lines.
-   - After choosing Hydro Pump, only p1's choice-summary cell has a tooltip, and it shows 1 line.
+   - After choosing Hydro Pump (with Tera), only p1's choice-summary cell has a tooltip, and it shows 1 line using Tera.
 2. **Doubles (gen9doublesou), Garchomp + Rotom-Wash vs Kingambit + Rotom-Wash:**
    - Hovering Earthquake shows 3 lines (both foes plus the ally), including the Levitate zero-damage text.
    - Hovering Dragon Tail shows 2 lines (foes only).
