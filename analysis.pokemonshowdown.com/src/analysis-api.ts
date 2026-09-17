@@ -1,11 +1,16 @@
-import { ANALYSIS_API } from './analysis-model';
+import {
+	ANALYSIS_API, type AnalysisMidTurnSwitchOption, type AnalysisReplayRecord, type AnalysisSimulationGroup,
+	type AnalysisSnapshot,
+} from './analysis-model';
 
 export interface AnalysisRequest {
 	format: string;
 	team1: string;
 	team2: string;
 	seed?: string;
-	replayNodes?: { seed: string, inputLog: string[] }[];
+	/** path from the root to the target position (see replayNodesFor) */
+	replayNodes?: AnalysisReplayRecord[];
+	/** choices to execute from the reconstructed position; the server picks a fresh seed */
 	inputLog?: string[];
 	autoTurn?: boolean;
 }
@@ -23,6 +28,29 @@ export interface AnalysisMidTurnSwitchChoice {
 	replacementIndex: number;
 }
 
+export interface AnalysisStartResponse {
+	format: string;
+	gameType: string;
+	/** root seed of the battle */
+	seed: string;
+	currentSeed: string;
+	/** seed generated for `inputLog`, if choices were executed */
+	actionSeed?: string;
+	log: string[];
+	snapshot: AnalysisSnapshot;
+	/** edits the server skipped because earlier layers invalidated them */
+	droppedEdits: string[];
+	requestState: string;
+	requests: any[];
+	pendingMidTurnSwitches: AnalysisMidTurnSwitchOption[];
+}
+
+export interface AnalysisBatchResponse {
+	simulationCount: number;
+	turnGroups: AnalysisSimulationGroup[];
+	stateGroups: AnalysisSimulationGroup[];
+}
+
 async function postAnalysis(path: string, request: AnalysisRequest | AnalysisBatchRequest, signal?: AbortSignal) {
 	const response = await fetch(`${ANALYSIS_API}${path}`, {
 		method: 'POST',
@@ -37,10 +65,12 @@ async function postAnalysis(path: string, request: AnalysisRequest | AnalysisBat
 	return data;
 }
 
-export async function runAnalysis(request: AnalysisRequest) {
+export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisStartResponse> {
 	return postAnalysis('/analysis/start', request);
 }
 
-export async function runAnalysisBatch(request: AnalysisBatchRequest, signal?: AbortSignal) {
+export async function runAnalysisBatch(
+	request: AnalysisBatchRequest, signal?: AbortSignal
+): Promise<AnalysisBatchResponse> {
 	return postAnalysis('/analysis/simulate', request, signal);
 }

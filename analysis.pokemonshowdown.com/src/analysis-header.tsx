@@ -18,10 +18,12 @@ export function AnalysisHeader(props: AnalysisHeaderProps) {
 		<div class="maintabbarbottom"></div>
 		<div class="tabbar maintabbar"><div class="inner">
 			<ul class="maintabbar-left" role="tablist">
-				<li class="home-li"><a class={`roomtab button${!props.activeTab ? ' cur' : ''}`} href="/" role="tab" aria-selected={!props.activeTab ? 'true' : 'false'} onClick={event => {
-					event.preventDefault();
-					props.onOpenHome();
-				}}>Home</a></li>
+				<li class="home-li"><a
+					class={`roomtab button${!props.activeTab ? ' cur' : ''}`} href="/" role="tab" aria-selected={!props.activeTab ? 'true' : 'false'} onClick={event => {
+						event.preventDefault();
+						props.onOpenHome();
+					}}
+				>Home</a></li>
 				{props.tabs.map(tab => <li key={tab.id}>
 					<a
 						class={`roomtab button closable${props.activeTab?.id === tab.id ? ' cur' : ''}`}

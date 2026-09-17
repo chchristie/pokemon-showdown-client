@@ -1,30 +1,42 @@
-import type { AnalysisNode, AnalysisTab } from './analysis-model';
+import type { AnalysisNode, AnalysisReplayRecord, AnalysisTab } from './analysis-model';
 
 export function getNodePath(tab: AnalysisTab, nodeId = tab.currentNodeId) {
 	const path: AnalysisNode[] = [];
-	let node = tab.nodes[nodeId];
+	let node: AnalysisNode | undefined = tab.nodes[nodeId];
 	while (node) {
 		path.unshift(node);
-		node = node.parentId ? tab.nodes[node.parentId] : undefined as any;
+		node = node.parentId ? tab.nodes[node.parentId] : undefined;
 	}
 	return path;
 }
 
-export function replayNodesFor(tab: AnalysisTab, nodeId: string, includeNode: boolean) {
-	const path = getNodePath(tab, nodeId);
-	const nodes = includeNode ? path : path.slice(0, -1);
-	return nodes.filter(node => node.seed && node.inputLog.length).map(node => ({
-		seed: node.seed!, inputLog: node.inputLog,
-	}));
+export function hasEdits(node: AnalysisNode) {
+	return !!node.edits && Object.keys(node.edits).length > 0;
 }
 
-export interface AnalysisNodeTreeRow {
-	node: AnalysisNode;
-	depth: number;
+/**
+ * Records that rebuild the position at `nodeId`: every node on the path contributes its
+ * edits (applied at the start of its turn) and, once executed, its seed and choices.
+ * The target node's own edits are always included; its choices only if `includeNode`.
+ */
+export function replayNodesFor(tab: AnalysisTab, nodeId: string, includeNode: boolean) {
+	const records: AnalysisReplayRecord[] = [];
+	for (const node of getNodePath(tab, nodeId)) {
+		const runChoices = (node.id !== nodeId || includeNode) && !!node.seed && node.inputLog.length > 0;
+		const edits = hasEdits(node) ? node.edits : undefined;
+		if (!runChoices && !edits) continue;
+		records.push({
+			edits,
+			seed: runChoices ? node.seed : null,
+			inputLog: runChoices ? node.inputLog : [],
+		});
+	}
+	return records;
 }
 
 export type AnalysisNodeTreeItem = { node: AnalysisNode } | { branch: AnalysisNodeTreeItem[] };
 
+/** Lines presentation: the first child continues the line, later children become branches. */
 export function getAnalysisNodeTreeItems(tab: AnalysisTab) {
 	const nodes = Object.values(tab.nodes);
 	const root = nodes.find(node => node.parentId === null);
@@ -46,17 +58,10 @@ export function getAnalysisNodeTreeItems(tab: AnalysisTab) {
 	return appendChildren(root);
 }
 
-export function getAnalysisNodeTreeRows(tab: AnalysisTab) {
-	const rows: AnalysisNodeTreeRow[] = [];
-	const appendItems = (items: AnalysisNodeTreeItem[], depth: number) => {
-		for (const item of items) {
-			if ('node' in item) {
-				rows.push({ node: item.node, depth });
-			} else {
-				appendItems(item.branch, depth + 1);
-			}
-		}
-	};
-	appendItems(getAnalysisNodeTreeItems(tab), 0);
-	return rows;
+export function getChildNodes(tab: AnalysisTab, nodeId: string) {
+	return Object.values(tab.nodes).filter(node => node.parentId === nodeId);
+}
+
+export function hasChildNodes(tab: AnalysisTab, nodeId: string) {
+	return Object.values(tab.nodes).some(node => node.parentId === nodeId);
 }

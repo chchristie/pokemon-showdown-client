@@ -1,3 +1,5 @@
+import type { Dex } from '../../play.pokemonshowdown.com/src/battle-dex';
+
 export type StartMode = 'setup' | 'teams' | 'replay';
 
 export interface AnalysisChoiceSummary {
@@ -28,15 +30,114 @@ export interface AnalysisTurnEventSummary {
 	details?: AnalysisTurnEventDetail[];
 }
 
+export type AnalysisSideID = 'p1' | 'p2';
+export type AnalysisBoostsTable = { [stat in Dex.BoostStatName]?: number };
+
+/**
+ * Manual state edits stored on a node, applied by the server at the start of the
+ * node's turn. Mirrors `AnalysisEdits` in pokemon-showdown/tools/analysis-state.ts;
+ * see docs/analysis/plan.md (D3).
+ */
+export interface AnalysisEdits {
+	teams?: { p1?: Dex.PokemonSet[], p2?: Dex.PokemonSet[] };
+	active?: { p1?: (number | null)[], p2?: (number | null)[] };
+	pokemon?: { [sideAndIndex: string]: AnalysisPokemonStateEdit };
+	field?: AnalysisFieldStateEdit;
+}
+
+export interface AnalysisPokemonStateEdit {
+	hp?: number;
+	pp?: (number | null)[];
+	status?: '' | 'brn' | 'par' | 'slp' | 'frz' | 'psn' | 'tox';
+	toxicStage?: number;
+	sleepTurns?: number;
+	terastallized?: boolean;
+	megaEvolved?: boolean;
+	boosts?: AnalysisBoostsTable;
+	volatiles?: { [id: string]: false | { [param: string]: number | string | boolean } };
+}
+
+export interface AnalysisFieldStateEdit {
+	weather?: string;
+	terrain?: string;
+	pseudoWeather?: { [id: string]: boolean };
+	sides?: { p1?: { [id: string]: boolean | number }, p2?: { [id: string]: boolean | number } };
+}
+
 export interface AnalysisNode {
 	id: string;
 	parentId: string | null;
 	seed: string | null;
 	turn: number;
 	inputLog: string[];
+	edits?: AnalysisEdits;
 	choiceSummary?: AnalysisChoiceSummary[];
 	teamSelectionSummary?: AnalysisTeamSelectionSummary;
 	turnEventSummary?: AnalysisTurnEventSummary[];
+}
+
+/** One node on the path to a position, as sent to the analysis API. */
+export interface AnalysisReplayRecord {
+	edits?: AnalysisEdits;
+	seed?: string | null;
+	inputLog?: string[];
+}
+
+/** Compact battle state returned by the API. Mirrors `AnalysisSnapshot` in tools/analysis-state.ts. */
+export interface AnalysisEffectSnapshot {
+	id: string;
+	duration?: number;
+	data?: { [key: string]: number | string | boolean };
+}
+
+export interface AnalysisPokemonSnapshot {
+	index: number;
+	ident: string;
+	name: string;
+	species: string;
+	baseSpecies: string;
+	set: Dex.PokemonSet;
+	item: string;
+	ability: string;
+	level: number;
+	hp: number;
+	maxhp: number;
+	fainted: boolean;
+	status: string;
+	toxicStage?: number;
+	sleepTurns?: number;
+	moves: { id: string, name: string, pp: number, maxpp: number, disabled: boolean }[];
+	isActive: boolean;
+	slot: number | null;
+	boosts: AnalysisBoostsTable;
+	volatiles: AnalysisEffectSnapshot[];
+	types: string[];
+	teraType: string;
+	terastallized: string | null;
+	canTerastallize: boolean;
+	megaEvolved: boolean;
+	canMegaEvo: boolean;
+	stats: Dex.StatsTable;
+}
+
+export interface AnalysisSnapshot {
+	turn: number;
+	gen: number;
+	gameType: string;
+	formatId: string;
+	rules: { terastallization: boolean, dynamax: boolean };
+	field: {
+		weather: AnalysisEffectSnapshot | null,
+		terrain: AnalysisEffectSnapshot | null,
+		pseudoWeather: AnalysisEffectSnapshot[],
+	};
+	sides: {
+		id: AnalysisSideID,
+		name: string,
+		sideConditions: AnalysisEffectSnapshot[],
+		active: (number | null)[],
+		pokemon: AnalysisPokemonSnapshot[],
+	}[];
 }
 
 export interface AnalysisSimulationResult {
@@ -81,7 +182,7 @@ export interface AnalysisTab {
 	title: string;
 	format: string;
 	log: string[];
-	state?: any;
+	snapshot?: AnalysisSnapshot;
 	team1: string;
 	team2: string;
 	loading?: boolean;
@@ -140,7 +241,7 @@ export const LAYOUT = {
 };
 
 export function getAnalysisApi() {
-	const match = /\?~~([^:\/]+)(?::(\d+))?/.exec(window.location.search);
+	const match = /\?~~([^:/]+)(?::(\d+))?/.exec(window.location.search);
 	if (!match) return 'http://localhost:8002';
 	return `http://${match[1]}:${match[2] || '8002'}`;
 }

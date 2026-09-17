@@ -2,8 +2,7 @@
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
 import type { AnalysisNode, AnalysisTab } from './analysis-model';
 import { AnalysisChoiceSummaryView, AnalysisTeamSelectionSummaryView } from './analysis-choice-summary';
-import { getAnalysisNodeTreeItems } from './analysis-nodes';
-import type { AnalysisNodeTreeItem } from './analysis-nodes';
+import { getAnalysisNodeTreeItems, hasChildNodes, type AnalysisNodeTreeItem } from './analysis-nodes';
 import { AnalysisTurnEventSummaryView } from './analysis-turn-events';
 
 function NodeSummary(props: {
@@ -11,7 +10,7 @@ function NodeSummary(props: {
 }) {
 	const { tab, node, onSelect } = props;
 	const tooltipId = `analysis-node-events-${node.id}`;
-	const hasChild = Object.values(tab.nodes).some(candidate => candidate.parentId === node.id);
+	const hasChild = hasChildNodes(tab, node.id);
 	const showTurnEvents = node.turn > 0 && hasChild && !!node.turnEventSummary;
 	return <li class={`analysis-node-entry${node.id === tab.currentNodeId ? ' analysis-node-current' : ''}`}>
 		<button
