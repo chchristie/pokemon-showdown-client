@@ -29,6 +29,14 @@ function pokemonLabel(pokemon: any) {
 	return (pokemon?.details || pokemon?.name || '').split(',')[0];
 }
 
+/**
+ * How the Simulation Outcomes list scrolls after a render:
+ * - anchor: keep the outcome at the same on-screen position (selecting it can resize it and the previous selection)
+ * - reveal: scroll the least amount needed to show the outcome (Prev/Next)
+ * - top: start at the top (new simulation results)
+ */
+type OutcomeScroll = { mode: 'anchor', index: number, offset: number } | { mode: 'reveal' | 'top', index: number };
+
 class AnalysisApp extends preact.Component {
 	tabs: AnalysisTab[] = [];
 	activeTab: string | null = null;
@@ -59,6 +67,8 @@ class AnalysisApp extends preact.Component {
 	draft = new AnalysisChoiceDraft();
 	pendingHydration: { tabId: string, inputLog: string[] } | null = null;
 	simulationGroupElements: Record<number, HTMLElement | null> = {};
+	/** outcome-list scroll adjustment to apply after the next render (see applyOutcomeScroll) */
+	pendingOutcomeScroll: OutcomeScroll | null = null;
 	simulationAbortController: AbortController | null = null;
 	playbackStage: PlaybackStage = null;
 	oneTurnStartTurn: number | null = null;
@@ -489,6 +499,7 @@ class AnalysisApp extends preact.Component {
 			tab.simulationResultCount = data.simulationCount || 0;
 			tab.selectedSimulationGroupIndex = 0;
 			tab.simulationRoll = 'median';
+			this.pendingOutcomeScroll = { mode: 'top', index: 0 };
 			const simulation = simulationGroups[0]?.median;
 			if (simulation) {
 				this.oneTurnStartTurn = tab.nodes[tab.currentNodeId]?.turn ?? 0;
@@ -566,10 +577,19 @@ class AnalysisApp extends preact.Component {
 	};
 
 	showSimulation = (
-		tab: AnalysisTab, groupIndex: number, roll = tab.simulationRoll || 'median', scroll = false
+		tab: AnalysisTab, groupIndex: number, roll = tab.simulationRoll || 'median', scroll?: 'anchor' | 'reveal'
 	) => {
 		const simulation = tab.simulationGroups?.[groupIndex]?.[roll];
 		if (!simulation) return;
+		if (scroll === 'reveal') this.pendingOutcomeScroll = { mode: 'reveal', index: groupIndex };
+		if (scroll === 'anchor') {
+			const element = this.simulationGroupElements[groupIndex];
+			const container = element?.closest<HTMLElement>('.scrollable');
+			if (element && container) {
+				const offset = element.getBoundingClientRect().top - container.getBoundingClientRect().top;
+				this.pendingOutcomeScroll = { mode: 'anchor', index: groupIndex, offset };
+			}
+		}
 		tab.log = simulation.log;
 		tab.selectedSimulationGroupIndex = groupIndex;
 		tab.simulationRoll = roll;
@@ -578,15 +598,34 @@ class AnalysisApp extends preact.Component {
 		tab.phase = 'simulation-selection';
 		this.destroyBattle();
 		this.forceUpdate();
-		if (scroll) {
-			requestAnimationFrame(() => this.simulationGroupElements[groupIndex]?.scrollIntoView({ block: 'start' }));
-		}
 	};
+
+	applyOutcomeScroll() {
+		const pending = this.pendingOutcomeScroll;
+		if (!pending) return;
+		this.pendingOutcomeScroll = null;
+		const element = this.simulationGroupElements[pending.index];
+		const container = element?.closest<HTMLElement>('.scrollable');
+		if (!element || !container) return;
+		const containerRect = container.getBoundingClientRect();
+		const rect = element.getBoundingClientRect();
+		if (pending.mode === 'top') {
+			container.scrollTop = 0;
+		} else if (pending.mode === 'anchor') {
+			container.scrollTop += (rect.top - containerRect.top) - pending.offset;
+		} else if (rect.top < containerRect.top) {
+			container.scrollTop -= containerRect.top - rect.top;
+		} else if (rect.bottom > containerRect.bottom) {
+			// show the bottom too, unless the outcome is taller than the panel (then align its top)
+			container.scrollTop += Math.min(rect.bottom - containerRect.bottom, rect.top - containerRect.top);
+		}
+	}
 
 	changeSimulationGrouping = (tab: AnalysisTab, mode: AnalysisGroupingMode) => {
 		tab.simulationGroupingMode = mode;
 		tab.simulationGroups = mode === 'state' ? tab.stateSimulationGroups : tab.turnSimulationGroups;
-		this.showSimulation(tab, 0, 'median', true);
+		// no scrolling: the grouping controls stay where the user clicked them
+		this.showSimulation(tab, 0, 'median');
 	};
 
 	previewSimulation = (tab: AnalysisTab, groupIndex?: number) => {
@@ -674,7 +713,7 @@ class AnalysisApp extends preact.Component {
 				disabled={playbackActive}
 				onMouseEnter={() => { if (!playbackActive) this.previewSimulation(tab, index); }}
 				onMouseLeave={() => { if (!playbackActive) this.previewSimulation(tab); }}
-				onClick={() => { if (!playbackActive) this.showSimulation(tab, index, undefined, true); }}
+				onClick={() => { if (!playbackActive) this.showSimulation(tab, index, undefined, 'anchor'); }}
 			>
 				<strong>Outcome {index + 1}</strong>
 				<span>
@@ -1235,6 +1274,7 @@ class AnalysisApp extends preact.Component {
 	};
 
 	override componentDidUpdate() {
+		this.applyOutcomeScroll();
 		this.syncChoiceTooltips();
 		const tab = this.tabs.find(entry => entry.id === this.activeTab);
 		this.refreshCalcs(tab);
@@ -1839,11 +1879,11 @@ class AnalysisApp extends preact.Component {
 				<button class="button" onClick={() => this.cancelSimulation(tab)}>Cancel</button>
 				<button
 					class="button" disabled={selectedIndex <= 0}
-					onClick={() => this.showSimulation(tab, selectedIndex - 1, roll, true)}
+					onClick={() => this.showSimulation(tab, selectedIndex - 1, roll, 'reveal')}
 				>Prev</button>
 				<button
 					class="button" disabled={selectedIndex >= groupCount - 1}
-					onClick={() => this.showSimulation(tab, selectedIndex + 1, roll, true)}
+					onClick={() => this.showSimulation(tab, selectedIndex + 1, roll, 'reveal')}
 				>Next</button>
 				<button class="button" onClick={() => this.replaySimulationTurn(tab)}>Replay Turn</button>
 				<button
@@ -1918,8 +1958,11 @@ class AnalysisApp extends preact.Component {
 					onClick={() => nextNode && this.selectAnalysisNode(tab, nextNode.id)}
 				>Next Turn</button>
 			</div>
-			<p>Click on an active Pokémon to choose its actions.</p>
-			<AnalysisChoiceSummaryView choices={this.getMoveChoiceSummary(tab)} gameType={tab.gameType} tooltips />
+			<p>Click on an active Pokémon (or its row below) to choose its actions.</p>
+			<AnalysisChoiceSummaryView
+				choices={this.getMoveChoiceSummary(tab)} gameType={tab.gameType} tooltips
+				onSelect={this.selectMovePokemon}
+			/>
 			<div>
 				<button
 					class="button" disabled={!ready || tab.loading}

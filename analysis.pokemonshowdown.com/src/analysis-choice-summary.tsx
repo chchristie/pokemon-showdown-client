@@ -1,17 +1,18 @@
 /** @jsx preact.h */
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
-import type { AnalysisChoiceSummary, AnalysisTeamSelectionSummary } from './analysis-model';
+import type { AnalysisChoiceSummary, AnalysisSideID, AnalysisTeamSelectionSummary } from './analysis-model';
 
 function PSIcon(props: { pokemon: any }) {
 	return <span class="picon" style={(window as any).Dex.getPokemonIcon(props.pokemon)} />;
 }
 
 /**
- * `tooltips` enables damage calc tooltips on cells whose action is a move (analysis-tooltips.ts);
- * only the current decision's summary should set it.
+ * For the current decision's summary only: `tooltips` enables damage calc tooltips on cells whose action
+ * is a move (analysis-tooltips.ts), and `onSelect` makes cells open that Pokémon's action selection.
  */
 export function AnalysisChoiceSummaryView(props: {
 	choices: AnalysisChoiceSummary[], gameType?: string, tooltips?: boolean,
+	onSelect?: (side: AnalysisSideID, slot: number) => void,
 }) {
 	const positions: { side: 'p1' | 'p2', slot: number }[] = props.gameType === 'singles' ? [
 		{ side: 'p1', slot: 0 }, { side: 'p2', slot: 0 },
@@ -24,7 +25,12 @@ export function AnalysisChoiceSummaryView(props: {
 		if (!choice) return <div class="analysis-choice-summary" aria-hidden="true" />;
 		const tooltip = props.tooltips && choice.moveId ?
 			`analysischoice|${choice.moveId}|${choice.side === 'p1' ? 0 : 1}|${choice.slot}` : undefined;
-		return <div class={`analysis-choice-summary${tooltip ? ' has-tooltip' : ''}`} data-tooltip={tooltip}>
+		const { onSelect } = props;
+		const classes = `analysis-choice-summary${tooltip ? ' has-tooltip' : ''}${onSelect ? ' analysis-choice-selectable' : ''}`;
+		return <div
+			class={classes} data-tooltip={tooltip}
+			onClick={onSelect ? () => onSelect(choice.side, choice.slot) : undefined}
+		>
 			<PSIcon pokemon={choice.pokemon} />: {choice.action}
 			{choice.targetPokemon ? <> <PSIcon pokemon={choice.targetPokemon} /></> : null}
 		</div>;

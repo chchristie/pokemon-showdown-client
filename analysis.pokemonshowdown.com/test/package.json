@@ -4,7 +4,8 @@
 	"description": "Headless-Chrome tests for the DigiPen analysis tool (see README.md)",
 	"scripts": {
 		"smoke": "node smoke.js",
-		"calc": "node calc.js"
+		"calc": "node calc.js",
+		"turn-events": "node turn-events.js"
 	},
 	"dependencies": {
 		"puppeteer-core": "^25.0.0"

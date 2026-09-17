@@ -5,6 +5,23 @@ import { AnalysisChoiceSummaryView, AnalysisTeamSelectionSummaryView } from './a
 import { getAnalysisNodeTreeItems, hasChildNodes, type AnalysisNodeTreeItem } from './analysis-nodes';
 import { AnalysisTurnEventSummaryView } from './analysis-turn-events';
 
+/**
+ * Places a node's outcome tooltip to the left of its button, kept inside the window. It's `position: fixed`
+ * because the scrollable Lines panel would clip anything positioned outside it.
+ */
+function positionNodeTooltip(event: Event) {
+	const button = event.currentTarget as HTMLElement;
+	const tooltip = button.nextElementSibling as HTMLElement | null;
+	if (!tooltip?.classList.contains('analysis-node-tooltip')) return;
+	const margin = 8;
+	const buttonRect = button.getBoundingClientRect();
+	const { width, height } = tooltip.getBoundingClientRect();
+	const top = Math.max(margin, Math.min(buttonRect.top, window.innerHeight - height - margin));
+	const left = Math.max(margin, buttonRect.left - width - margin);
+	tooltip.style.top = `${top}px`;
+	tooltip.style.left = `${left}px`;
+}
+
 function NodeSummary(props: {
 	key?: string, tab: AnalysisTab, node: AnalysisNode, onSelect: (nodeId: string) => void,
 }) {
@@ -15,6 +32,8 @@ function NodeSummary(props: {
 	return <li class={`analysis-node-entry${node.id === tab.currentNodeId ? ' analysis-node-current' : ''}`}>
 		<button
 			class="analysis-node-button" onClick={() => onSelect(node.id)}
+			onMouseEnter={showTurnEvents ? positionNodeTooltip : undefined}
+			onFocus={showTurnEvents ? positionNodeTooltip : undefined}
 			aria-describedby={showTurnEvents ? tooltipId : undefined}
 		>
 			<strong>{node.turn === 0 ? 'Team Preview' : `Turn ${node.turn}`}</strong>

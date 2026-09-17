@@ -41,6 +41,14 @@ export function getTurnEventSummary(
 	let moveResults: Record<string, AnalysisTurnEventDetail[]> = {};
 	let currentMoveKey = '';
 	const moveCounts = new Map<string, number>();
+	/**
+	 * Why the next switch at a position happens. No reason means the switch was the chosen action.
+	 * Faints, Eject Button/Pack, and Emergency Exit/Wimp Out stick until that position switches;
+	 * a position's own move (U-turn, Parting Shot, ...) only counts until the next move or end of turn.
+	 */
+	const switchReasons = new Map<string, string>();
+	let pivot: { position: string, move: string } | null = null;
+	let dragReason = '';
 	const getPosition = (ident: string) => ident.split(':')[0];
 	const getSide = (ident: string) => /^p([12])/.exec(ident)?.[1] || '';
 	const getSpecies = (ident: string) => speciesByIdent.get(ident) ||
@@ -70,6 +78,19 @@ export function getTurnEventSummary(
 	for (const line of simulation.turnLog) {
 		const parts = line.split('|');
 		const event = parts[1];
+		if (event === 'move' && parts[2]) {
+			pivot = { position: getPosition(parts[2]), move: parts[3] || '' };
+			dragReason = parts[3] || '';
+		}
+		if (event === 'upkeep') pivot = null;
+		if (event === 'faint' && parts[2]) switchReasons.set(getPosition(parts[2]), 'Fainted');
+		if (event === '-enditem' && parts[2] && ['Eject Button', 'Eject Pack'].includes(parts[3])) {
+			switchReasons.set(getPosition(parts[2]), parts[3]);
+		}
+		if (event === '-enditem' && parts[3] === 'Red Card') dragReason = 'Red Card';
+		if (event === '-activate' && parts[2] && ['ability: Emergency Exit', 'ability: Wimp Out'].includes(parts[3])) {
+			switchReasons.set(getPosition(parts[2]), parts[3].slice('ability: '.length));
+		}
 		if (event === '-activate' && parts[3] === 'item: Quick Claw') {
 			if (mode === 'turn') pendingQuickClaw = true;
 			continue;
@@ -108,8 +129,12 @@ export function getTurnEventSummary(
 			const side = getSide(parts[2]);
 			const position = getPosition(parts[2]);
 			const switchedTo = (parts[3] || '').split(',')[0];
+			const reason = event === 'drag' ? dragReason || undefined :
+				switchReasons.get(position) || (pivot?.position === position ? pivot.move : undefined);
+			switchReasons.delete(position);
+			if (pivot?.position === position) pivot = null;
 			if (side) actions.push({
-				side, pokemon: activeByPosition.get(position) || getSpecies(parts[2]), type: 'switch', switchedTo,
+				side, pokemon: activeByPosition.get(position) || getSpecies(parts[2]), type: 'switch', switchedTo, reason,
 			});
 			if (parts[2] && switchedTo) speciesByIdent.set(parts[2], switchedTo);
 			if (position && switchedTo) activeByPosition.set(position, switchedTo);
@@ -173,7 +198,7 @@ export function AnalysisTurnEventSummaryView(props: { actions: AnalysisTurnEvent
 	return <span class="analysis-simulation-actions">
 		{props.actions.map(action => <span>
 			<PSIcon pokemon={action.pokemon} /> <b>({action.side})</b>: {action.type === 'switch' ? <>
-				Switched to <PSIcon pokemon={action.switchedTo} />
+				Switched to <PSIcon pokemon={action.switchedTo} />{action.reason ? ` (${action.reason})` : null}
 			</> : action.type === 'cant' ? <>Can't Move ({action.reason}{action.details?.map(detail => <>
 				, {detail.label}{detail.pokemon ? <> <PSIcon pokemon={detail.pokemon} /></> : null}
 			</>)}).</> : action.type === 'faint' ? 'Fainted' : <>

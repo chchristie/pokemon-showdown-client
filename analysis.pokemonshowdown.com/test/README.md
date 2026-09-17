@@ -25,6 +25,7 @@ This folder belongs to the DigiPen fork and isn't part of upstream. It has its o
 cd pokemon-showdown-client/analysis.pokemonshowdown.com/test
 npm run smoke            # core flow (smoke.js)
 npm run calc             # damage calc tooltips (calc.js)
+npm run turn-events      # turn outcome summaries from hand-written logs (turn-events.js)
 ```
 
 - The output lists one `- step` line per passed step, then `PASS`, or `FAIL: <reason>`. Exit code 1 means failure.
@@ -48,13 +49,13 @@ The test uses gen9ou with the same team on both sides: Garchomp, Rotom-Wash and 
 
 1. **Page load:** no scripts come from the official site (local assets).
 2. **New Analysis From Teams**, then team preview: p1 leads Rotom-Wash, p2 leads Kingambit.
-3. **Cancel:** open an action menu, then Cancel.
+3. **Summary cell and Cancel:** clicking a choice-summary cell opens that Pokémon's action menu; then Cancel.
 4. **Manual turn 1:** Hydro Pump vs Kowtow Cleave, then Submit Choices. A Turn 2 node appears.
 5. **Simulated turn 2:** Protect vs Swords Dance, 40 simulations, then Select Outcome. A Turn 3 node appears.
 6. **Mid-turn replacement on turn 3:** Volt Switch vs Iron Head, then pick the Volt Switch replacement.
    - If rolls cause KOs, it also submits the end-of-turn faint replacements.
    - A Turn 4 node appears.
-7. **Navigation:** click Turn 1 in Lines. The node is selected, its outcome tooltip exists, and later nodes are still there.
+7. **Navigation:** click Turn 1 in Lines. The node is selected, its outcome tooltip shows to the left of the button inside the window, and later nodes are still there.
 
 ## What `calc.js` covers
 
@@ -69,6 +70,17 @@ Damage calc tooltips (docs/analysis/plan.md, Phase 1), with the same team as the
    - Hovering Earthquake shows 3 lines (both foes plus the ally), including the Levitate zero-damage text.
    - Hovering Dragon Tail shows 2 lines (foes only).
    - After choosing Dragon Tail on one target, the summary cell shows 1 line.
+
+## What `turn-events.js` covers
+
+`getTurnEventSummary` (analysis-turn-events.tsx) runs on hand-written protocol logs inside the page. It needs no battle and no RNG, so it's deterministic. It checks the switch reason shown as "Switched to X (reason)":
+- **No reason:** a chosen switch.
+- **Move:** U-turn and other pivots, plus Dragon Tail drags.
+- **Item:** Eject Button, Red Card.
+- **Ability:** Emergency Exit.
+- **Fainted:** a replacement after a faint, including a pivot user KO'd by Rocky Helmet.
+
+Add a case here when changing how turn outcomes are summarized.
 
 ## Writing or extending tests
 

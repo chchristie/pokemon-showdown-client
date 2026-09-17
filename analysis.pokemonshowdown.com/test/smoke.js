@@ -28,10 +28,12 @@ async function main() {
 		await waitForDecision(page);
 		step('team preview submitted');
 
-		await openActionMenu(page, 0);
+		// clicking a choice-summary cell opens that Pokémon's action selection, like clicking its sprite
+		await page.evaluate(() => document.querySelector('.battle-controls .analysis-choice-selectable').click());
+		await waitFor(page, () => !!document.querySelector('.movemenu button'), 'move menu from summary cell');
 		await clickButton(page, 'Cancel');
 		await waitFor(page, () => !document.querySelector('.movemenu'), 'selection to cancel');
-		step('action selection cancel works');
+		step('summary cell opens action selection; cancel works');
 
 		await chooseMove(page, 0, 0); // Hydro Pump
 		await chooseMove(page, 1, 0); // Kowtow Cleave
@@ -72,10 +74,25 @@ async function main() {
 			.find(button => button.textContent.includes('Turn 1')).click());
 		await waitFor(page, () => document.querySelector('.analysis-node-current strong')?.textContent === 'Turn 1', 'Turn 1 selected');
 		await waitForDecision(page);
-		const tooltip = await page.evaluate(() => document.querySelector('.analysis-node-tooltip')?.textContent || '');
-		if (!tooltip.includes('Turn 1 → Turn 2')) throw new Error(`unexpected Turn 1 outcome tooltip: ${tooltip}`);
+		const turn1Button = await page.evaluateHandle(() => [...document.querySelectorAll('.analysis-node-button')]
+			.find(button => button.textContent.includes('Turn 1')));
+		await turn1Button.hover();
+		const tooltip = await page.evaluate(button => {
+			const element = button.nextElementSibling;
+			const rect = element.getBoundingClientRect();
+			const buttonRect = button.getBoundingClientRect();
+			return {
+				text: element.textContent, visible: getComputedStyle(element).visibility === 'visible',
+				leftOfButton: rect.right <= buttonRect.left, inWindow: rect.top >= 0 && rect.left >= 0 &&
+					rect.bottom <= window.innerHeight,
+			};
+		}, turn1Button);
+		if (!tooltip.text.includes('Turn 1 → Turn 2')) throw new Error(`unexpected Turn 1 outcome tooltip: ${tooltip.text}`);
+		if (!tooltip.visible || !tooltip.leftOfButton || !tooltip.inWindow) {
+			throw new Error(`Turn 1 tooltip misplaced: ${JSON.stringify(tooltip)}`);
+		}
 		if (!/Turn 4/.test(await linesText(page))) throw new Error('Lines lost later nodes after navigating back');
-		step('navigated back to Turn 1 (outcome tooltip present, line intact)');
+		step('navigated back to Turn 1 (outcome tooltip left of its button and inside the window, line intact)');
 
 		fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 		await page.screenshot({ path: path.join(OUTPUT_DIR, 'smoke-final.png') }).catch(() => {});
