@@ -4,12 +4,14 @@
 
 <title>Analysis - Pokemon Showdown!</title>
 
+<link rel="icon" href="../play.pokemonshowdown.com/favicon.ico" />
+<!-- global.css references root-relative images (/images/...), so it only works from the main site -->
 <link rel="stylesheet" href="//pokemonshowdown.com/style/global.css" />
-<link rel="stylesheet" href="//play.pokemonshowdown.com/style/font-awesome.css" />
-<link rel="stylesheet" href="//play.pokemonshowdown.com/style/client.css" />
-<link rel="stylesheet" href="//play.pokemonshowdown.com/style/client2.css" />
-<link rel="stylesheet" href="//play.pokemonshowdown.com/style/battle.css" />
-<link rel="stylesheet" href="//play.pokemonshowdown.com/style/sim-types.css" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/font-awesome.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/client.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/client2.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/battle.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/sim-types.css?" />
 
 <style>
 	:root { color-scheme: light; }
@@ -89,31 +91,45 @@
     <noscript><section class="section">You need to enable JavaScript to use this page.</section></noscript>
 </div>
 
-<script nomodule src="//play.pokemonshowdown.com/js/lib/ps-polyfill.js"></script>
-<script src="//play.pokemonshowdown.com/js/lib/preact.min.js"></script>
-<script src="//play.pokemonshowdown.com/config/config.js"></script>
-<script src="//play.pokemonshowdown.com/js/lib/jquery-1.11.0.min.js"></script>
-<script src="//play.pokemonshowdown.com/js/lib/html-sanitizer-minified.js"></script>
-<script src="//play.pokemonshowdown.com/js/battle-sound.js"></script>
-<script src="//play.pokemonshowdown.com/js/battledata.js"></script>
-<script src="//play.pokemonshowdown.com/data/pokedex-mini.js"></script>
-<script src="//play.pokemonshowdown.com/data/pokedex-mini-bw.js"></script>
-<script src="//play.pokemonshowdown.com/data/graphics.js"></script>
-<script src="//play.pokemonshowdown.com/data/pokedex.js"></script>
-<script src="//play.pokemonshowdown.com/data/moves.js"></script>
-<script src="//play.pokemonshowdown.com/data/abilities.js"></script>
-<script src="//play.pokemonshowdown.com/data/items.js"></script>
-<script src="//play.pokemonshowdown.com/data/teambuilder-tables.js"></script>
-<script src="../play.pokemonshowdown.com/js/battle-tooltips.js"></script>
-<script src="//play.pokemonshowdown.com/js/battle.js"></script>
-<script src="//play.pokemonshowdown.com/js/battle-choices.js"></script>
-<script src="js/analysis-model.js?20260913"></script>
-<script src="js/analysis-api.js?20260910"></script>
-<script src="js/analysis-nodes.js?20260913"></script>
-<script src="js/analysis-team-utils.js?20260910"></script>
-<script src="js/analysis-header.js?20260910"></script>
-<script src="js/analysis-choice-summary.js?20260913"></script>
-<script src="js/analysis-turn-events.js?20260916"></script>
-<script src="js/analysis-node-tree.js?20260913"></script>
-<script src="js/analysis-replay-controls.js?20260910"></script>
-<script src="js/analysis.js?20260913"></script>
+<!--
+	Source template: `node build` writes index.html (gitignored) from this file,
+	adding cache-busting hashes to every URL that ends in `?`.
+	All assets come from this client build (not the official play.pokemonshowdown.com),
+	so custom-format data (DigiPen, FNAF) and local battle-* changes are used.
+-->
+<script>
+	function loadRemoteData(src) {
+		// sprite size tables need sprite images this repo doesn't have; fall back to the official copies
+		var scriptEl = document.createElement('script');
+		scriptEl.src = src.replace(/.*\/(data|js)\//g, 'https://play.pokemonshowdown.com/$1/').replace(/\?.*$/, '');
+		document.head.appendChild(scriptEl);
+	}
+</script>
+<script nomodule src="../play.pokemonshowdown.com/js/lib/ps-polyfill.js?"></script>
+<script src="../play.pokemonshowdown.com/js/lib/preact.min.js?"></script>
+<script src="../play.pokemonshowdown.com/config/config.js?"></script>
+<script src="../play.pokemonshowdown.com/js/lib/jquery-1.11.0.min.js?"></script>
+<script src="../play.pokemonshowdown.com/js/lib/html-sanitizer-minified.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-sound.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battledata.js?"></script>
+<script src="../play.pokemonshowdown.com/data/pokedex-mini.js?" onerror="loadRemoteData(this.src)"></script>
+<script src="../play.pokemonshowdown.com/data/pokedex-mini-bw.js?" onerror="loadRemoteData(this.src)"></script>
+<script src="../play.pokemonshowdown.com/data/graphics.js?"></script>
+<script src="../play.pokemonshowdown.com/data/pokedex.js?"></script>
+<script src="../play.pokemonshowdown.com/data/moves.js?"></script>
+<script src="../play.pokemonshowdown.com/data/abilities.js?"></script>
+<script src="../play.pokemonshowdown.com/data/items.js?"></script>
+<script src="../play.pokemonshowdown.com/data/teambuilder-tables.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-tooltips.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-choices.js?"></script>
+<script src="js/analysis-model.js?"></script>
+<script src="js/analysis-api.js?"></script>
+<script src="js/analysis-nodes.js?"></script>
+<script src="js/analysis-team-utils.js?"></script>
+<script src="js/analysis-header.js?"></script>
+<script src="js/analysis-choice-summary.js?"></script>
+<script src="js/analysis-turn-events.js?"></script>
+<script src="js/analysis-node-tree.js?"></script>
+<script src="js/analysis-replay-controls.js?"></script>
+<script src="js/analysis.js?"></script>

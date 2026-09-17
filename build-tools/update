@@ -282,4 +282,9 @@ teamsContents = cachebust(teamsContents, 'teams.pokemonshowdown.com');
 fs.mkdirSync('teams.pokemonshowdown.com/caches', { recursive: true });
 fs.writeFileSync('teams.pokemonshowdown.com/caches/index.html', teamsContents);
 
+// the analysis page is served directly (not through caches/), so write index.html next to its template
+let analysisContents = fs.readFileSync('analysis.pokemonshowdown.com/index.template.html', UTF8);
+analysisContents = cachebust(analysisContents, 'analysis.pokemonshowdown.com');
+fs.writeFileSync('analysis.pokemonshowdown.com/index.html', analysisContents);
+
 console.log("DONE");
