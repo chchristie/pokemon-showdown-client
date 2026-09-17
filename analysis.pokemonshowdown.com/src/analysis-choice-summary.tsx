@@ -6,7 +6,13 @@ function PSIcon(props: { pokemon: any }) {
 	return <span class="picon" style={(window as any).Dex.getPokemonIcon(props.pokemon)} />;
 }
 
-export function AnalysisChoiceSummaryView(props: { choices: AnalysisChoiceSummary[], gameType?: string }) {
+/**
+ * `tooltips` enables damage calc tooltips on cells whose action is a move (analysis-tooltips.ts);
+ * only the current decision's summary should set it.
+ */
+export function AnalysisChoiceSummaryView(props: {
+	choices: AnalysisChoiceSummary[], gameType?: string, tooltips?: boolean,
+}) {
 	const positions: { side: 'p1' | 'p2', slot: number }[] = props.gameType === 'singles' ? [
 		{ side: 'p1', slot: 0 }, { side: 'p2', slot: 0 },
 	] : [
@@ -16,7 +22,9 @@ export function AnalysisChoiceSummaryView(props: { choices: AnalysisChoiceSummar
 	return <div class="analysis-choice-summary-wrap">{positions.map(position => {
 		const choice = props.choices.find(entry => entry.side === position.side && entry.slot === position.slot);
 		if (!choice) return <div class="analysis-choice-summary" aria-hidden="true" />;
-		return <div class="analysis-choice-summary">
+		const tooltip = props.tooltips && choice.moveId ?
+			`analysischoice|${choice.moveId}|${choice.side === 'p1' ? 0 : 1}|${choice.slot}` : undefined;
+		return <div class={`analysis-choice-summary${tooltip ? ' has-tooltip' : ''}`} data-tooltip={tooltip}>
 			<PSIcon pokemon={choice.pokemon} />: {choice.action}
 			{choice.targetPokemon ? <> <PSIcon pokemon={choice.targetPokemon} /></> : null}
 		</div>;

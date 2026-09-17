@@ -2,15 +2,14 @@
 /** @jsxFrag preact.Fragment */
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
 import { BattleChoiceBuilder } from '../../play.pokemonshowdown.com/src/battle-choices';
-import { BattleTooltips } from '../../play.pokemonshowdown.com/src/battle-tooltips';
 import { Teams } from '../../play.pokemonshowdown.com/src/battle-teams';
 import {
 	FORMATS, LAYOUT, getRequestState,
-	type AnalysisBattle, type AnalysisChoiceSummary, type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption,
-	type AnalysisNode, type AnalysisPhase, type AnalysisSideID, type AnalysisSimulationGroup,
+	type AnalysisBattle, type AnalysisCalcState, type AnalysisChoiceSummary, type AnalysisGroupingMode,
+	type AnalysisMidTurnSwitchOption, type AnalysisNode, type AnalysisPhase, type AnalysisSideID, type AnalysisSimulationGroup,
 	type AnalysisSimulationRoll, type AnalysisTab, type LocalTeam, type PlaybackStage, type StartMode,
 } from './analysis-model';
-import { runAnalysis, runAnalysisBatch, type AnalysisStartResponse } from './analysis-api';
+import { runAnalysis, runAnalysisBatch, runAnalysisCalc, type AnalysisStartResponse } from './analysis-api';
 import { AnalysisChoiceDraft, sideIndex } from './analysis-choices';
 import { AnalysisChoiceSummaryView } from './analysis-choice-summary';
 import { AnalysisHeader } from './analysis-header';
@@ -18,6 +17,7 @@ import { hasChildNodes, replayNodesFor } from './analysis-nodes';
 import { AnalysisNodeTree } from './analysis-node-tree';
 import { AnalysisReplayControls } from './analysis-replay-controls';
 import { packTeamSyntax } from './analysis-team-utils';
+import { AnalysisTooltips } from './analysis-tooltips';
 import { AnalysisTurnEventSummaryView, getLogTurnEventSummary, getTurnEventSummary } from './analysis-turn-events';
 
 function PSIcon(props: { pokemon: any }) {
@@ -50,7 +50,10 @@ class AnalysisApp extends preact.Component {
 	battleTooltipObserver: MutationObserver | null = null;
 	analysisTeams: any[] = [];
 	choiceControlsFrame: HTMLElement | null = null;
-	choiceTooltips: BattleTooltips | null = null;
+	choiceTooltips: AnalysisTooltips | null = null;
+	/** damage calcs for the current decision point and draft (see refreshCalcs) */
+	calcs: AnalysisCalcState | null = null;
+	calcAbortController: AbortController | null = null;
 	choiceTooltipsFrame: HTMLElement | null = null;
 	draft = new AnalysisChoiceDraft();
 	pendingHydration: { tabId: string, inputLog: string[] } | null = null;
@@ -1098,6 +1101,50 @@ class AnalysisApp extends preact.Component {
 	}
 
 	/*********************************************************
+	 * Damage calcs
+	 *********************************************************/
+
+	/** Calcs apply to the current decision point and draft; null when no move decision is shown. */
+	calcKey(tab: AnalysisTab | undefined) {
+		if (!tab || (tab.phase !== 'default' && tab.phase !== 'selection')) return null;
+		if (getRequestState(tab.requestState, tab.requests) !== 'move') return null;
+		return [tab.id, tab.currentNodeId, ...this.draft.toInputLog(tab.requests)].join('\n');
+	}
+
+	/** Fetches calcs when the decision point or draft choices change, so tooltips can show them instantly. */
+	refreshCalcs(tab: AnalysisTab | undefined) {
+		const key = this.calcKey(tab);
+		if (key === (this.calcs?.key ?? null)) return;
+		this.calcAbortController?.abort();
+		this.calcAbortController = null;
+		if (!key || !tab) {
+			this.calcs = null;
+			return;
+		}
+		const calcs: AnalysisCalcState = { key, loading: true };
+		this.calcs = calcs;
+		const abortController = new AbortController();
+		this.calcAbortController = abortController;
+		void this.fetchCalcs(tab, calcs, abortController.signal);
+	}
+
+	async fetchCalcs(tab: AnalysisTab, calcs: AnalysisCalcState, signal: AbortSignal) {
+		try {
+			const data = await runAnalysisCalc({
+				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				replayNodes: replayNodesFor(tab, tab.currentNodeId, false),
+				choices: this.draft.toInputLog(tab.requests),
+			}, signal);
+			calcs.results = data.results;
+		} catch (error: any) {
+			if (error?.name !== 'AbortError') calcs.error = error?.message || 'Unable to calculate damage.';
+		} finally {
+			calcs.loading = false;
+			if (this.calcs === calcs) this.choiceTooltips?.refreshVisibleTooltip();
+		}
+	}
+
+	/*********************************************************
 	 * Tooltips
 	 *********************************************************/
 
@@ -1113,7 +1160,7 @@ class AnalysisApp extends preact.Component {
 			if (this.battleFrame) $(this.battleFrame).off('.battleTooltips');
 		}
 		if (this.choiceTooltips && this.choiceTooltipsFrame) this.choiceTooltips.unlisten(this.choiceTooltipsFrame);
-		this.choiceTooltips = new BattleTooltips(this.battle as any);
+		this.choiceTooltips = new AnalysisTooltips(this.battle as any, () => this.calcs);
 		this.choiceTooltips.listen(tooltipFrame);
 		this.choiceTooltipsFrame = tooltipFrame;
 	}
@@ -1168,6 +1215,7 @@ class AnalysisApp extends preact.Component {
 	override componentDidUpdate() {
 		this.syncChoiceTooltips();
 		const tab = this.tabs.find(entry => entry.id === this.activeTab);
+		this.refreshCalcs(tab);
 		if (!tab || !this.battleFrame || !this.battleLogFrame || !tab.log.length || this.battleTabId === tab.id) return;
 		this.destroyBattle();
 		const BattleConstructor = (window as any).Battle;
@@ -1693,6 +1741,7 @@ class AnalysisApp extends preact.Component {
 				}
 				choices.push({
 					side, slot, action,
+					moveId: moveChoice && move ? move.id : undefined,
 					pokemon: pokemonLabel(pokemon),
 					targetPokemon: targetPokemon ? pokemonLabel(targetPokemon) || targetPokemon : undefined,
 				});
@@ -1848,7 +1897,7 @@ class AnalysisApp extends preact.Component {
 				>Next Turn</button>
 			</div>
 			<p>Click on an active Pokémon to choose its actions.</p>
-			<AnalysisChoiceSummaryView choices={this.getMoveChoiceSummary(tab)} gameType={tab.gameType} />
+			<AnalysisChoiceSummaryView choices={this.getMoveChoiceSummary(tab)} gameType={tab.gameType} tooltips />
 			<div>
 				<button
 					class="button" disabled={!ready || tab.loading}

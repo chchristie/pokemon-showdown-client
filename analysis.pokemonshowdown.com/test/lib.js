@@ -167,15 +167,36 @@ async function waitForDecision(page, readyText = 'Click on an active', timeout =
 	throw new Error(`Timed out waiting for "${readyText}" (controls: ${(await battleControlsText(page)).slice(0, 200)})`);
 }
 
-/** Team preview: picks the lead at team index `p1Lead` / `p2Lead` (0-based) and sends them out. */
-async function selectLeads(page, p1Lead, p2Lead) {
+/**
+ * Home page -> New Analysis From Teams -> (optional format) -> Start Analysis.
+ * Teams for `format` must already be in localStorage (see openAnalysisPage).
+ */
+async function startAnalysisFromTeams(page, format) {
+	await clickButton(page, 'New Analysis From Teams');
+	if (format) {
+		await page.evaluate(formatId => {
+			const select = document.querySelector('select.formatselect');
+			select.value = formatId;
+			select.dispatchEvent(new Event('change', { bubbles: true }));
+		}, format);
+	}
+	await clickButton(page, 'Start Analysis');
+}
+
+/**
+ * Team preview: picks leads by team index (0-based) and sends them out. Pass a number for one lead
+ * (singles) or an array for several (e.g. doubles picks two).
+ */
+async function selectLeads(page, p1Leads, p2Leads) {
 	await waitFor(page, () => document.body.textContent.includes('Choose Pokémon'), 'team preview');
-	for (const [side, lead] of [[0, p1Lead], [1, p2Lead]]) {
-		await page.evaluate((sideIndex, leadIndex) => {
-			const menu = document.querySelectorAll('.switchcontrols .switchmenu')[sideIndex];
-			menu.querySelectorAll('button')[leadIndex].dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
-		}, side, lead);
-		await sleep(200);
+	for (const [side, leads] of [[0, p1Leads], [1, p2Leads]]) {
+		for (const lead of [].concat(leads)) {
+			await page.evaluate((sideIndex, leadIndex) => {
+				const menu = document.querySelectorAll('.switchcontrols .switchmenu')[sideIndex];
+				menu.querySelectorAll('button')[leadIndex].dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+			}, side, lead);
+			await sleep(200);
+		}
 	}
 	await clickButton(page, 'Send out Pokémon');
 }
@@ -208,6 +229,39 @@ async function chooseMove(page, sideIndex, moveIndex) {
 	await sleep(200);
 }
 
+/**
+ * Hovers the `index`th element matching `selector` (optionally only those whose text includes `text`)
+ * and returns the visible tooltip's text and HTML once `until(text)` is true (or null on timeout).
+ */
+async function hoverTooltip(page, selector, { text, index = 0, until = () => true, timeout = 15000 } = {}) {
+	await page.mouse.move(0, 0);
+	const handles = await page.$$(selector);
+	const matches = [];
+	for (const handle of handles) {
+		const content = await handle.evaluate(element => element.textContent);
+		if (!text || content.includes(text)) matches.push(handle);
+	}
+	if (!matches[index]) throw new Error(`No element to hover: ${selector}${text ? ` containing "${text}"` : ''}`);
+	await matches[index].hover();
+	const start = Date.now();
+	let tooltip = null;
+	while (Date.now() - start < timeout) {
+		tooltip = await page.evaluate(() => {
+			const wrapper = document.querySelector('#tooltipwrapper');
+			return wrapper?.textContent ? { text: wrapper.textContent, html: wrapper.innerHTML } : null;
+		});
+		if (tooltip && until(tooltip.text)) return tooltip;
+		await sleep(150);
+	}
+	return tooltip && until(tooltip.text) ? tooltip : null;
+}
+
+/** Number of damage calc lines in a tooltip's HTML (see analysis-tooltips.ts). */
+function calcLineCount(tooltipHTML) {
+	const match = /<p class="tooltip-section analysis-calc-lines">([\s\S]*?)<\/p>/.exec(tooltipHTML || '');
+	return match ? match[1].split('<br>').length : 0;
+}
+
 /** Prints page state and saves a screenshot to output/ for debugging a failure. */
 async function dumpFailure(page, name = 'failure') {
 	if (!page) return;
@@ -226,5 +280,6 @@ async function dumpFailure(page, name = 'failure') {
 
 module.exports = {
 	config, SMOKE_TEAM, OUTPUT_DIR, sleep, step, checkServers, openAnalysisPage, clickButton, waitFor,
-	battleControlsText, linesText, waitForDecision, selectLeads, openActionMenu, chooseMove, dumpFailure,
+	battleControlsText, linesText, waitForDecision, startAnalysisFromTeams, selectLeads, openActionMenu, chooseMove,
+	hoverTooltip, calcLineCount, dumpFailure,
 };

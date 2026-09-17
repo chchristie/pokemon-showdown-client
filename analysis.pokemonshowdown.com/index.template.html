@@ -85,6 +85,9 @@
 	.analysis-grouping-help:hover::after { display: block; }
 	@media (max-width: 1050px) { .analysis-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 	@media (max-width: 650px) { .analysis-options { grid-template-columns: 1fr; } }
+	#tooltipwrapper .tooltip-analysismove, #tooltipwrapper .tooltip-analysischoice { width: 440px; }
+	.analysis-calc-lines { line-height: 1.6; }
+	.analysis-calc-lines .picon { display: inline-block; vertical-align: middle; margin: -6px -4px -4px -6px; }
 </style>
 
 <div class="analysis-shell" id="main">
@@ -127,6 +130,7 @@
 <script src="js/analysis-api.js?"></script>
 <script src="js/analysis-nodes.js?"></script>
 <script src="js/analysis-choices.js?"></script>
+<script src="js/analysis-tooltips.js?"></script>
 <script src="js/analysis-team-utils.js?"></script>
 <script src="js/analysis-header.js?"></script>
 <script src="js/analysis-choice-summary.js?"></script>

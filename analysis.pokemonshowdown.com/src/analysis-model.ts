@@ -8,6 +8,8 @@ export interface AnalysisChoiceSummary {
 	pokemon: string;
 	action: string;
 	targetPokemon?: string;
+	/** set when the action is a move; used for the damage calc tooltip */
+	moveId?: string;
 }
 
 export interface AnalysisTeamSelectionSummary {
@@ -138,6 +140,48 @@ export interface AnalysisSnapshot {
 		active: (number | null)[],
 		pokemon: AnalysisPokemonSnapshot[],
 	}[];
+}
+
+/** Damage calc results from /analysis/calc. Mirrors tools/analysis-calc.ts. */
+export interface AnalysisCalcPokemonRef {
+	side: AnalysisSideID;
+	/** index in the side's team (request order) */
+	index: number;
+	/** active slot */
+	slot: number;
+}
+
+export interface AnalysisCalcTargetResult {
+	target: AnalysisCalcPokemonRef;
+	relation: 'foe' | 'ally';
+	/** show when hovering the move button */
+	onMoveHover: boolean;
+	/** hit by the attacker's current draft choice */
+	selected: boolean;
+	damage?: [number, number];
+	percent?: [number, number];
+	/** calc result sentence with ANALYSIS_CALC_ATTACKER / ANALYSIS_CALC_DEFENDER placeholders */
+	text?: string;
+	error?: string;
+}
+
+export interface AnalysisCalcMoveResult {
+	attacker: AnalysisCalcPokemonRef;
+	moveSlot: number;
+	moveId: string;
+	moveName: string;
+	targets: AnalysisCalcTargetResult[];
+}
+
+export const ANALYSIS_CALC_ATTACKER = '[[ATTACKER]]';
+export const ANALYSIS_CALC_DEFENDER = '[[DEFENDER]]';
+
+/** Calcs for one decision point and draft; `key` identifies which. */
+export interface AnalysisCalcState {
+	key: string;
+	loading: boolean;
+	results?: AnalysisCalcMoveResult[];
+	error?: string;
 }
 
 export interface AnalysisSimulationResult {

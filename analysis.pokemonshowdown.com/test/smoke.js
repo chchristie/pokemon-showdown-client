@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const {
 	SMOKE_TEAM, OUTPUT_DIR, step, checkServers, openAnalysisPage, clickButton, waitFor, linesText,
-	waitForDecision, selectLeads, openActionMenu, chooseMove, dumpFailure,
+	waitForDecision, startAnalysisFromTeams, selectLeads, openActionMenu, chooseMove, dumpFailure,
 } = require('./lib');
 
 async function main() {
@@ -22,8 +22,7 @@ async function main() {
 		if (officialScripts) throw new Error(`${officialScripts} scripts loaded from the official site instead of this build`);
 		step('page loaded with local assets');
 
-		await clickButton(page, 'New Analysis From Teams');
-		await clickButton(page, 'Start Analysis');
+		await startAnalysisFromTeams(page);
 		// p1 leads Rotom-Wash, p2 leads Kingambit
 		await selectLeads(page, 1, 2);
 		await waitForDecision(page);

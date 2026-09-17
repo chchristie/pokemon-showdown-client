@@ -1,6 +1,6 @@
 import {
-	ANALYSIS_API, type AnalysisMidTurnSwitchOption, type AnalysisReplayRecord, type AnalysisSimulationGroup,
-	type AnalysisSnapshot,
+	ANALYSIS_API, type AnalysisCalcMoveResult, type AnalysisMidTurnSwitchOption, type AnalysisReplayRecord,
+	type AnalysisSimulationGroup, type AnalysisSnapshot,
 } from './analysis-model';
 
 export interface AnalysisRequest {
@@ -45,13 +45,18 @@ export interface AnalysisStartResponse {
 	pendingMidTurnSwitches: AnalysisMidTurnSwitchOption[];
 }
 
+export interface AnalysisCalcRequest extends AnalysisRequest {
+	/** draft choices (`>p1 move 1 +2`) for choice-dependent flags (Protect, switching, Helping Hand) and targets */
+	choices?: string[];
+}
+
 export interface AnalysisBatchResponse {
 	simulationCount: number;
 	turnGroups: AnalysisSimulationGroup[];
 	stateGroups: AnalysisSimulationGroup[];
 }
 
-async function postAnalysis(path: string, request: AnalysisRequest | AnalysisBatchRequest, signal?: AbortSignal) {
+async function postAnalysis(path: string, request: AnalysisRequest, signal?: AbortSignal) {
 	const response = await fetch(`${ANALYSIS_API}${path}`, {
 		method: 'POST',
 		headers: { 'Content-Type': 'application/json' },
@@ -73,4 +78,10 @@ export async function runAnalysisBatch(
 	request: AnalysisBatchRequest, signal?: AbortSignal
 ): Promise<AnalysisBatchResponse> {
 	return postAnalysis('/analysis/simulate', request, signal);
+}
+
+export async function runAnalysisCalc(
+	request: AnalysisCalcRequest, signal?: AbortSignal
+): Promise<{ results: AnalysisCalcMoveResult[] }> {
+	return postAnalysis('/analysis/calc', request, signal);
 }

@@ -382,13 +382,13 @@ export class BattleTooltips {
 			// mouse over switchable pokemon
 			// serverPokemon definitely exists, sidePokemon maybe
 			// let side = this.battle.mySide;
-			const activeIndex = parseInt(args[1], 10);
+			let activeIndex = parseInt(args[1], 10);
 			let pokemon = null;
 			/* if (activeIndex < side.active.length && activeIndex < this.battle.pokemonControlled) {
 				pokemon = side.active[activeIndex];
 				if (pokemon && pokemon.side === side.ally) pokemon = null;
 			} */
-			const serverPokemon = this.battle.myPokemon![activeIndex];
+			let serverPokemon = this.battle.myPokemon![activeIndex];
 			buf = this.showPokemonTooltip(pokemon, serverPokemon);
 			break;
 		}
@@ -403,26 +403,6 @@ export class BattleTooltips {
 			} */
 			let serverPokemon = this.battle.myAllyPokemon ? this.battle.myAllyPokemon[activeIndex] : null;
 			buf = this.showPokemonTooltip(pokemon, serverPokemon);
-			break;
-		}
-		case 'analysispokemon': { // analysispokemon|SIDE|POKEMON
-			const sideIndex = parseInt(args[1], 10);
-			const pokemonIndex = parseInt(args[2], 10);
-			const serverTeam = sideIndex === 0 ? this.battle.myPokemon : this.battle.myAllyPokemon;
-			const serverPokemon = serverTeam?.[pokemonIndex];
-			if (!serverPokemon) return false;
-			buf = this.showPokemonTooltip(this.battle.findCorrespondingPokemon(serverPokemon), serverPokemon);
-			break;
-		}
-		case 'analysismove': { // analysismove|MOVE|SIDE|ACTIVE
-			const move = this.battle.dex.moves.get(args[1]);
-			const sideIndex = parseInt(args[2], 10);
-			const activeIndex = parseInt(args[3], 10);
-			const pokemon = this.battle.sides[sideIndex]?.active[activeIndex];
-			const serverTeam = sideIndex === 0 ? this.battle.myPokemon : this.battle.myAllyPokemon;
-			const serverPokemon = serverTeam?.filter(candidate => candidate.active)[activeIndex];
-			if (!pokemon || !serverPokemon) return false;
-			buf = this.showMoveTooltip(move, 'move', pokemon, serverPokemon);
 			break;
 		}
 		case 'field': {
