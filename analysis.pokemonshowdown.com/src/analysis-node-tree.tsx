@@ -4,16 +4,29 @@ import type { AnalysisNode, AnalysisTab } from './analysis-model';
 import { AnalysisChoiceSummaryView, AnalysisTeamSelectionSummaryView } from './analysis-choice-summary';
 import { getAnalysisNodeTreeItems } from './analysis-nodes';
 import type { AnalysisNodeTreeItem } from './analysis-nodes';
+import { AnalysisTurnEventSummaryView } from './analysis-turn-events';
 
-function NodeSummary(props: { tab: AnalysisTab, node: AnalysisNode, onSelect: (nodeId: string) => void }) {
+function NodeSummary(props: {
+	key?: string, tab: AnalysisTab, node: AnalysisNode, onSelect: (nodeId: string) => void,
+}) {
 	const { tab, node, onSelect } = props;
+	const tooltipId = `analysis-node-events-${node.id}`;
+	const hasChild = Object.values(tab.nodes).some(candidate => candidate.parentId === node.id);
+	const showTurnEvents = node.turn > 0 && hasChild && !!node.turnEventSummary;
 	return <li class={`analysis-node-entry${node.id === tab.currentNodeId ? ' analysis-node-current' : ''}`}>
-		<button class="analysis-node-button" onClick={() => onSelect(node.id)}>
-			<strong>{node.turn === 0 ? 'Team Selection' : `Turn ${node.turn}`}</strong>
+		<button
+			class="analysis-node-button" onClick={() => onSelect(node.id)}
+			aria-describedby={showTurnEvents ? tooltipId : undefined}
+		>
+			<strong>{node.turn === 0 ? 'Team Preview' : `Turn ${node.turn}`}</strong>
 			{node.turn === 0 ?
 				<AnalysisTeamSelectionSummaryView teams={node.teamSelectionSummary || { p1: [], p2: [] }} /> :
 				<AnalysisChoiceSummaryView choices={node.choiceSummary || []} gameType={tab.gameType} />}
 		</button>
+		{showTurnEvents ? <div id={tooltipId} class="analysis-node-tooltip" role="tooltip">
+			<strong>Turn {node.turn} → Turn {node.turn + 1}</strong>
+			<AnalysisTurnEventSummaryView actions={node.turnEventSummary!} />
+		</div> : null}
 	</li>;
 }
 
@@ -22,7 +35,7 @@ function NodeTreeItems(props: {
 }) {
 	return <>{props.items.map(item => 'node' in item ?
 		<NodeSummary key={item.node.id} tab={props.tab} node={item.node} onSelect={props.onSelect} /> :
-		<li class="analysis-node-branch">
+		<li class="analysis-node-branch" key={`branch-${item.branch[0] && 'node' in item.branch[0] ? item.branch[0].node.id : ''}`}>
 			<ol><NodeTreeItems tab={props.tab} items={item.branch} onSelect={props.onSelect} /></ol>
 		</li>
 	)}</>;

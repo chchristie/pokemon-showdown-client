@@ -51,12 +51,16 @@
 	.analysis-debug-log { margin: 0; white-space: pre-wrap; word-break: break-word; font: 8pt monospace; color: #33434d; }
 	.analysis-node-tree, .analysis-node-branch > ol { margin: 0; padding: 0; list-style: none; }
 	.analysis-node-tree { margin: 0 8px 16px; }
-	.analysis-node-entry { margin: 3px 0; }
+	.analysis-node-entry { position: relative; margin: 3px 0; }
 	.analysis-node-branch { margin: 3px 0; padding-left: 16px; border-left: 2px solid #8ba4b3; list-style: none; }
 	.analysis-node-button { display: block; box-sizing: border-box; width: 100%; min-width: 0; padding: 4px 6px; overflow: hidden; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 	.analysis-node-button > strong { display: block; }
 	.analysis-node-button .analysis-choice-summary-wrap { margin-bottom: 0; }
 	.analysis-node-button:hover, .analysis-node-current .analysis-node-button { background: #dbeaf4; }
+	.analysis-node-tooltip { display: none; position: absolute; z-index: 30; bottom: calc(100% + 4px); left: 6px; box-sizing: border-box; width: 360px; max-width: calc(100vw - 48px); padding: 8px 10px; border: 1px solid #64757f; background: #26343d; color: #fff; font-size: 9pt; font-weight: normal; line-height: 1.35; white-space: normal; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
+	.analysis-node-button:hover + .analysis-node-tooltip { display: block; }
+	.analysis-node-tooltip > strong, .analysis-node-tooltip .analysis-simulation-actions, .analysis-node-tooltip .analysis-simulation-actions > span { display: block; }
+	.analysis-node-tooltip .analysis-simulation-actions { margin-top: 6px; color: #fff; }
 	.analysis-simulation-list { margin: 0; padding: 0; list-style: none; }
 	.analysis-simulation-group { margin: 0; padding: 0; }
 	.analysis-simulation-outcome { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 10px; border: 0; border-bottom: 1px solid #bbc7cd; background: #f7f9fa; color: #26343d; text-align: left; cursor: pointer; }
@@ -109,6 +113,7 @@
 <script src="js/analysis-team-utils.js?20260910"></script>
 <script src="js/analysis-header.js?20260910"></script>
 <script src="js/analysis-choice-summary.js?20260913"></script>
+<script src="js/analysis-turn-events.js?20260916"></script>
 <script src="js/analysis-node-tree.js?20260913"></script>
 <script src="js/analysis-replay-controls.js?20260910"></script>
 <script src="js/analysis.js?20260913"></script>

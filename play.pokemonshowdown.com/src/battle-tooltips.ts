@@ -414,6 +414,17 @@ export class BattleTooltips {
 			buf = this.showPokemonTooltip(this.battle.findCorrespondingPokemon(serverPokemon), serverPokemon);
 			break;
 		}
+		case 'analysismove': { // analysismove|MOVE|SIDE|ACTIVE
+			const move = this.battle.dex.moves.get(args[1]);
+			const sideIndex = parseInt(args[2], 10);
+			const activeIndex = parseInt(args[3], 10);
+			const pokemon = this.battle.sides[sideIndex]?.active[activeIndex];
+			const serverTeam = sideIndex === 0 ? this.battle.myPokemon : this.battle.myAllyPokemon;
+			const serverPokemon = serverTeam?.filter(candidate => candidate.active)[activeIndex];
+			if (!pokemon || !serverPokemon) return false;
+			buf = this.showMoveTooltip(move, 'move', pokemon, serverPokemon);
+			break;
+		}
 		case 'field': {
 			buf = this.showFieldTooltip();
 			break;

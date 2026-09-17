@@ -13,6 +13,21 @@ export interface AnalysisTeamSelectionSummary {
 	p2: string[];
 }
 
+export interface AnalysisTurnEventDetail {
+	label: string;
+	pokemon?: string;
+}
+
+export interface AnalysisTurnEventSummary {
+	side: string;
+	pokemon: string;
+	type: 'move' | 'switch' | 'cant' | 'faint';
+	move?: string;
+	switchedTo?: string;
+	reason?: string;
+	details?: AnalysisTurnEventDetail[];
+}
+
 export interface AnalysisNode {
 	id: string;
 	parentId: string | null;
@@ -21,6 +36,7 @@ export interface AnalysisNode {
 	inputLog: string[];
 	choiceSummary?: AnalysisChoiceSummary[];
 	teamSelectionSummary?: AnalysisTeamSelectionSummary;
+	turnEventSummary?: AnalysisTurnEventSummary[];
 }
 
 export interface AnalysisSimulationResult {
