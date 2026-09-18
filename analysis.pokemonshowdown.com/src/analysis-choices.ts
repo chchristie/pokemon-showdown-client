@@ -4,7 +4,7 @@
  * validate them. Rendering and battle-dependent logic stay in analysis.tsx.
  */
 import { BattleChoiceBuilder } from '../../play.pokemonshowdown.com/src/battle-choices';
-import type { AnalysisSideID } from './analysis-model';
+import type { AnalysisSideID, AnalysisSideSnapshot, AnalysisSnapshot } from './analysis-model';
 
 export interface PendingTarget {
 	side: AnalysisSideID;
@@ -19,6 +19,61 @@ const INPUT_LINE = /^>p([12])\s+(.+)$/;
 
 export function sideIndex(side: AnalysisSideID) {
 	return side === 'p1' ? 0 : 1;
+}
+
+function activePokemon(side: AnalysisSideSnapshot, slot: number) {
+	const index = side.active[slot];
+	return index === null || index === undefined ? null : side.pokemon[index] || null;
+}
+
+/** `move N` still means what it did only if slot N holds the same move, on the same Pokémon. */
+function isStaleMove(before: AnalysisSideSnapshot, after: AnalysisSideSnapshot, slot: number, choice: string) {
+	const index = Number(/^move (\d+)/.exec(choice)?.[1]);
+	if (!index) return false;
+	const beforePokemon = activePokemon(before, slot);
+	const afterPokemon = activePokemon(after, slot);
+	// the slot's own Pokémon changing is reported separately, through edits.active
+	if (!beforePokemon || !afterPokemon || beforePokemon.teamSlot !== afterPokemon.teamSlot) return false;
+	const beforeMove = beforePokemon.moves[index - 1];
+	const afterMove = afterPokemon.moves[index - 1];
+	return !afterMove || beforeMove?.id !== afterMove.id;
+}
+
+/** `switch N` names a position in the roster, which a team edit can repoint at a different Pokémon. */
+function isStaleSwitch(before: AnalysisSideSnapshot, after: AnalysisSideSnapshot, choice: string) {
+	const index = Number(/^switch (\d+)/.exec(choice)?.[1]);
+	if (!index) return false;
+	const beforeTarget = before.pokemon[index - 1];
+	const afterTarget = after.pokemon[index - 1];
+	return !afterTarget || beforeTarget?.teamSlot !== afterTarget.teamSlot;
+}
+
+/**
+ * Active slots whose drafted action a team edit invalidated: a chosen move whose slot now holds a
+ * different move (or none), or a chosen switch whose target position now holds a different Pokémon.
+ * Compare the snapshots from before and after the save.
+ */
+export function getStaleChoiceSlots(
+	before: AnalysisSnapshot | undefined, after: AnalysisSnapshot | undefined, draft: AnalysisChoiceDraft
+) {
+	const stale: { side: AnalysisSideID, slot: number }[] = [];
+	if (!before || !after) return stale;
+	for (const side of ['p1', 'p2'] as const) {
+		const beforeSide = before.sides[sideIndex(side)];
+		const afterSide = after.sides[sideIndex(side)];
+		if (!beforeSide || !afterSide) continue;
+		const moves = draft.moveChoicesBySlot[side];
+		const switches = draft.switchChoicesBySlot[side];
+		for (let slot = 0; slot < Math.max(moves.length, switches.length); slot++) {
+			const move = moves[slot];
+			const switchChoice = switches[slot];
+			if (move ? isStaleMove(beforeSide, afterSide, slot, move) :
+				!!switchChoice && isStaleSwitch(beforeSide, afterSide, switchChoice)) {
+				stale.push({ side, slot });
+			}
+		}
+	}
+	return stale;
 }
 
 export class AnalysisChoiceDraft {
@@ -82,14 +137,38 @@ export class AnalysisChoiceDraft {
 		this.builders[side] = builder;
 	}
 
-	/** Re-applies saved `>pN choice` lines to the current builders. */
-	hydrate(inputLog: string[]) {
+	/**
+	 * Re-applies saved `>pN choice` lines to the current builders.
+	 *
+	 * `skip` drops the choices for those slots instead of replaying them. A team edit can leave a choice
+	 * naming a move slot or a switch target that no longer exists, and `addChoices` abandons the rest of
+	 * the line at the first one it can't parse, which would silently lose the other slot's valid choice.
+	 * Such a line is applied slot by slot instead, and the builder rebuilt (it pads skipped slots with
+	 * `pass`, which `addChoice` itself refuses).
+	 */
+	hydrate(inputLog: string[], requests?: any[], skip?: { side: AnalysisSideID, slot: number }[]) {
 		for (const line of inputLog) {
 			const match = INPUT_LINE.exec(line);
 			if (!match) continue;
 			const side = match[1] === '1' ? 'p1' : 'p2';
 			const builder = this.builders[side];
 			if (!builder) continue;
+			// an inner loop, not .filter: a closure over the loop variable fails the client build
+			const skipped: number[] = [];
+			for (const entry of skip || []) {
+				if (entry.side === side) skipped.push(entry.slot);
+			}
+			const request = requests?.[sideIndex(side)];
+			if (skipped.length && request?.active) {
+				const parts = match[2].split(',').map(part => part.trim());
+				for (let slot = 0; slot < parts.length; slot++) {
+					if (skipped.includes(slot) || parts[slot] === 'pass') continue;
+					if (parts[slot].startsWith('move ')) this.moveChoicesBySlot[side][slot] = parts[slot];
+					else if (parts[slot].startsWith('switch ')) this.switchChoicesBySlot[side][slot] = parts[slot];
+				}
+				this.rebuildMoveBuilder(side, request);
+				continue;
+			}
 			builder.addChoices(match[2]);
 			for (let index = 0; index < builder.choices.length; index++) {
 				const choice = builder.choices[index];

@@ -40,8 +40,18 @@ export type AnalysisBoostsTable = { [stat in Dex.BoostStatName]?: number };
  * node's turn. Mirrors `AnalysisEdits` in pokemon-showdown/tools/analysis-state.ts;
  * see docs/analysis/plan.md (D3).
  */
+/**
+ * A side's whole roster at this node, in `side.pokemon` order. `from[i]` is the team slot entry `i` came
+ * from, so a set keeps its identity (and its slot) through a reorder; `null` means the entry is new.
+ * Mirrors AnalysisTeamEdit in tools/analysis-state.ts.
+ */
+export interface AnalysisTeamEdit {
+	sets: Dex.PokemonSet[];
+	from: (number | null)[];
+}
+
 export interface AnalysisEdits {
-	teams?: { p1?: Dex.PokemonSet[], p2?: Dex.PokemonSet[] };
+	teams?: { p1?: AnalysisTeamEdit, p2?: AnalysisTeamEdit };
 	/** team slot per active position; `null` leaves that position alone */
 	active?: { p1?: (number | null)[], p2?: (number | null)[] };
 	/** keyed `p1:<teamSlot>` (see AnalysisPokemonSnapshot) */
@@ -51,11 +61,16 @@ export interface AnalysisEdits {
 
 export interface AnalysisPokemonStateEdit {
 	hp?: number;
-	/** by move slot; `null` leaves that slot alone */
-	pp?: (number | null)[];
+	/**
+	 * PP by move id, not by slot: a slot's move can change, and an edit naming a move that is no longer
+	 * there is simply irrelevant rather than something to invalidate.
+	 */
+	pp?: { [moveid: string]: number };
 	status?: '' | 'brn' | 'par' | 'slp' | 'frz' | 'psn' | 'tox';
 	toxicStage?: number;
 	sleepTurns?: number;
+	/** current types, which moves like Soak and Reflect Type change mid-battle */
+	types?: string[];
 	terastallized?: boolean;
 	megaEvolved?: boolean;
 	boosts?: AnalysisBoostsTable;
@@ -118,9 +133,17 @@ export interface AnalysisNode {
 	seed: string | null;
 	turn: number;
 	inputLog: string[];
+	/**
+	 * Packed teams for the whole line, only meaningful on the Team Preview node (turn 0). Editing a team
+	 * there changes what is fed to the battle constructor rather than being applied as an edit layer, so
+	 * the battle is simply built from this team (see resolveTeamsFor).
+	 */
+	teams?: { p1?: string, p2?: string };
 	edits?: AnalysisEdits;
 	/** what `edits` changed, for the Lines tooltip ("Turn N Edits") */
 	editSummary?: AnalysisEditSummary;
+	/** what `teams` changed, for the Lines tooltip; built on the client, since the server never sees it */
+	teamSummary?: { p1: string[], p2: string[] };
 	choiceSummary?: AnalysisChoiceSummary[];
 	teamSelectionSummary?: AnalysisTeamSelectionSummary;
 	turnEventSummary?: AnalysisTurnEventSummary[];
@@ -184,13 +207,17 @@ export interface AnalysisSnapshot {
 		terrain: AnalysisEffectSnapshot | null,
 		pseudoWeather: AnalysisEffectSnapshot[],
 	};
-	sides: {
-		id: AnalysisSideID,
-		name: string,
-		sideConditions: AnalysisEffectSnapshot[],
-		active: (number | null)[],
-		pokemon: AnalysisPokemonSnapshot[],
-	}[];
+	sides: AnalysisSideSnapshot[];
+}
+
+export interface AnalysisSideSnapshot {
+	id: AnalysisSideID;
+	name: string;
+	sideConditions: AnalysisEffectSnapshot[];
+	/** index into `pokemon` for each active slot */
+	active: (number | null)[];
+	/** in `side.pokemon` order, which matches request order */
+	pokemon: AnalysisPokemonSnapshot[];
 }
 
 /** Damage calc results from /analysis/calc. Mirrors tools/analysis-calc.ts. */

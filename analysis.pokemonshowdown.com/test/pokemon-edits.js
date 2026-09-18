@@ -2,14 +2,14 @@
 /**
  * Pokémon state edits (docs/analysis/plan.md, Phase 2b-1): the form that replaces the field form.
  * - opened from a team icon in the sidebar, or from the action menu's "Edit Pokémon" button
- * - HP (amount and percent), status with its counters, PP, boosts, Terastallization, Send out
+ * - HP (amount and percent), status with its counters, PP, boosts, Terastallization, Set Active
  * - Save rebuilds the position; the battle window, the request and the Lines tooltip follow
  * - Cancel goes back to the field form
  * Usage and prerequisites: see README.md in this folder.
  */
 const {
 	SMOKE_TEAM, step, checkServers, openAnalysisPage, clickButton, waitFor, waitForDecision, startAnalysisFromTeams,
-	selectLeads, hoverTooltip, dumpFailure,
+	selectLeads, hoverTooltip, sleep, dumpFailure,
 } = require('./lib');
 
 function expect(condition, message) {
@@ -30,6 +30,8 @@ function editorState(page) {
 			values,
 			boosts,
 			pressed: [...editor.querySelectorAll('.analysis-field-button.selected')].map(button => button.dataset.fieldEffect),
+			selects: Object.fromEntries([...editor.querySelectorAll('[data-pokemon-select]')]
+				.map(select => [select.dataset.pokemonSelect, select.value])),
 			save: !heading.find(button => button.textContent === 'Save')?.disabled,
 		};
 	});
@@ -51,8 +53,26 @@ function setBoost(page, stat, value) {
 	}, stat, value);
 }
 
-function clickEffect(page, effect) {
-	return page.evaluate(id => document.querySelector(`[data-field-effect="${id}"]`).click(), effect);
+/**
+ * Clicks one of the form's toggle buttons. It waits for the button to be enabled first: the form disables
+ * everything while a save is in flight, and clicking a disabled button silently does nothing.
+ */
+async function clickEffect(page, effect) {
+	await waitFor(page, id => {
+		const button = document.querySelector(`[data-field-effect="${id}"]`);
+		return !!button && !button.disabled;
+	}, `the ${effect} button`, 30000, effect);
+	await page.evaluate(id => document.querySelector(`[data-field-effect="${id}"]`).click(), effect);
+}
+
+/** Picks a value in one of the panel's dropdowns (Nature, Ability, Item, Status, Forme, Move N). */
+function setSelect(page, label, value) {
+	return page.evaluate((selectLabel, text) => {
+		const select = document.querySelector(`[data-pokemon-select="${selectLabel}"]`);
+		if (!select) throw new Error(`no ${selectLabel} dropdown`);
+		select.value = text;
+		select.dispatchEvent(new Event('change', { bubbles: true }));
+	}, label, value);
 }
 
 async function clickEditorButton(page, text) {
@@ -63,6 +83,9 @@ async function clickEditorButton(page, text) {
 	}, `the ${text} button`, 30000, text);
 	await page.evaluate(label => [...document.querySelectorAll('.analysis-field-actions button')]
 		.find(button => button.textContent === label).click(), text);
+	// a save tears the battle down and rebuilds it; waitForDecision's text is true on both sides of that,
+	// so give the rebuild a moment before driving the controls again
+	await sleep(400);
 }
 
 /**
@@ -102,7 +125,7 @@ async function main() {
 		form = await editorState(page);
 		const halfHP = Math.round(Number(form.values.HP));
 		expect(halfHP > 0 && form.save, `editing the percent should set HP: ${JSON.stringify(form.values)}`);
-		await clickEffect(page, 'status:brn');
+		await setSelect(page, 'Status', 'brn');
 		await setBoost(page, 'spe', '2');
 		await setField(page, 'Hydro Pump PP', '3');
 		await clickEditorButton(page, 'Save');
@@ -112,7 +135,7 @@ async function main() {
 		form = await editorState(page);
 		expect(form.values.HP === `${halfHP}` && form.boosts.spe === '2' && !form.save,
 			`the saved state should be shown and clean: ${JSON.stringify(form)}`);
-		expect(form.pressed.includes('status:brn'), 'the burn should still be selected');
+		expect(form.selects.Status === 'brn', `the burn should still be selected: ${JSON.stringify(form.selects)}`);
 		step('HP, status, boosts and PP save and come back from the server');
 
 		// the renderer only tracks PP for moves it saw used, so this comes from the snapshot
@@ -157,15 +180,16 @@ async function main() {
 		await waitFor(page, () => document.querySelector('.analysis-field-heading strong').textContent.includes('Garchomp'), 'Garchomp form');
 		form = await editorState(page);
 		expect(!Object.keys(form.boosts).length, 'a benched Pokémon should have no boost dropdowns');
+		// Set Active saves on its own; there is no separate Save step for it
 		await clickEffect(page, 'active:0');
-		await clickEditorButton(page, 'Save');
+		await sleep(400);
 		await waitFor(page, () => (document.querySelector('.battle-log')?.textContent || '').includes('Active (Slot 1)') ||
 			(document.querySelector('.analysis-node-tree')?.textContent || '').includes('Active (Slot 1)'), 'the switch edit');
 		await waitForDecision(page);
 		const active = await page.evaluate(() => document.querySelector('.battle-controls .analysis-choice-summary')?.textContent || '');
 		expect(/Garchomp/.test(await page.evaluate(() => document.querySelector('.battle .rstatbar strong')?.textContent || '')) ||
 			active.includes('Garchomp'), 'Garchomp should now be active');
-		step('Send out makes a benched Pokémon active');
+		step('Set Active makes a benched Pokémon active');
 
 		// the team icons follow the new order, and edits still find the Pokémon they were made for
 		const icons = await page.evaluate(() => [...document.querySelectorAll('.battle .picon[data-tooltip^="analysispokemon|0|"]')]
@@ -188,10 +212,18 @@ async function main() {
 		await waitFor(page, () => !!document.querySelector('.movemenu button'), 'action menu for the swapped-in Pokémon');
 		await page.evaluate(() => document.querySelectorAll('.movemenu button')[0].click());
 		await waitFor(page, () => !document.querySelector('.movemenu'), 'the chosen action');
-		await clickTeamIcon(page, 0, 1); // the benched Kingambit... whichever is at index 1 now
+		// Kingambit by name, not by index: index 1 is Rotom after the first swap, and sending Rotom back to
+		// slot 0 is a no-op the server rightly drops, which wouldn't test anything
+		await page.evaluate(() => {
+			const icon = [...document.querySelectorAll('.battle .picon[data-tooltip^="analysispokemon|0|"]')]
+				.find(element => (element.getAttribute('aria-label') || '').includes('Kingambit'));
+			if (!icon) throw new Error('no Kingambit icon');
+			icon.click();
+		});
 		await waitFor(page, () => !!document.querySelector('[data-pokemon-field="HP"]'), 'form for the benched Pokémon');
+		// Set Active saves on its own; there is no separate Save step for it
 		await clickEffect(page, 'active:0');
-		await clickEditorButton(page, 'Save');
+		await sleep(400);
 		await waitFor(page, () => (document.querySelector('.battle-controls')?.textContent || '')
 			.includes('No action selected'), 'the slot\'s action to be cleared');
 		step('replacing a slot\'s Pokémon clears the action chosen for it');
@@ -202,9 +234,80 @@ async function main() {
 			return [...teams[0].querySelectorAll('span')].map(span => span.textContent);
 		});
 		expect(tooltip.some(line => line.includes('Rotom: HP')) && tooltip.some(line => line.includes('Status (Burn)')) &&
-			tooltip.some(line => line.includes('Garchomp: Active (Slot 1)')),
+			tooltip.some(line => line.includes('Kingambit: Active (Slot 1)')),
 		`the Lines tooltip should list the Pokémon edits: ${JSON.stringify(tooltip)}`);
 		step('the Lines tooltip lists the Pokémon edits under its team');
+
+		/*
+		 * Terastallizing and taking it back. The second half is the interesting one: no protocol line clears
+		 * `terastallized` on a living Pokémon, so the renderer reads a marker line instead.
+		 */
+		const teraBox = '[data-pokemon-field="Terastallized"]';
+		const teraState = () => page.evaluate(selector => {
+			const active = document.querySelector('.battle .rstatbar strong')?.textContent || '';
+			return {
+				checked: document.querySelector(selector)?.checked,
+				types: [...document.querySelectorAll('[data-pokemon-select^="Type"]')].map(select => select.value),
+				active,
+			};
+		}, teraBox);
+		await page.evaluate(selector => {
+			const box = document.querySelector(selector);
+			box.checked = true;
+			box.dispatchEvent(new Event('change', { bubbles: true }));
+		}, teraBox);
+		await clickEditorButton(page, 'Save');
+		await waitForDecision(page);
+		const teraOn = await teraState();
+		expect(teraOn.checked, `the Pokémon should be Terastallized after saving: ${JSON.stringify(teraOn)}`);
+		step('Terastallizing from the panel applies');
+
+		await page.evaluate(selector => {
+			const box = document.querySelector(selector);
+			box.checked = false;
+			box.dispatchEvent(new Event('change', { bubbles: true }));
+		}, teraBox);
+		await clickEditorButton(page, 'Save');
+		await waitForDecision(page);
+		const teraOff = await teraState();
+		expect(teraOff.checked === false, `unchecking should take it back: ${JSON.stringify(teraOff)}`);
+		step('unchecking Terastallized takes it back, and the renderer follows');
+
+		/*
+		 * The panel's own layout rules: one field per row with aligned inputs, narrow boost pickers showing
+		 * `--` at 0, and the toxic counter as a 1/16..15/16 dropdown beside Status.
+		 */
+		const layout = await page.evaluate(() => {
+			const boost = document.querySelector('[data-pokemon-boost]');
+			return {
+				lefts: [...document.querySelectorAll('.analysis-info-line > .analysis-info-value')]
+					.map(value => Math.round(value.getBoundingClientRect().left)),
+				boostWidth: Math.round(boost?.getBoundingClientRect().width || 0),
+				boostZero: [...(boost?.options || [])].find(option => option.value === '0')?.textContent,
+				noGender: !document.querySelector('[data-pokemon-select="Gender"]'),
+				types: [...document.querySelectorAll('[data-pokemon-select^="Type"]')].map(select => select.value),
+				movePP: (document.querySelector('.analysis-move-pp')?.textContent || ''),
+			};
+		});
+		expect(new Set(layout.lefts).size === 1, `every field should start at the same x: ${JSON.stringify(layout.lefts)}`);
+		expect(layout.boostWidth > 0 && layout.boostWidth < 70, `boost pickers should be narrow: ${layout.boostWidth}px`);
+		expect(layout.boostZero === '--', `an unboosted stat should read --, got ${layout.boostZero}`);
+		expect(layout.noGender, 'the gender dropdown should be gone');
+		expect(layout.types.length === 2, `there should be primary and secondary type pickers: ${JSON.stringify(layout.types)}`);
+		expect(/\/ \d+ PP$/.test(layout.movePP.trim()), `a move row should end "/ N PP": ${layout.movePP}`);
+		step('the panel lays out one field per row, with narrow boost pickers');
+
+		// the current types are battle state: Soak and friends change them mid-battle
+		const originalTypes = layout.types;
+        await setSelect(page, 'Type 1', 'Water');
+		await setSelect(page, 'Type 2', '');
+		await clickEditorButton(page, 'Save');
+		await waitForDecision(page);
+		const typed = await page.evaluate(() => [...document.querySelectorAll('[data-pokemon-select^="Type"]')]
+			.map(select => select.value));
+		expect(typed[0] === 'Water' && !typed[1],
+			`the type edit should stick: ${JSON.stringify(typed)} (was ${JSON.stringify(originalTypes)})`);
+		step(`a type change saves: ${originalTypes.join('/')} -> ${typed.filter(Boolean).join('/')}`);
 
 		await clickEditorButton(page, 'Cancel');
 		await waitFor(page, () => !!document.querySelector('[data-field-effect="weather:raindance"]'), 'back to the field form');

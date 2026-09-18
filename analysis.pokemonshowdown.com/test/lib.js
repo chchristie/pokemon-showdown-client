@@ -69,7 +69,13 @@ async function openAnalysisPage(teams) {
 	const page = await browser.newPage();
 	await page.setViewport({ width: 1500, height: 950 });
 	const errors = [];
-	page.on('pageerror', error => errors.push(`pageerror: ${error.message}`));
+	page.on('pageerror', error => {
+		// The battle's sound effects are started and then cut off whenever a test pauses or rebuilds the
+		// battle, which rejects the play() promise. It's benign, it happens on any page the tests drive,
+		// and treating it as a failure would make every suite red.
+		if (error.message.includes('The play() request was interrupted')) return;
+		errors.push(`pageerror: ${error.message}`);
+	});
 	page.on('console', message => {
 		// resource failures are reported with URLs by the 'response' listener below
 		if (message.type() === 'error' && !message.text().startsWith('Failed to load resource')) {

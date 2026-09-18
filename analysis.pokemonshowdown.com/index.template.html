@@ -12,6 +12,11 @@
 <link rel="stylesheet" href="../play.pokemonshowdown.com/style/client2.css?" />
 <link rel="stylesheet" href="../play.pokemonshowdown.com/style/battle.css?" />
 <link rel="stylesheet" href="../play.pokemonshowdown.com/style/sim-types.css?" />
+<!-- the embedded teambuilder (battle-team-editor.js) needs these -->
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/battle-log.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/teambuilder.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/battle-search.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/utilichart.css?" />
 
 <style>
 	:root { color-scheme: light; }
@@ -125,11 +130,70 @@
 	.analysis-field-button.btn-right { margin-left: -1px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
 	.analysis-field-turns { box-sizing: border-box; width: 44px; padding: 1px 3px; }
 	.analysis-field-turns:disabled { border-color: #ccc; background: #eee; color: #999; }
-	.analysis-boost-select { padding: 1px 2px; font-size: 8pt; }
+	/*
+	 * Narrow and short, like the damage calculator's boost pickers. client.css forces every `.select` to
+	 * 32px, which towers over the 19px EV/IV inputs beside them in the same stat row.
+	 */
+	.analysis-boost-select { box-sizing: border-box; width: 4.2em; min-width: 0; height: 20px; padding: 0 2px; font-size: 8pt; }
+	/*
+	 * Pokémon edit panel (analysis-pokemon-editor.tsx), laid out like the damage calculator's poke-info:
+	 * boxed "info groups" stacked down the panel. calc.pokemonshowdown.com's own class names aren't in this
+	 * client's CSS, so these are our own approximations of that look.
+	 */
+	.analysis-info-group { margin: 6px 0; padding: 6px 8px; border: 1px solid #c4cdd2; border-radius: 4px; background: #fbfcfd; }
+	.analysis-info-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+	.analysis-info-row + .analysis-info-row { margin-top: 5px; }
+	.analysis-info-field { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+	.analysis-info-field > label { color: #53616b; font-size: 8pt; }
+	/* one field per row, with the labels sharing a column so every input's left edge lines up */
+	.analysis-info-line { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); align-items: center; gap: 4px 6px; }
+	.analysis-info-line + .analysis-info-line { margin-top: 4px; }
+	.analysis-info-line > label { color: #53616b; font-size: 8pt; }
+	.analysis-info-value { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+	.analysis-info-value > select { min-width: 0; max-width: 13em; }
+	.analysis-info-checkbox { display: flex; align-items: center; gap: 3px; color: #40515c; font-size: 8pt; white-space: nowrap; }
+	.analysis-toxic-select { box-sizing: border-box; width: 5em; min-width: 0; }
+	.analysis-number-input { box-sizing: border-box; width: 5.2em; padding: 1px 3px; }
+	.analysis-stat-table { width: 100%; border-collapse: collapse; font-size: 8pt; }
+	.analysis-stat-table th { padding: 1px 3px; color: #53616b; font-weight: normal; text-align: center; }
+	.analysis-stat-table th:first-child { text-align: left; }
+	.analysis-stat-table td { padding: 1px 3px; text-align: center; }
+	.analysis-stat-table td:first-child { color: #40515c; font-weight: bold; text-align: left; }
+	.analysis-stat-table .analysis-stat-base, .analysis-stat-table .analysis-stat-total { font-variant-numeric: tabular-nums; }
+	.analysis-stat-table .analysis-stat-total { font-weight: bold; }
+	.analysis-stat-input { box-sizing: border-box; width: 4.2em; padding: 1px 3px; text-align: right; }
+	.analysis-move-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+	.analysis-move-pp { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+	.analysis-move-row + .analysis-move-row { margin-top: 4px; }
+	.analysis-move-row select { min-width: 0; }
+	.analysis-move-row .analysis-stat-input { width: 3.6em; }
+	.analysis-poke-actions { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
 	.analysis-selection-edit { margin-left: auto; }
 	.analysis-field-invalid { border-color: #c0392b; background: #fdecea; }
 	.analysis-field-note { color: #53616b; font-style: italic; }
 	.analysis-calc-lines .picon { display: inline-block; vertical-align: middle; margin: -6px -4px -4px -6px; }
+	/* teambuilder panel (analysis-teambuilder.tsx); it replaces the battle window and its controls */
+	.analysis-teambuilder-frame { display: flex; flex-direction: column; }
+	.analysis-teambuilder { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; padding: 6px 10px 0; }
+	.analysis-teambuilder-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; flex: none; gap: 6px; margin-bottom: 6px; }
+	.analysis-teambuilder-error { flex: none; margin: 0 0 6px; padding: 5px 8px; }
+	.analysis-teambuilder-error > strong, .analysis-teambuilder-error > em { display: block; }
+	.analysis-teambuilder-problems { margin: 4px 0; padding-left: 20px; }
+	.analysis-teambuilder .analysis-field-note { flex: none; margin: 0 0 6px; }
+	/* the editor's focused view is position:absolute inset 0, so this is its containing block and needs a real height */
+	.analysis-teambuilder-editor { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+	/*
+	 * This page loads client.css for the old-style battle controls, but the teambuilder is new-client
+	 * markup and index-new.html never loads client.css. Its rules have the same specificity as
+	 * client2.css's, so whatever client2.css doesn't redeclare leaks in. Undo that inside the panel.
+	 * The worst of it: client.css's `.tabbar` is the old room tab bar, pinned to the bottom of the room,
+	 * which threw the editor's Form/Import-Export bar to the bottom of the page behind everything.
+	 */
+	.analysis-teambuilder .tabbar { position: static; height: auto; top: auto; bottom: auto; left: auto; right: auto; }
+	.analysis-teambuilder .tabbar li, .analysis-teambuilder .tabbar ul { float: none; }
+	.analysis-teambuilder .select { width: auto; height: auto; }
+	/* the trainer sprites open their team's builder */
+	.battle .trainersprite { cursor: pointer; }
 </style>
 
 <div class="analysis-shell" id="main">
@@ -165,9 +229,22 @@
 <script src="../play.pokemonshowdown.com/data/abilities.js?"></script>
 <script src="../play.pokemonshowdown.com/data/items.js?"></script>
 <script src="../play.pokemonshowdown.com/data/teambuilder-tables.js?"></script>
+<script src="../play.pokemonshowdown.com/data/search-index.js?"></script>
+<script src="../play.pokemonshowdown.com/data/typechart.js?"></script>
+<script src="../play.pokemonshowdown.com/data/aliases.js?"></script>
 <script src="../play.pokemonshowdown.com/js/battle-tooltips.js?"></script>
 <script src="../play.pokemonshowdown.com/js/battle.js?"></script>
 <script src="../play.pokemonshowdown.com/js/battle-choices.js?"></script>
+<!--
+	The embedded teambuilder. analysis-ps-shims.js must come first: battle-team-editor.js
+	evaluates `class extends PSModel` as it loads. client-main.js, panels.js and
+	client-connection.js are deliberately NOT loaded (they boot the app), so the shims stand in
+	for PSModel, PSIcon, PSView and Net.
+-->
+<script src="js/analysis-ps-shims.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-dex-search.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-searchresults.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-team-editor.js?"></script>
 <script src="js/analysis-model.js?"></script>
 <script src="js/analysis-api.js?"></script>
 <script src="js/analysis-nodes.js?"></script>
@@ -181,5 +258,6 @@
 <script src="js/analysis-node-tree.js?"></script>
 <script src="js/analysis-field-editor.js?"></script>
 <script src="js/analysis-pokemon-editor.js?"></script>
+<script src="js/analysis-teambuilder.js?"></script>
 <script src="js/analysis-replay-controls.js?"></script>
 <script src="js/analysis.js?"></script>

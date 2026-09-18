@@ -9,27 +9,27 @@ import {
 	type AnalysisBattle, type AnalysisCalcMode, type AnalysisCalcState, type AnalysisChoiceSummary,
 	type AnalysisEdits, type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisNode,
 	type AnalysisPhase, type AnalysisSideID, type AnalysisSimulationGroup, type AnalysisSimulationRoll, type AnalysisTab,
-	type LocalTeam, type PlaybackStage, type StartMode,
+	type AnalysisTeamEdit, type LocalTeam, type PlaybackStage, type StartMode,
 } from './analysis-model';
-import { runAnalysis, runAnalysisBatch, runAnalysisCalc, type AnalysisStartResponse } from './analysis-api';
+import {
+	AnalysisTeamValidationError, runAnalysis, runAnalysisBatch, runAnalysisCalc, type AnalysisStartResponse,
+} from './analysis-api';
 import { AnalysisBattleRenderer } from './analysis-battle';
-import { AnalysisChoiceDraft, sideIndex } from './analysis-choices';
+import { AnalysisChoiceDraft, getStaleChoiceSlots, sideIndex } from './analysis-choices';
 import { AnalysisChoiceSummaryView } from './analysis-choice-summary';
 import { AnalysisFieldEditor, AnalysisFieldFormState, mergeFieldEdits } from './analysis-field-editor';
 import {
 	AnalysisPokemonEditor, AnalysisPokemonFormState, mergePokemonEdits, type AnalysisPokemonTarget,
 } from './analysis-pokemon-editor';
 import { AnalysisHeader } from './analysis-header';
-import { hasChildNodes, replayNodesFor } from './analysis-nodes';
+import { hasChildNodes, replayNodesFor, resolveTeamsFor } from './analysis-nodes';
 import { AnalysisNodeTree } from './analysis-node-tree';
+import { PSIcon } from './analysis-ps-shims';
+import { AnalysisTeambuilder, AnalysisTeamFormState, summarizeTeam } from './analysis-teambuilder';
 import { AnalysisReplayControls } from './analysis-replay-controls';
 import { packTeamSyntax } from './analysis-team-utils';
 import { AnalysisTooltips } from './analysis-tooltips';
 import { AnalysisTurnEventSummaryView, getLogTurnEventSummary, getTurnEventSummary } from './analysis-turn-events';
-
-function PSIcon(props: { pokemon: any }) {
-	return <span class="picon" style={(window as any).Dex.getPokemonIcon(props.pokemon)} />;
-}
 
 function pokemonLabel(pokemon: any) {
 	return (pokemon?.details || pokemon?.name || '').split(',')[0];
@@ -76,8 +76,12 @@ class AnalysisApp extends preact.Component {
 	pokemonForm = new AnalysisPokemonFormState();
 	/** the Pokémon whose form replaces the field form, if any */
 	editPokemon: AnalysisPokemonTarget | null = null;
+	/** the teambuilder replaces the battle and controls entirely while a side is open */
+	teamForm = new AnalysisTeamFormState();
 	showMoreFieldEffects = false;
 	editError = '';
+	/** validator problems from a refused Team Preview team, listed in the teambuilder */
+	editProblems: { team1: string[], team2: string[] } | null = null;
 	/** `clearedSlots` drops choices for slots whose Pokémon an edit replaced */
 	pendingHydration: {
 		tabId: string, inputLog: string[], clearedSlots?: { side: AnalysisSideID, slot: number }[],
@@ -240,12 +244,15 @@ class AnalysisApp extends preact.Component {
 		if (!node) return;
 		try {
 			const data = await runAnalysis({
-				format: tab.format, team1: tab.team1, team2: tab.team2,
+				format: tab.format, ...resolveTeamsFor(tab, nodeId),
 				seed: tab.rootSeed, replayNodes: replayNodesFor(tab, nodeId, false),
 			});
 			tab.currentNodeId = nodeId;
 			this.editError = '';
+			this.editProblems = null;
 			this.editPokemon = null;
+			// the teambuilder shows one node's roster, so navigating away closes it
+			this.teamForm.close();
 			const requestState = this.applyBattleResponse(tab, data);
 			tab.phase = requestState === 'teampreview' ? 'preview' : 'default';
 			this.pendingHydration = { tabId: tab.id, inputLog: [...(inputLog ?? node.inputLog)] };
@@ -327,7 +334,7 @@ class AnalysisApp extends preact.Component {
 		this.forceUpdate();
 		try {
 			const data = await runAnalysis({
-				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				format: tab.format, ...resolveTeamsFor(tab), seed: tab.rootSeed,
 				replayNodes: replayNodesFor(tab, tab.currentNodeId, false), inputLog: nodeInputLog,
 			});
 			currentNode.seed = data.actionSeed || null;
@@ -359,7 +366,7 @@ class AnalysisApp extends preact.Component {
 		try {
 			const previousLog = tab.log;
 			const data = await runAnalysis({
-				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				format: tab.format, ...resolveTeamsFor(tab, parent.id), seed: tab.rootSeed,
 				replayNodes: replayNodesFor(tab, parent.id, true),
 			});
 			const requestState = getRequestState(data.requestState, data.requests);
@@ -455,6 +462,103 @@ class AnalysisApp extends preact.Component {
 		this.forceUpdate();
 	};
 
+	/**
+	 * Opens the teambuilder for one side, replacing the battle and controls. Only at a decision point,
+	 * where the sim's queues are empty and the server can rebuild a roster safely.
+	 */
+	openTeambuilder = (tab: AnalysisTab, side: AnalysisSideID) => {
+		if (tab.phase === 'selection') this.cancelActionSelection(tab);
+		if ((tab.phase !== 'default' && tab.phase !== 'preview') || !tab.snapshot) return;
+		this.editPokemon = null;
+		this.editError = '';
+		this.editProblems = null;
+		this.teamForm.open(side, tab.snapshot, tab.format);
+		this.forceUpdate();
+	};
+
+	closeTeambuilder = () => {
+		this.teamForm.close();
+		this.editError = '';
+		this.editProblems = null;
+		this.forceUpdate();
+	};
+
+	saveTeamEdits = async (tab: AnalysisTab, edit: AnalysisTeamEdit) => {
+		const side = this.teamForm.side;
+		if (!side) return;
+		/*
+		 * A side always needs at least one Pokémon, at every node. Refusing here rather than at the server
+		 * keeps the two paths consistent: mid-battle the server would drop the edit and silently put the
+		 * roster back, which reads as "Save did nothing", and at Team Preview an empty packed team is
+		 * rejected as a missing team rather than as an empty one.
+		 */
+		if (!edit.sets.length) {
+			const problems = { team1: [] as string[], team2: [] as string[] };
+			problems[side === 'p1' ? 'team1' : 'team2'] = ['A team needs at least one Pokémon.'];
+			this.editError = '';
+			this.editProblems = problems;
+			this.forceUpdate();
+			return;
+		}
+		if (tab.phase === 'preview') await this.saveTeamPreviewTeam(tab, side, edit);
+		else await this.saveEdits(tab, { teams: { [side]: edit } });
+		// the save leaves an error set when the server refused it; keep the panel open so it can be fixed
+		if (!this.editError && !this.editProblems) this.closeTeambuilder();
+	};
+
+	/**
+	 * At Team Preview the team isn't an edit layer: it replaces the team the battle is built from, stored
+	 * on this node (see resolveTeamsFor). The battle then emits its own `clearpoke`/`poke` lines, so no
+	 * roster resync is needed and team slots are just the new team's order.
+	 *
+	 * Unlike mid-battle edits, this team *is* validated, because it's sent as `team1`/`team2`. An illegal
+	 * team is refused: the node is rolled back and the problems are shown in the panel, which stays open.
+	 */
+	saveTeamPreviewTeam = async (tab: AnalysisTab, side: AnalysisSideID, edit: AnalysisTeamEdit) => {
+		const original = tab.nodes[tab.currentNodeId];
+		if (!original || tab.loading) return;
+		const packed = Teams.pack(edit.sets as any);
+		const { teams: originalTeams, teamSummary: originalSummary } = original;
+		const node = this.editCurrentNode(tab, target => {
+			target.teams = { ...target.teams, [side]: packed };
+			target.teamSummary = { ...(target.teamSummary || { p1: [], p2: [] }), [side]: summarizeTeam(edit.sets) };
+			// the stored selection names Pokémon by position, which the new roster invalidates
+			target.inputLog = [];
+			target.teamSelectionSummary = undefined;
+			target.seed = null;
+		})!;
+		const copied = node !== original;
+		tab.loading = true;
+		this.editError = '';
+		this.editProblems = null;
+		this.forceUpdate();
+		try {
+			const data = await runAnalysis({
+				format: tab.format, ...resolveTeamsFor(tab, node.id), seed: tab.rootSeed,
+				replayNodes: replayNodesFor(tab, node.id, false),
+			});
+			const requestState = this.applyBattleResponse(tab, data);
+			tab.phase = requestState === 'teampreview' ? 'preview' : 'default';
+			// the rebuild in componentDidUpdate makes fresh choice builders from the new requests,
+			// which is what drops the selection the old roster's positions referred to
+			this.pendingHydration = { tabId: tab.id, inputLog: [] };
+			this.destroyBattle();
+		} catch (error: any) {
+			if (copied) {
+				delete tab.nodes[node.id];
+				tab.currentNodeId = original.id;
+			} else {
+				node.teams = originalTeams;
+				node.teamSummary = originalSummary;
+			}
+			if (error instanceof AnalysisTeamValidationError) this.editProblems = error.problems;
+			else this.editError = error.message || 'Unable to apply this team.';
+		} finally {
+			tab.loading = false;
+			this.forceUpdate();
+		}
+	};
+
 	/** The team index of the Pokémon in active slot `slot`, for tooltips and the edit form. */
 	activeTeamIndex(tab: AnalysisTab, side: AnalysisSideID, slot: number) {
 		const pokemonList = tab.requests?.[sideIndex(side)]?.side?.pokemon || [];
@@ -471,6 +575,8 @@ class AnalysisApp extends preact.Component {
 		const original = tab.nodes[tab.currentNodeId];
 		if (!original || tab.loading) return;
 		this.saveLeafDraft(tab);
+		// kept to compare against the rebuilt position, so choices the edit invalidated can be dropped
+		const beforeSnapshot = tab.snapshot;
 		const { edits: originalEdits, editSummary: originalSummary } = original;
 		const node = this.editCurrentNode(tab, target => {
 			target.edits = mergePokemonEdits(target.edits || {}, changes);
@@ -485,7 +591,7 @@ class AnalysisApp extends preact.Component {
 		this.forceUpdate();
 		try {
 			const data = await runAnalysis({
-				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				format: tab.format, ...resolveTeamsFor(tab, node.id), seed: tab.rootSeed,
 				replayNodes: replayNodesFor(tab, node.id, false),
 			});
 			// the node's own record is the last one, since it has edits
@@ -511,6 +617,14 @@ class AnalysisApp extends preact.Component {
 				for (let slot = 0; slot < slots.length; slot++) {
 					if (slots[slot] !== null && slots[slot] !== undefined) clearedSlots.push({ side, slot });
 				}
+			}
+			// a set or roster change can also leave a chosen move or switch target naming something else
+			for (const stale of getStaleChoiceSlots(beforeSnapshot, tab.snapshot, this.draft)) {
+				let already = false;
+				for (const entry of clearedSlots) {
+					if (entry.side === stale.side && entry.slot === stale.slot) already = true;
+				}
+				if (!already) clearedSlots.push(stale);
 			}
 			this.pendingHydration = {
 				tabId: tab.id, inputLog: [...tab.nodes[tab.currentNodeId].inputLog], clearedSlots,
@@ -596,7 +710,7 @@ class AnalysisApp extends preact.Component {
 			];
 			tab.simulationInputLog = inputLog;
 			const data = await runAnalysisBatch({
-				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				format: tab.format, ...resolveTeamsFor(tab), seed: tab.rootSeed,
 				replayNodes: replayNodesFor(tab, tab.currentNodeId, false), inputLog,
 				midTurnSwitchChoices: tab.midTurnSwitchOptions?.map(option => ({
 					side: option.side, pokemonIndex: option.pokemonIndex, reason: option.reason,
@@ -784,7 +898,7 @@ class AnalysisApp extends preact.Component {
 		this.forceUpdate();
 		try {
 			const data = await runAnalysis({
-				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				format: tab.format, ...resolveTeamsFor(tab, parent.id), seed: tab.rootSeed,
 				replayNodes: replayNodesFor(tab, parent.id, true),
 			});
 			this.clearSimulationState(tab);
@@ -1036,8 +1150,18 @@ class AnalysisApp extends preact.Component {
 
 	handleBattleClick = (event: Event) => {
 		const tab = this.tabs.find(entry => entry.id === this.activeTab);
-		if (!tab || (tab.phase !== 'default' && tab.phase !== 'selection')) return;
+		if (!tab || (tab.phase !== 'default' && tab.phase !== 'selection' && tab.phase !== 'preview')) return;
 		const target = event.target as HTMLElement;
+		// A side's trainer sprite opens that team's teambuilder. The scene tags the sidebars
+		// `trainer-near`/`trainer-far` (battle-animations.ts), so no upstream change is needed. Match the
+		// sprite itself, not `.trainer`: that wrapper also contains the team icons, which edit one Pokémon.
+		const trainer = target.closest<HTMLElement>('.trainersprite')?.closest<HTMLElement>('.trainer');
+		if (trainer) {
+			if (!tab.snapshot) return;
+			this.openTeambuilder(tab, trainer.className.includes('trainer-far') ? 'p2' : 'p1');
+			return;
+		}
+		if (tab.phase === 'preview') return;
 		const marker = target.closest<HTMLElement>('.has-tooltip[data-tooltip]');
 		const tooltip = marker?.dataset.tooltip;
 		if (!tooltip) return;
@@ -1309,7 +1433,7 @@ class AnalysisApp extends preact.Component {
 	async fetchCalcs(tab: AnalysisTab, calcs: AnalysisCalcState, signal: AbortSignal) {
 		try {
 			const data = await runAnalysisCalc({
-				format: tab.format, team1: tab.team1, team2: tab.team2, seed: tab.rootSeed,
+				format: tab.format, ...resolveTeamsFor(tab), seed: tab.rootSeed,
 				replayNodes: replayNodesFor(tab, tab.currentNodeId, false),
 				choices: this.draft.toInputLog(tab.requests),
 			}, signal);
@@ -1426,7 +1550,9 @@ class AnalysisApp extends preact.Component {
 		if (this.pendingHydration?.tabId === tab.id) {
 			const { inputLog, clearedSlots } = this.pendingHydration;
 			this.pendingHydration = null;
-			this.draft.hydrate(inputLog);
+			// skipped during hydration, not cleared after: a choice naming a move slot or switch target
+			// that no longer exists would abort the rest of its line (see AnalysisChoiceDraft.hydrate)
+			this.draft.hydrate(inputLog, tab.requests, clearedSlots);
 			for (const { side, slot } of clearedSlots || []) {
 				this.draft.moveChoicesBySlot[side][slot] = null;
 				this.draft.switchChoicesBySlot[side][slot] = null;
@@ -2051,7 +2177,13 @@ class AnalysisApp extends preact.Component {
 				onChangeSpeed={this.changeReplaySpeed}
 			/>;
 		}
-		if (tab.phase === 'selection') {
+		/*
+		 * `choiceSide` can be null here: rebuilding the battle after a save calls setChoiceBuilders, which
+		 * resets the draft, and a selection started just before that lands with the phase already set.
+		 * Rendering a move menu for no Pokémon leaves an empty controls box with no way out, so fall
+		 * through to the normal controls instead.
+		 */
+		if (tab.phase === 'selection' && this.draft.choiceSide) {
 			const { choiceSide } = this.draft;
 			const side = choiceSide?.side;
 			const slot = choiceSide?.index ?? 0;
@@ -2183,21 +2315,35 @@ class AnalysisApp extends preact.Component {
 		const roomStyle = sideBySide ?
 			`left:0;width:${mainWidth}px;right:auto;display:block;` :
 			`left:0;width:100%;right:auto;display:block;`;
+		/**
+		 * The teambuilder takes over the battle window and its controls, but not the battle log, so it gets
+		 * the same width as the teambuilder in the normal client. The battle stays mounted and merely
+		 * hidden: destroying it would blank the log beside it, and this way Cancel needs no rebuild.
+		 */
+		const teamSide = this.teamForm.side;
+		const teamStyle = `position:absolute;top:0;left:0;width:${battleWidth}px;bottom:0;`;
 		return [
 			<div class="ps-room ps-room-opaque" style={roomStyle}>
 				<div class="analysis-battle-stage" style="height:100%;">
 					<div
-						class="battle" ref={setBattleFrame}
+						class="battle" ref={setBattleFrame} hidden={!!teamSide}
 						style={`position:absolute;top:0;left:0;width:${battleWidth}px;height:${battleHeight}px`}
 					/>
-					{(requestState === 'move' || requestState === 'switch') &&
+					{!teamSide && (requestState === 'move' || requestState === 'switch') &&
 						<div class="battle-controls" style={controlsStyle} role="complementary" aria-label="Battle Controls">
 							<div class="pad">{this.renderBattleControls(tab, requestState)}</div>
 						</div>}
-					{(requestState === 'teampreview' || tab.requests?.[0]?.teamPreview) &&
+					{!teamSide && (requestState === 'teampreview' || tab.requests?.[0]?.teamPreview) &&
 						<div class="battle-controls" style={controlsStyle} role="complementary" aria-label="Battle Controls">
 							<div class="pad">{this.renderTeamPreviewChoices(tab)}</div>
 						</div>}
+					{teamSide && <div class="analysis-teambuilder-frame" style={teamStyle}>
+						<AnalysisTeambuilder
+							state={this.teamForm} side={teamSide} disabled={!!tab.loading} error={this.editError}
+							problems={this.editProblems} validated={tab.phase === 'preview'}
+							onSave={edit => void this.saveTeamEdits(tab, edit)} onCancel={this.closeTeambuilder}
+						/>
+					</div>}
 					<div
 						class="battle-log" aria-label="Battle Log" role="complementary" ref={setBattleLogFrame}
 						style={`position:absolute;top:0;left:${battleWidth}px;right:0;bottom:0;width:auto;`}

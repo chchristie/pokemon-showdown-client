@@ -28,6 +28,19 @@ export class AnalysisBattleRenderer extends Battle {
 				if (args[3] === 'sleep') pokemon.statusData.sleepTurns = turns;
 			}
 		}
+		// `|-message|analysistera|POKEMON||[silent]`: an edit took a Terastallization back. No protocol line
+		// clears it on a living Pokémon, and the client keeps it in three places, so clear all of them the
+		// way the client's own faint path does (battle.ts).
+		if (args[0] === '-message' && args[1] === 'analysistera') {
+			const pokemon = this.getPokemon(args[2]);
+			if (pokemon) {
+				pokemon.terastallized = '';
+				pokemon.details = pokemon.details.replace(/, tera:[a-z?]+/i, '');
+				pokemon.searchid = pokemon.searchid.replace(/, tera:[a-z?]+/i, '');
+				this.scene.updateSidebar(pokemon.side);
+				if (pokemon.side.active.includes(pokemon)) this.scene.resetStatbar(pokemon);
+			}
+		}
 	}
 
 	/** `weather:3`, `trickroom:2` (pseudo-weather or terrain id), `p1:reflect:5` */
