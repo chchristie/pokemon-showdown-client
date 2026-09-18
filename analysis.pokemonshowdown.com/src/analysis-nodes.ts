@@ -15,6 +15,22 @@ export function hasEdits(node: AnalysisNode) {
 }
 
 /**
+ * The packed teams to build the battle with for a position. A team edited at Team Preview is stored on
+ * that node (`node.teams`) and replaces the tab's starting team, rather than being applied as an edit
+ * layer: the battle is then constructed from it, so it emits its own correct `clearpoke`/`poke` lines and
+ * no roster resync is needed. Team slots are whatever the new team's order says.
+ */
+export function resolveTeamsFor(tab: AnalysisTab, nodeId = tab.currentNodeId) {
+	let team1 = tab.team1;
+	let team2 = tab.team2;
+	for (const node of getNodePath(tab, nodeId)) {
+		if (node.teams?.p1) team1 = node.teams.p1;
+		if (node.teams?.p2) team2 = node.teams.p2;
+	}
+	return { team1, team2 };
+}
+
+/**
  * Records that rebuild the position at `nodeId`: every node on the path contributes its
  * edits (applied at the start of its turn) and, once executed, its seed and choices.
  * The target node's own edits are always included; its choices only if `includeNode`.

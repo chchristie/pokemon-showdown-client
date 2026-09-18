@@ -59,6 +59,26 @@ export interface AnalysisBatchResponse {
 	stateGroups: AnalysisSimulationGroup[];
 }
 
+/**
+ * A team the server refused as illegal for the format. It carries the validator's problems so a form can
+ * list them, instead of showing the raw `{"team1":[...]}` the endpoints return.
+ *
+ * Only teams sent as `team1`/`team2` are validated, which means the Team Preview teambuilder (it edits
+ * the team the battle is built from) and the start form. Mid-battle edits are applied during replay and
+ * never go through the validator, on purpose: the tool is a sandbox.
+ */
+export class AnalysisTeamValidationError extends Error {
+	problems: { team1: string[], team2: string[] };
+	constructor(problems: { team1: string[], team2: string[] }) {
+		super('This team is not legal for this format.');
+		this.problems = problems;
+	}
+}
+
+function isTeamProblems(error: any) {
+	return !!error && typeof error === 'object' && (Array.isArray(error.team1) || Array.isArray(error.team2));
+}
+
 async function postAnalysis(path: string, request: AnalysisRequest, signal?: AbortSignal) {
 	const response = await fetch(`${ANALYSIS_API}${path}`, {
 		method: 'POST',
@@ -68,6 +88,9 @@ async function postAnalysis(path: string, request: AnalysisRequest, signal?: Abo
 	});
 	const data = await response.json();
 	if (!response.ok || data.error) {
+		if (isTeamProblems(data.error)) {
+			throw new AnalysisTeamValidationError({ team1: data.error.team1 || [], team2: data.error.team2 || [] });
+		}
 		throw new Error(typeof data.error === 'string' ? data.error : JSON.stringify(data.error));
 	}
 	return data;

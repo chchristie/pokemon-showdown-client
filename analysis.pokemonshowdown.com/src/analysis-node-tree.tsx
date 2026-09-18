@@ -34,7 +34,11 @@ function NodeSummary(props: {
 	const summary = node.editSummary;
 	const editSummary = node.turn > 0 && summary && (summary.field.length || summary.p1.length || summary.p2.length) ?
 		summary : null;
-	const showTooltip = showTurnEvents || !!editSummary;
+	// a team set at Team Preview isn't an edit layer, so it has its own summary (see resolveTeamsFor)
+	const teams = node.teamSummary;
+	const teamSummary = teams && (teams.p1.length || teams.p2.length) ?
+		{ field: [] as string[], p1: teams.p1, p2: teams.p2 } : null;
+	const showTooltip = showTurnEvents || !!editSummary || !!teamSummary;
 	return <li class={`analysis-node-entry${node.id === tab.currentNodeId ? ' analysis-node-current' : ''}`}>
 		<button
 			class="analysis-node-button" onClick={() => onSelect(node.id)}
@@ -48,6 +52,15 @@ function NodeSummary(props: {
 				<AnalysisChoiceSummaryView choices={node.choiceSummary || []} gameType={tab.gameType} />}
 		</button>
 		{showTooltip ? <div id={tooltipId} class="analysis-node-tooltip" role="tooltip">
+			{teamSummary ? <div class="analysis-node-edits">
+				<strong>Teams:</strong>
+				<div class="analysis-node-edits-teams">
+					{(['p1', 'p2'] as const).map((side, index) => <div>
+						<em>Side {index + 1}</em>
+						{teamSummary[side].map(line => <span>{line}</span>)}
+					</div>)}
+				</div>
+			</div> : null}
 			{editSummary ? <div class="analysis-node-edits">
 				<strong>Turn {node.turn} Edits:</strong>
 				{editSummary.field.map(line => <span>{line}</span>)}
