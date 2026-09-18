@@ -1,10 +1,7 @@
 /** @jsx preact.h */
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
 import type { AnalysisChoiceSummary, AnalysisSideID, AnalysisTeamSelectionSummary } from './analysis-model';
-
-function PSIcon(props: { pokemon: any }) {
-	return <span class="picon" style={(window as any).Dex.getPokemonIcon(props.pokemon)} />;
-}
+import { PSIcon } from './analysis-ps-shims';
 
 /**
  * For the current decision's summary only: `tooltips` enables damage calc tooltips on cells whose action

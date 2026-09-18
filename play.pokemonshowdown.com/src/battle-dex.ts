@@ -344,6 +344,10 @@ export const Dex = new class implements ModdedDex {
 		if (dex.gen === 9 && formatid.includes('digipen')) {
 			dex = Dex.mod('gen9digipen' as ID);
 		}
+		// fork: FNAF formats, so the teambuilder's dex matches what DexSearch already returns
+		if (dex.gen === 9 && formatid.includes('fnaf')) {
+			dex = Dex.mod('gen9fnaf' as ID);
+		}
 		return dex;
 	}
 

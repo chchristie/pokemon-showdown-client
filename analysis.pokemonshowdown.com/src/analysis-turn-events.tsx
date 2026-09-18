@@ -4,10 +4,7 @@ import type {
 	AnalysisGroupingMode, AnalysisSimulationGroup, AnalysisSimulationResult, AnalysisTurnEventDetail,
 	AnalysisTurnEventSummary,
 } from './analysis-model';
-
-function PSIcon(props: { pokemon: any }) {
-	return <span class="picon" style={(window as any).Dex.getPokemonIcon(props.pokemon)} />;
-}
+import { PSIcon } from './analysis-ps-shims';
 
 export function getTurnEventSummary(
 	simulation: Pick<AnalysisSimulationResult, 'log' | 'turnLog'>,
