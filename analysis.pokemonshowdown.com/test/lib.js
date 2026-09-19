@@ -146,7 +146,9 @@ function linesText(page) {
  * (e.g. the new Turn node in Lines), then call this. When the turn can end in a faint, the new node only
  * appears after replacements, so wait for a different signal (e.g. the controls changing) instead.
  */
-async function waitForDecision(page, readyText = 'Click on an active', timeout = 60000) {
+// 'Submit Choices' rather than the old instruction line: that text moved into the Controls hover tooltip,
+// so it is in a data-help attribute now and no longer part of the controls' textContent.
+async function waitForDecision(page, readyText = 'Submit Choices', timeout = 60000) {
 	const start = Date.now();
 	let replacements = 0;
 	while (Date.now() - start < timeout) {
