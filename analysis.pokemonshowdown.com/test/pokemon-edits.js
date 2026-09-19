@@ -3,6 +3,10 @@
  * Pokémon state edits (docs/analysis/plan.md, Phase 2b-1): the form that replaces the field form.
  * - opened from a team icon in the sidebar, or from the action menu's "Edit Pokémon" button
  * - HP (amount and percent), status with its counters, PP, boosts, Terastallization, Set Active
+ * - volatiles through the filterable multi-select, including options the sim would refuse
+ * - fainting a benched Pokémon with HP 0, reviving it, and the active Pokémon's 1 HP floor
+ * - the fainted team icon, which the renderer can only learn about through an analysisfaint line
+ * - the `|swap|` line Set Active emits when it moves a Pokémon that is already out
  * - Save rebuilds the position; the battle window, the request and the Lines tooltip follow
  * - Cancel goes back to the field form
  * Usage and prerequisites: see README.md in this folder.
@@ -51,6 +55,30 @@ function setBoost(page, stat, value) {
 		select.value = boost;
 		select.dispatchEvent(new Event('change', { bubbles: true }));
 	}, stat, value);
+}
+
+/** Types into the volatiles combobox and reads back the filtered list. */
+async function filterVolatiles(page, text) {
+	await page.evaluate(filter => {
+		const input = document.querySelector('[data-multiselect="Volatiles"]');
+		input.focus();
+		input.value = filter;
+		input.dispatchEvent(new Event('input', { bubbles: true }));
+	}, text);
+	await waitFor(page, () => !!document.querySelector('.analysis-multiselect-list'), 'the volatiles list');
+	return page.evaluate(() => [...document.querySelectorAll('.analysis-multiselect-option')].map(option => ({
+		key: option.dataset.multiselectOption,
+		blocked: option.classList.contains('analysis-multiselect-blocked'),
+	})));
+}
+
+function volatileChips(page) {
+	return page.evaluate(() => [...document.querySelectorAll('[data-multiselect-remove]')]
+		.map(button => button.dataset.multiselectRemove));
+}
+
+async function pickVolatile(page, key) {
+	await page.evaluate(option => document.querySelector(`[data-multiselect-option="${option}"]`).click(), key);
 }
 
 /**
@@ -274,14 +302,22 @@ async function main() {
 		step('unchecking Terastallized takes it back, and the renderer follows');
 
 		/*
-		 * The panel's own layout rules: one field per row with aligned inputs, narrow boost pickers showing
-		 * `--` at 0, and the toxic counter as a 1/16..15/16 dropdown beside Status.
+		 * The panel's own layout rules: fields align in columns — nature/ability/item/status form a 2x2 grid
+		 * and everything else is full width — narrow boost pickers showing `--` at 0, and the toxic counter
+		 * as a 1/16..15/16 dropdown beside Status.
 		 */
 		const layout = await page.evaluate(() => {
 			const boost = document.querySelector('[data-pokemon-boost]');
+			const left = element => Math.round(element.getBoundingClientRect().left);
+			const values = [...document.querySelectorAll('.analysis-info-line > .analysis-info-value')];
+			const volatiles = document.querySelector('.analysis-multiselect');
 			return {
-				lefts: [...document.querySelectorAll('.analysis-info-line > .analysis-info-value')]
-					.map(value => Math.round(value.getBoundingClientRect().left)),
+				gridLefts: values.filter(value => value.closest('.analysis-info-grid')).map(left),
+				fullLefts: values.filter(value => !value.closest('.analysis-info-grid')).map(left),
+				gridWidth: Math.round(
+					document.querySelector('.analysis-info-grid > .analysis-info-line')?.getBoundingClientRect().width || 0
+				),
+				volatilesWidth: Math.round(volatiles?.getBoundingClientRect().width || 0),
 				boostWidth: Math.round(boost?.getBoundingClientRect().width || 0),
 				boostZero: [...(boost?.options || [])].find(option => option.value === '0')?.textContent,
 				noGender: !document.querySelector('[data-pokemon-select="Gender"]'),
@@ -289,13 +325,21 @@ async function main() {
 				movePP: (document.querySelector('.analysis-move-pp')?.textContent || ''),
 			};
 		});
-		expect(new Set(layout.lefts).size === 1, `every field should start at the same x: ${JSON.stringify(layout.lefts)}`);
+		expect(new Set(layout.fullLefts).size === 1,
+			`full-width fields should share one x: ${JSON.stringify(layout.fullLefts)}`);
+		expect(new Set(layout.gridLefts).size === 2,
+			`the 2x2 block should have exactly two columns: ${JSON.stringify(layout.gridLefts)}`);
+		expect(Math.min(...layout.gridLefts) === layout.fullLefts[0],
+			`the grid's left column should line up with the full-width fields: ${JSON.stringify(layout)}`);
+		// the point of the 2x2 block is that the volatiles row below it gets the whole panel
+		expect(layout.volatilesWidth > layout.gridWidth,
+			`the volatiles row should be wider than a grid cell: ${layout.volatilesWidth} vs ${layout.gridWidth}`);
 		expect(layout.boostWidth > 0 && layout.boostWidth < 70, `boost pickers should be narrow: ${layout.boostWidth}px`);
 		expect(layout.boostZero === '--', `an unboosted stat should read --, got ${layout.boostZero}`);
 		expect(layout.noGender, 'the gender dropdown should be gone');
 		expect(layout.types.length === 2, `there should be primary and secondary type pickers: ${JSON.stringify(layout.types)}`);
 		expect(/\/ \d+ PP$/.test(layout.movePP.trim()), `a move row should end "/ N PP": ${layout.movePP}`);
-		step('the panel lays out one field per row, with narrow boost pickers');
+		step('the panel aligns its columns: a 2x2 selector block above a full-width volatiles row');
 
 		// the current types are battle state: Soak and friends change them mid-battle
 		const originalTypes = layout.types;
@@ -309,9 +353,135 @@ async function main() {
 			`the type edit should stick: ${JSON.stringify(typed)} (was ${JSON.stringify(originalTypes)})`);
 		step(`a type change saves: ${originalTypes.join('/')} -> ${typed.filter(Boolean).join('/')}`);
 
+		// --- fainting a benched Pokémon (user request, 2026-09-18) ---
+		await clickTeamIcon(page, 0, 2);
+		const benchName = await page.evaluate(() =>
+			document.querySelector('.analysis-field-heading strong').textContent);
+		await setField(page, 'HP', '0');
+		let state = await editorState(page);
+		expect(state.save, `HP 0 should be a valid edit on a benched Pokémon: ${JSON.stringify(state.values)}`);
+		// Set Active disappears while the form would leave it at 0, so the two can't disagree
+		const activeButtons = await page.evaluate(() =>
+			document.querySelectorAll('[data-field-effect^="active:"]').length);
+		expect(activeButtons === 0, 'Set Active should be hidden while the form has the Pokémon at 0 HP');
+		await clickEditorButton(page, 'Save');
+		await waitForDecision(page);
+		// the form still opens on a fainted Pokémon, so the edit can be taken back off; without that a stray
+		// 0 would trap the node, since the panel is the only way to remove it
+		state = await editorState(page);
+		expect(state.values.HP === '0', `it should come back as fainted, with the form open: ${JSON.stringify(state.values)}`);
+		// `Dex.getPokemonIcon` greys a fainted Pokémon, which the renderer only knows from the analysisfaint line
+		const faintedIcon = () => page.evaluate(() => {
+			const icon = document.querySelector('.battle .picon[data-tooltip="analysispokemon|0|2"]');
+			return /grayscale/.test(icon?.getAttribute('style') || '');
+		});
+		expect(await faintedIcon(), 'the team icon should be greyed out once the Pokémon has fainted');
+		step(`HP 0 faints a benched Pokémon and greys its team icon (${benchName.replace('Edit ', '')})`);
+
+		await setField(page, 'HP', '60');
+		await clickEditorButton(page, 'Save');
+		await waitForDecision(page);
+		state = await editorState(page);
+		expect(state.values.HP === '60', `reviving should stick: ${JSON.stringify(state.values)}`);
+		expect(!(await faintedIcon()), 'the team icon should come back when the Pokémon is revived');
+		step('setting HP above 0 revives it, and the team icon comes back');
+
+		// an active Pokémon can't be KO'd from the form
+		await clickTeamIcon(page, 0, 0);
+		await waitFor(page, () => !!document.querySelector('[data-pokemon-field="HP"]'), 'the active form');
+		const activeHP = (await editorState(page)).values.HP;
+		await setField(page, 'HP', '0');
+		state = await editorState(page);
+		expect(!state.save, 'HP 0 should be refused on the active Pokémon');
+		step("the active Pokémon's HP can't be set to 0");
+		// put it back: an invalid field anywhere blocks Save for the rest of the run
+		await setField(page, 'HP', activeHP);
+
+		// --- volatiles ---
+		const listed = await filterVolatiles(page, '');
+		expect(listed.length === 27, `singles should list 27 volatiles, not ${listed.length}`);
+		expect(!listed.find(option => option.key === 'dynamax'), 'Dynamax should be absent outside gen 8');
+		expect(listed.find(option => option.key === 'leechseed'),
+			'Leech Seed should be one option in singles, not one per slot');
+		step(`the volatiles list has ${listed.length} entries, gen-filtered`);
+
+		const filtered = await filterVolatiles(page, 'sub');
+		expect(filtered.length === 1 && filtered[0].key === 'substitute',
+			`typing "sub" should leave only Substitute: ${JSON.stringify(filtered)}`);
+		step('typing filters the list');
+
+		// Nightmare is offered but blocked until the Pokémon is asleep, since droppedEdits is never shown
+		const asleep = await filterVolatiles(page, 'night');
+		expect(asleep[0]?.blocked, 'Nightmare should be blocked while the Pokémon is awake');
+		await pickVolatile(page, 'nightmare');
+		expect((await volatileChips(page)).length === 0, 'a blocked option should not be addable');
+		step('Nightmare is listed but refuses to be added while the Pokémon is awake');
+
+		await setSelect(page, 'Status', 'slp');
+		const nowAllowed = await filterVolatiles(page, 'night');
+		expect(!nowAllowed[0]?.blocked, 'Nightmare should unblock once Status is Sleep, before any save');
+		step('setting Status to Sleep unblocks Nightmare live');
+
+		await setSelect(page, 'Status', '');
+		await filterVolatiles(page, 'sub');
+		await pickVolatile(page, 'substitute');
+		await filterVolatiles(page, 'aqua');
+		await pickVolatile(page, 'aquaring');
+		const chips = await volatileChips(page);
+		expect(chips.join(',') === 'aquaring,substitute', `both should be chips, in registry order: ${chips}`);
+		step('two volatiles become chips');
+
+		await clickEditorButton(page, 'Save');
+		await waitForDecision(page);
+		const saved = await volatileChips(page);
+		expect(saved.join(',') === 'aquaring,substitute', `the volatiles should survive the save: ${saved}`);
+		step('volatiles save and come back from the snapshot');
+
+		await page.evaluate(() => document.querySelector('[data-multiselect-remove="substitute"]').click());
+		await clickEditorButton(page, 'Save');
+		await waitForDecision(page);
+		const remaining = await volatileChips(page);
+		expect(remaining.join(',') === 'aquaring', `removing one should keep the other: ${remaining}`);
+		step('removing a chip saves as a removal, leaving the other in place');
+
 		await clickEditorButton(page, 'Cancel');
 		await waitFor(page, () => !!document.querySelector('[data-field-effect="weather:raindance"]'), 'back to the field form');
 		step('Cancel returns to the field form');
+
+		/*
+		 * The `|swap|` line Set Active emits when the wanted Pokémon is already out in another slot
+		 * (user report, 2026-09-18). Driven through a hand-written doubles log rather than the UI, because
+		 * what broke was purely how the renderer reads the line: it looks the ident up *positionally*, so
+		 * naming the slot the Pokémon moves **to** resolves to whoever is still sitting there and `swapTo`
+		 * quietly does nothing — leaving the old sprite on the field while the sim had already moved on.
+		 */
+		const swapped = await page.evaluate(() => {
+			const base = [
+				'|gametype|doubles', '|player|p1|Tester||', '|player|p2|Tester||',
+				'|teamsize|p1|2', '|teamsize|p2|2', '|start',
+				'|switch|p1a: Alpha|Magikarp, M|100/100', '|switch|p1b: Beta|Feebas, M|100/100',
+				'|switch|p2a: Gamma|Magikarp, F|100/100', '|switch|p2b: Delta|Feebas, F|100/100', '|turn|1',
+			];
+			const run = line => {
+				// detached frames, as the app passes; without them the Battle falls back to a scene stub
+				// this page doesn't load
+				const battle = new AnalysisBattleRenderer({
+					$frame: $('<div></div>'), $logFrame: $('<div></div>'),
+					log: base.concat([line]), isReplay: true, paused: true,
+				});
+				battle.seekTurn(Infinity, true);
+				const names = battle.sides[0].active.map(pokemon => pokemon && pokemon.name);
+				battle.destroy();
+				return names.join(',');
+			};
+			// the slot Beta moves from, which is what the server now emits, and the slot it lands in
+			return { fromSlot: run('|swap|p1b: Beta|0'), toSlot: run('|swap|p1a: Beta|0') };
+		});
+		expect(swapped.fromSlot === 'Beta,Alpha',
+			`naming the source slot should swap the two actives, got ${swapped.fromSlot}`);
+		expect(swapped.toSlot === 'Alpha,Beta',
+			`naming the destination slot is the bug this guards: it should be a no-op, got ${swapped.toSlot}`);
+		step('the |swap| line moves the renderer\'s actives when it names the slot moved from');
 
 		if (errors.length) throw new Error(`page errors:\n${errors.join('\n')}`);
 		console.log('PASS');

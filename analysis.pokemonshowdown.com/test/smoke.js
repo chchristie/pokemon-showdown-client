@@ -94,6 +94,52 @@ async function main() {
 		if (!/Turn 4/.test(await linesText(page))) throw new Error('Lines lost later nodes after navigating back');
 		step('navigated back to Turn 1 (outcome tooltip left of its button and inside the window, line intact)');
 
+		// --- the header's settings popup and Debug Mode ---
+		const debugPanels = () => page.evaluate(() => ({
+			headings: [...document.querySelectorAll('h2')].map(heading => heading.textContent),
+			logs: document.querySelectorAll('.analysis-debug-log').length,
+			popup: !!document.querySelector('.analysis-settings-popup'),
+		}));
+		let panels = await debugPanels();
+		if (panels.logs) throw new Error('developer panels should be hidden until Debug Mode is on');
+		if (panels.headings.includes('Dropped Edits')) throw new Error('Dropped Edits should be hidden by default');
+		if (!panels.headings.includes('Lines')) throw new Error(`the Lines heading should be there: ${JSON.stringify(panels.headings)}`);
+		step('developer panels are hidden by default');
+
+		await page.evaluate(() => document.querySelector('.analysis-settings-button').click());
+		panels = await debugPanels();
+		if (!panels.popup) throw new Error('the gear button should open the settings popup');
+		await page.evaluate(() => {
+			const box = document.querySelector('[data-settings="Debug Mode"]');
+			box.checked = true;
+			box.dispatchEvent(new Event('change', { bubbles: true }));
+		});
+		panels = await debugPanels();
+		if (!panels.headings.includes('Dropped Edits')) {
+			throw new Error(`Debug Mode should reveal the developer panels: ${JSON.stringify(panels.headings)}`);
+		}
+		if (panels.logs !== 2) throw new Error(`expected both debug logs, saw ${panels.logs}`);
+		step('Debug Mode reveals the node data and dropped edits');
+
+		// clicking away closes the popup, and the setting survives a reload
+		await page.evaluate(() => document.body.click());
+		if ((await debugPanels()).popup) throw new Error('clicking outside should close the settings popup');
+		const remembered = await page.evaluate(() => window.localStorage.getItem('analysis-debug-mode'));
+		if (remembered !== '1') throw new Error(`Debug Mode should be remembered, got ${remembered}`);
+		step('the popup closes on an outside click and the setting is remembered');
+
+		// put it back, so the stored setting doesn't leak into the next run
+		await page.evaluate(() => document.querySelector('.analysis-settings-button').click());
+		await waitFor(page, () => !!document.querySelector('[data-settings="Debug Mode"]'), 'the settings popup');
+		await page.evaluate(() => {
+			const box = document.querySelector('[data-settings="Debug Mode"]');
+			box.checked = false;
+			box.dispatchEvent(new Event('change', { bubbles: true }));
+			document.body.click();
+		});
+		if ((await debugPanels()).logs) throw new Error('turning Debug Mode off should hide the panels again');
+		step('turning Debug Mode off hides them again');
+
 		fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 		await page.screenshot({ path: path.join(OUTPUT_DIR, 'smoke-final.png') }).catch(() => {});
 		if (errors.length) throw new Error(`page errors:\n${errors.join('\n')}`);

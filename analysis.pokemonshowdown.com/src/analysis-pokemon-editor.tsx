@@ -18,10 +18,11 @@
  * the user changed; the server drops entries that change nothing.
  */
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
-import type {
-	AnalysisEdits, AnalysisPokemonSnapshot, AnalysisPokemonStateEdit, AnalysisSideID, AnalysisSnapshot,
-	AnalysisTeamEdit,
+import {
+	ANALYSIS_VOLATILES, type AnalysisEdits, type AnalysisPokemonSnapshot, type AnalysisPokemonStateEdit,
+	type AnalysisSideID, type AnalysisSnapshot, type AnalysisTeamEdit, type AnalysisVolatileContext,
 } from './analysis-model';
+import { AnalysisMultiSelect, type AnalysisMultiSelectOption } from './analysis-multiselect';
 
 declare const Dex: any;
 declare const BattleNatures: any;
@@ -61,6 +62,8 @@ interface PokemonForm {
 	sleepTurns: string;
 	pp: string[];
 	boosts: { atk: number, def: number, spa: number, spd: number, spe: number, accuracy: number, evasion: number };
+	/** option keys from `volatileOptions`, not bare ids: source-linked ones carry the foe slot */
+	volatiles: string[];
 	terastallized: boolean;
 	megaEvolved: boolean;
 	/** active slot to send this Pokémon out to, when the user picked one */
@@ -108,7 +111,18 @@ function statTable(source: any, fallback: number) {
 	return table;
 }
 
-export function getPokemonForm(pokemon: AnalysisPokemonSnapshot): PokemonForm {
+/**
+ * The option key for a volatile the Pokémon already has. Source-linked ones are keyed by the foe slot they
+ * came from, so the right "Leech Seed (Slot 2)" comes back selected.
+ */
+function volatileKey(id: string, sourceSlot: string | undefined, doubles: boolean) {
+	const info = ANALYSIS_VOLATILES.find(entry => entry.id === id);
+	if (!info?.perFoeSlot || !doubles) return id;
+	const slot = sourceSlot?.slice(-1);
+	return `${id}#${slot === 'b' ? 1 : 0}`;
+}
+
+export function getPokemonForm(pokemon: AnalysisPokemonSnapshot, doubles = false): PokemonForm {
 	const boosts = { atk: 0, def: 0, spa: 0, spd: 0, spe: 0, accuracy: 0, evasion: 0 };
 	for (const stat of [...BOOSTED_STATS, 'accuracy', 'evasion'] as (keyof PokemonForm['boosts'])[]) {
 		boosts[stat] = pokemon.boosts[stat] || 0;
@@ -121,6 +135,7 @@ export function getPokemonForm(pokemon: AnalysisPokemonSnapshot): PokemonForm {
 		sleepTurns: `${pokemon.sleepTurns ?? 3}`,
 		pp: pokemon.moves.map(move => `${move.pp}`),
 		boosts,
+		volatiles: pokemon.volatiles.map(effect => volatileKey(effect.id, effect.sourceSlot, doubles)),
 		terastallized: !!pokemon.terastallized,
 		megaEvolved: pokemon.megaEvolved,
 		activeSlot: null,
@@ -171,8 +186,9 @@ export function getPokemonFormChanges(
 	snapshot: AnalysisSnapshot
 ): AnalysisEdits | null {
 	const edit: AnalysisPokemonStateEdit = {};
+	// 0 faints a benched Pokémon; an active one is clamped to 1 so the form can't KO whoever is on the field
 	const hp = toNumber(form.hp);
-	if (isNaN(hp) || hp < 1 || hp > pokemon.maxhp) return null;
+	if (isNaN(hp) || hp < (pokemon.isActive ? 1 : 0) || hp > pokemon.maxhp) return null;
 	if (form.hp !== initial.hp) edit.hp = hp;
 	if (form.status !== initial.status) edit.status = form.status;
 	if (form.status === 'tox') {
@@ -208,6 +224,8 @@ export function getPokemonFormChanges(
 		if (form.boosts[stat] === initial.boosts[stat]) continue;
 		(edit.boosts ||= {})[stat] = form.boosts[stat];
 	}
+	const volatiles = volatileChanges(initial.volatiles, form.volatiles);
+	if (volatiles) edit.volatiles = volatiles;
 	if (form.types.join('/') !== initial.types.join('/')) {
 		if (!form.types.filter(Boolean).length) return null;
 		edit.types = form.types.filter(Boolean);
@@ -272,6 +290,10 @@ export function mergePokemonEdits(existing: AnalysisEdits, changes: AnalysisEdit
 			// boosts and PP are per stat and per move slot, so a later save must not drop earlier ones
 			if (previous?.boosts || edit.boosts) combined.boosts = { ...previous?.boosts, ...edit.boosts };
 			if (previous?.pp || edit.pp) combined.pp = mergePP(previous?.pp, edit.pp);
+			// volatiles are per effect, so a later save must not drop an earlier one
+			if (previous?.volatiles || edit.volatiles) {
+				combined.volatiles = { ...previous?.volatiles, ...edit.volatiles };
+			}
 			merged.pokemon[key] = combined;
 		}
 	}
@@ -305,6 +327,61 @@ function mergePP(
 /** The move's id, for keying a PP edit. */
 function moveIdOf(snapshot: AnalysisSnapshot, name: string) {
 	return dexFor(snapshot).moves.get(name)?.id || '';
+}
+
+function isDoubles(snapshot: AnalysisSnapshot) {
+	return snapshot.gameType !== 'singles';
+}
+
+/**
+ * The volatile list for this Pokémon, with source-linked effects expanded to one option per foe slot in
+ * doubles (in singles there is only one possible source, so they stay single options).
+ *
+ * Options the sim would refuse are listed but disabled with the reason, because `droppedEdits` is never
+ * shown: without this they would look like they worked. The check reads the *form*, so changing Status to
+ * Sleep enables Nightmare straight away, before anything is saved.
+ */
+function volatileOptions(snapshot: AnalysisSnapshot, form: PokemonForm): AnalysisMultiSelectOption[] {
+	const doubles = isDoubles(snapshot);
+	const selected = form.volatiles.map(key => key.split('#')[0]);
+	const context: AnalysisVolatileContext = {
+		status: form.status, ability: form.ability, item: form.item, types: form.types, selected, gen: snapshot.gen,
+	};
+	// mapped and concatenated rather than nested loops: the client build refuses a closure over a loop variable
+	const groups = ANALYSIS_VOLATILES.filter(info =>
+		!(info.minGen && snapshot.gen < info.minGen) && !(info.maxGen && snapshot.gen > info.maxGen)
+	).map((info): AnalysisMultiSelectOption[] => {
+		const blocker = info.exclusiveWith && selected.includes(info.exclusiveWith) ?
+			ANALYSIS_VOLATILES.find(entry => entry.id === info.exclusiveWith) : null;
+		const disabled = info.unavailable?.(context) ||
+			(blocker ? `it can't be combined with ${blocker.name}` : undefined);
+		if (!info.perFoeSlot || !doubles) return [{ key: info.id, label: info.name, search: info.id, disabled }];
+		return [0, 1].map(slot => ({
+			key: `${info.id}#${slot}`, label: `${info.name} (Slot ${slot + 1})`, search: info.id, disabled,
+		}));
+	});
+	return ([] as AnalysisMultiSelectOption[]).concat(...groups);
+}
+
+/**
+ * Only the volatiles that changed: added ones carry their source slot, removed ones are `null`. Sending the
+ * whole set would make every save look like a change and defeat "revert to the original value removes the
+ * edit". A source-linked volatile whose *slot* changed is sent as an add, which the server re-sources.
+ */
+function volatileChanges(initial: string[], form: string[]) {
+	const edit: NonNullable<AnalysisPokemonStateEdit['volatiles']> = {};
+	for (const key of form) {
+		if (initial.includes(key)) continue;
+		const [id, slot] = key.split('#');
+		edit[id] = slot === undefined ? {} : { source: Number(slot) };
+	}
+	for (const key of initial) {
+		if (form.includes(key)) continue;
+		const id = key.split('#')[0];
+		// a slot change is an add, not a removal: the add above already replaced it
+		if (!(id in edit)) edit[id] = null;
+	}
+	return Object.keys(edit).length ? edit : undefined;
 }
 
 function dexFor(snapshot: AnalysisSnapshot) {
@@ -475,10 +552,11 @@ export class AnalysisPokemonEditor extends preact.Component<{
 		}
 		state.snapshot = snapshot;
 		state.target = target;
-		state.initial = getPokemonForm(pokemon);
+		state.initial = getPokemonForm(pokemon, isDoubles(snapshot));
 		state.form = {
 			...state.initial,
 			boosts: { ...state.initial.boosts },
+			volatiles: [...state.initial.volatiles],
 			pp: [...state.initial.pp],
 			moves: [...state.initial.moves],
 			types: [...state.initial.types],
@@ -531,7 +609,9 @@ export class AnalysisPokemonEditor extends preact.Component<{
 		const { state, snapshot, target, disabled } = this.props;
 		const slots = snapshot.sides[target.side === 'p1' ? 0 : 1]?.active.length || 1;
 		// .map, not a loop: the client build rejects closures that capture loop variables
-		const slotList = pokemon.isActive || pokemon.fainted ? [] : Array.from({ length: slots }, (_, slot) => slot);
+		// a fainted Pokémon can be sent out when the same save revives it; the server applies the HP with it
+		const dead = toNumber(form.hp) <= 0;
+		const slotList = pokemon.isActive || dead ? [] : Array.from({ length: slots }, (_, slot) => slot);
 		if (!slotList.length) return null;
 		return <div class="analysis-poke-actions">{slotList.map(slot => {
 			const label = slots > 1 ? `Set Active: Slot ${slot + 1}` : 'Set Active';
@@ -556,9 +636,7 @@ export class AnalysisPokemonEditor extends preact.Component<{
 		// Champions has no Terastallization, and neither does a format whose rules clause removes it
 		const canTera = snapshot.rules?.terastallization && !(snapshot.formatId || '').includes('champions');
 		const teraApplied = !!pokemon.terastallized;
-		const teraTitle = !pokemon.isActive ? 'Only an active Pokémon can Terastallize' :
-			teraApplied ? "Uncheck to undo this turn's Terastallization; one from an earlier turn can't be taken back" :
-			'Terastallize this turn';
+		const teraTitle = teraApplied ? 'Uncheck to take this Terastallization back' : 'Terastallize this turn';
 		const megaSpecies = megaFormeFor(dex, form.item, form.species);
 		const formes = formeOptions(dex, pokemon, form.item);
 		const typeList: string[] = dex.types?.all?.().map((type: any) => type.name).filter(Boolean) || [];
@@ -594,7 +672,7 @@ export class AnalysisPokemonEditor extends preact.Component<{
 					<label class="analysis-info-checkbox" title={teraTitle}>
 						<input
 							type="checkbox" checked={form.terastallized} data-pokemon-field="Terastallized"
-							disabled={disabled || !pokemon.isActive}
+							disabled={disabled}
 							onChange={event => this.update({ terastallized: (event.target as HTMLInputElement).checked })}
 						/> Terastallized
 					</label>
@@ -675,49 +753,65 @@ export class AnalysisPokemonEditor extends preact.Component<{
 		>{BOOST_LEVELS.map(level => <option value={`${level}`}>{boostLabel(level)}</option>)}</select>;
 	}
 
-	/** Nature, ability, item and status, one per row. */
-	renderSelectors(pokemon: AnalysisPokemonSnapshot, form: PokemonForm, dex: any, items: string[]) {
+	/**
+	 * Nature, ability, item and status in a 2x2 block, then volatiles on a full-width row below it (active
+	 * Pokémon only), so the volatiles combobox gets the panel's whole width.
+	 */
+	renderSelectors(
+		pokemon: AnalysisPokemonSnapshot, form: PokemonForm, dex: any, items: string[], snapshot: AnalysisSnapshot
+	) {
 		const row = (label: string, control: any) => <div class="analysis-info-line">
 			<label>{label}</label>
 			<span class="analysis-info-value">{control}</span>
 		</div>;
 		return <div class="analysis-info-group">
-			{row('Nature', this.select(form.nature, natureOptions(), value => this.update({ nature: value }), {
-				label: 'Nature',
-			}))}
-			{row('Ability', this.select(form.ability, abilityOptions(dex, form.species), value => this.update({
-				ability: value,
-			}), { label: 'Ability' }))}
-			{row('Item', this.select(form.item, items, value => this.update({ item: value }), {
-				label: 'Item', allowEmpty: '(none)',
-			}))}
-			{row('Status', <>
-				<select
-					class="select" value={form.status} disabled={this.props.disabled}
-					aria-label="Status" data-pokemon-select="Status"
-					onChange={event => this.update({
-						status: (event.target as HTMLSelectElement).value as PokemonForm['status'],
-					})}
-				>{STATUSES.map(status => <option value={status.id}>{status.label}</option>)}</select>
-				{/* the toxic counter only ticks while the Pokémon is on the field */}
-				{form.status === 'tox' && pokemon.isActive && <select
-					class="select analysis-toxic-select" value={form.toxicStage} disabled={this.props.disabled}
-					aria-label="Toxic counter" data-pokemon-select="Toxic counter"
-					onChange={event => this.update({ toxicStage: (event.target as HTMLSelectElement).value })}
-				>{TOXIC_STAGES.map(stage => <option value={`${stage}`}>{stage}/16</option>)}</select>}
-				{form.status === 'slp' && <>
-					{this.numberInput(form.sleepTurns, text => this.update({ sleepTurns: text }), {
+			<div class="analysis-info-grid">
+				{row('Nature', this.select(form.nature, natureOptions(), value => this.update({ nature: value }), {
+					label: 'Nature',
+				}))}
+				{row('Ability', this.select(form.ability, abilityOptions(dex, form.species), value => this.update({
+					ability: value,
+				}), { label: 'Ability' }))}
+				{row('Item', this.select(form.item, items, value => this.update({ item: value }), {
+					label: 'Item', allowEmpty: '(none)',
+				}))}
+				{row('Status', <>
+					<select
+						class="select" value={form.status} disabled={this.props.disabled}
+						aria-label="Status" data-pokemon-select="Status"
+						onChange={event => this.update({
+							status: (event.target as HTMLSelectElement).value as PokemonForm['status'],
+						})}
+					>{STATUSES.map(status => <option value={status.id}>{status.label}</option>)}</select>
+					{/* the toxic counter only ticks while the Pokémon is on the field */}
+					{form.status === 'tox' && pokemon.isActive && <select
+						class="select analysis-toxic-select" value={form.toxicStage} disabled={this.props.disabled}
+						aria-label="Toxic counter" data-pokemon-select="Toxic counter"
+						onChange={event => this.update({ toxicStage: (event.target as HTMLSelectElement).value })}
+					>{TOXIC_STAGES.map(stage => <option value={`${stage}`}>{stage}/16</option>)}</select>}
+					{form.status === 'slp' && this.numberInput(form.sleepTurns, text => this.update({ sleepTurns: text }), {
 						max: 9, label: 'Sleep turns', valid: toNumber(form.sleepTurns) >= 1, className: 'analysis-stat-input',
 					})}
-					<span>turns</span>
-				</>}
-			</>)}
+				</>)}
+			</div>
+			{/* volatiles are only meaningful on the field, and the wide row gives the combobox the full panel */}
+			{pokemon.isActive && <div class="analysis-info-line">
+				<label>Volatiles</label>
+				<span class="analysis-info-value">
+					<AnalysisMultiSelect
+						value={form.volatiles} options={volatileOptions(snapshot, form)}
+						onChange={volatiles => this.update({ volatiles })}
+						idPrefix="analysis-volatiles" label="Volatiles" placeholder="Add a volatile…"
+						disabled={this.props.disabled}
+					/>
+				</span>
+			</div>}
 		</div>;
 	}
 
 	renderHP(pokemon: AnalysisPokemonSnapshot, form: PokemonForm) {
 		const hp = toNumber(form.hp);
-		const valid = !isNaN(hp) && hp >= 1 && hp <= pokemon.maxhp;
+		const valid = !isNaN(hp) && hp >= (pokemon.isActive ? 1 : 0) && hp <= pokemon.maxhp;
 		const percent = valid ? `${Math.round(1000 * hp / pokemon.maxhp) / 10}` : '';
 		return <div class="analysis-info-group">
 			<div class="analysis-info-line">
@@ -730,7 +824,8 @@ export class AnalysisPokemonEditor extends preact.Component<{
 					{this.numberInput(percent, text => {
 						const value = Number(text);
 						if (!text.trim() || isNaN(value)) return;
-						this.update({ hp: `${Math.min(pokemon.maxhp, Math.max(1, Math.round(value * pokemon.maxhp / 100)))}` });
+						const lowest = pokemon.isActive ? 1 : 0;
+						this.update({ hp: `${Math.min(pokemon.maxhp, Math.max(lowest, Math.round(value * pokemon.maxhp / 100)))}` });
 					}, { max: 100, label: 'HP percent', valid, className: 'analysis-number-input' })}
 					<span>%)</span>
 				</span>
@@ -738,9 +833,15 @@ export class AnalysisPokemonEditor extends preact.Component<{
 		</div>;
 	}
 
-	/** One row per move: which move it is, then `X / Y PP` with X editable. */
+	/**
+	 * One row per move: which move it is, then `X / Y PP` with X editable.
+	 *
+	 * Always at least four rows, so a Pokémon that has fewer than four moves can be given the rest. That
+	 * is the normal case on a Set Up Position tab, whose placeholders start with none at all; empty slots
+	 * are dropped from the saved set (see getPokemonFormChanges).
+	 */
 	renderMoves(pokemon: AnalysisPokemonSnapshot, form: PokemonForm, dex: any, moveList: string[]) {
-		const slots = Array.from({ length: Math.max(form.moves.length, 1) }, (_, slot) => slot);
+		const slots = Array.from({ length: Math.max(form.moves.length, 4) }, (_, slot) => slot);
 		return <div class="analysis-info-group">{slots.map(slot => {
 			const name = form.moves[slot] || '';
 			const changed = name !== (this.props.state.initial?.moves[slot] || '');
@@ -797,16 +898,17 @@ export class AnalysisPokemonEditor extends preact.Component<{
 				</div>
 			</div>
 			{this.props.error && <p class="message-error">{this.props.error}</p>}
-			{pokemon.fainted ?
-				<p class="analysis-field-note">{pokemon.name} has fainted. Reviving it isn't supported yet.</p> :
-				<>
-					{this.renderActions(pokemon, form)}
-					{this.renderIdentity(pokemon, form, dex)}
-					{this.renderHP(pokemon, form)}
-					{this.renderStats(pokemon, form, dex)}
-					{this.renderSelectors(pokemon, form, dex, items)}
-					{this.renderMoves(pokemon, form, dex, moves)}
-				</>}
+			{/*
+			  * A fainted Pokémon still gets the whole form, because HP 0 is now something the form itself can
+			  * set: without this, a stray 0 would be unremovable, since the panel is the only way to take the
+			  * edit off again. Setting HP above 0 revives it.
+			  */}
+			{this.renderActions(pokemon, form)}
+			{this.renderIdentity(pokemon, form, dex)}
+			{this.renderHP(pokemon, form)}
+			{this.renderStats(pokemon, form, dex)}
+			{this.renderSelectors(pokemon, form, dex, items, snapshot)}
+			{this.renderMoves(pokemon, form, dex, moves)}
 		</div>;
 	}
 }

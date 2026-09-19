@@ -90,6 +90,13 @@
 	.analysis-grouping-help { display: inline-block; position: relative; margin-left: 4px; color: #53616b; cursor: help; }
 	.analysis-grouping-help::after { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; display: none; box-sizing: border-box; width: 360px; max-width: calc(100vw - 48px); padding: 7px 9px; border: 1px solid #64757f; background: #26343d; color: #fff; font-size: 9pt; font-weight: normal; line-height: 1.35; white-space: normal; content: attr(data-help); box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
 	.analysis-grouping-help:hover::after { display: block; }
+	/* the same hover tooltip at the right of the controls' button row, with a line per instruction. It is
+	   labelled rather than a bare icon: what it holds is how to drive the battle, not a note about a field */
+	.analysis-controls-help { float: right; margin: 10px 2px 0 8px; border-bottom: 1px dotted #8ba4b3; font-size: 9pt; }
+	.analysis-controls-help::after { right: 0; left: auto; white-space: pre-line; }
+	/* sits beside Submit/Simulate, so it uses the panel's small-caps label and a number input sized to it */
+	.analysis-sim-count { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; vertical-align: middle; cursor: pointer; }
+	.analysis-sim-count .analysis-number-input { width: 5em; text-align: right; cursor: text; }
 	@media (max-width: 1050px) { .analysis-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
 	@media (max-width: 650px) { .analysis-options { grid-template-columns: 1fr; } }
 	#tooltipwrapper .tooltip-analysismove, #tooltipwrapper .tooltip-analysischoice { width: 440px; }
@@ -109,6 +116,8 @@
 	.analysis-field-joined > .analysis-field-item + .analysis-field-item { margin-left: -1px; }
 	.analysis-field-joined .analysis-field-button.btn-mid, .analysis-field-joined .analysis-field-button.btn-right { margin-left: 0; }
 	.analysis-field-side { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+	/* a quieter label than the "Edit Field" heading above: matches the Pokémon panel's group labels */
+	.analysis-field-side-title { color: #53616b; font-size: 8pt; font-weight: bold; text-transform: uppercase; letter-spacing: .04em; }
 	.analysis-field-side-p1 .analysis-field-row { justify-content: flex-start; }
 	.analysis-field-side-p2 { align-items: flex-end; }
 	.analysis-field-side-p2 .analysis-field-row { justify-content: flex-end; }
@@ -140,15 +149,53 @@
 	 * boxed "info groups" stacked down the panel. calc.pokemonshowdown.com's own class names aren't in this
 	 * client's CSS, so these are our own approximations of that look.
 	 */
-	.analysis-info-group { margin: 6px 0; padding: 6px 8px; border: 1px solid #c4cdd2; border-radius: 4px; background: #fbfcfd; }
+	/* the Lines panel's own colour (client2.css `.ps-room-light`), as a solid value: these sit on the opaque
+	   room, so a group still reads as raised against it without being near-white */
+	.analysis-info-group { margin: 6px 0; padding: 6px 8px; border: 1px solid #c4cdd2; border-radius: 4px; background: #f2f7fa; }
+	/* These come after .analysis-info-group on purpose: same specificity, so order decides the margin. */
+	.analysis-action-summary { margin: 10px 0; }
+	.analysis-action-summary .analysis-choice-summary-wrap { margin: 5px 0 0; }
+	/*
+	 * Team Preview: each side's heading, icons and count boxed together, the roster on one row. Two
+	 * client2.css rules get in the way, both of which the play client opts out of with `wide-controls`
+	 * (not used here, since that would widen the move menu too):
+	 * - `.movecontrols, .switchcontrols` caps these at 330px, which is what made the group a half-width box
+	 *   in a 640px panel;
+	 * - `.switchmenu button` floats at a fixed 102px and the menu hangs 10px past its right edge, which
+	 *   wrapped the roster onto a second line and pushed it through the group's border. Flex lets the row
+	 *   share whatever width there is, shrinking below 102px to keep six on one line, while `max-width`
+	 *   keeps that 102px as the ceiling so a short team looks like every other switch menu rather than
+	 *   stretching two buttons across the panel.
+	 */
+	.analysis-team-preview-side { max-width: none; margin: 10px 0; }
+	.analysis-team-preview-side .switchmenu { display: flex; flex-wrap: nowrap; gap: 4px; margin-right: 0; padding-left: 0; }
+	.analysis-team-preview-side .switchmenu button { flex: 1 1 0; float: none; width: auto; max-width: 102px; min-width: 0; margin-right: 0; }
+	.analysis-team-preview-side h3 { margin: 0; }
+	.analysis-team-preview-count { margin: 6px 0 0; padding: 0; color: #53616b; font: 9pt monospace; }
 	.analysis-info-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 	.analysis-info-row + .analysis-info-row { margin-top: 5px; }
 	.analysis-info-field { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 	.analysis-info-field > label { color: #53616b; font-size: 8pt; }
-	/* one field per row, with the labels sharing a column so every input's left edge lines up */
-	.analysis-info-line { display: grid; grid-template-columns: 5.5em minmax(0, 1fr); align-items: center; gap: 4px 6px; }
+	/*
+	 * One field per row, with the labels sharing a column so every input's left edge lines up. The column is
+	 * kept tight because a 2x2 cell has to fit a dropdown plus a second control beside it (Status and the
+	 * badly-poisoned counter, or the sleep-turns input).
+	 */
+	.analysis-info-line { display: grid; grid-template-columns: 4.2em minmax(0, 1fr); align-items: center; gap: 4px 2px; }
 	.analysis-info-line + .analysis-info-line { margin-top: 4px; }
 	.analysis-info-line > label { color: #53616b; font-size: 8pt; }
+	/*
+	 * Nature/ability/item/status as a 2x2 block rather than four rows, which leaves the volatiles row below it
+	 * the panel's full width for its combobox. `align-items: start` keeps the top row aligned when the status
+	 * cell grows a second control (the badly-poisoned counter, or sleep turns).
+	 */
+	/*
+	 * The columns are uneven on purpose: nature and item are lone dropdowns, while status shares its cell
+	 * with the badly-poisoned counter or the sleep-turns input, so the right column gets the extra room.
+	 */
+	.analysis-info-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); align-items: start; gap: 5px 12px; }
+	.analysis-info-grid > .analysis-info-line + .analysis-info-line { margin-top: 0; }
+	.analysis-info-grid + .analysis-info-line { margin-top: 6px; padding-top: 6px; border-top: 1px solid #e3e8eb; }
 	.analysis-info-value { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
 	.analysis-info-value > select { min-width: 0; max-width: 13em; }
 	.analysis-info-checkbox { display: flex; align-items: center; gap: 3px; color: #40515c; font-size: 8pt; white-space: nowrap; }
@@ -168,6 +215,37 @@
 	.analysis-move-row select { min-width: 0; }
 	.analysis-move-row .analysis-stat-input { width: 3.6em; }
 	.analysis-poke-actions { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+	/* settings popup (analysis-settings.tsx); `.userbar` and `.ps-popup` come from the old client's CSS */
+	.analysis-settings-popup { position: absolute; top: 30px; right: 0; width: 15em; }
+	.analysis-settings-note { color: #53616b; font-size: 8pt; }
+	/*
+	 * Multi-select combobox (analysis-multiselect.tsx), used for volatiles. The box wears `.textbox` for the
+	 * panel's standard input chrome, but `:focus` can't fire on a div, so the focus ring is reproduced with
+	 * `:focus-within`. The popup is absolutely positioned so filtering doesn't resize the panel underneath it.
+	 */
+	.analysis-multiselect { position: relative; flex: 1 1 auto; min-width: 0; }
+	.analysis-multiselect-box { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; box-sizing: border-box; width: 100%; min-height: 22px; padding: 2px 3px; cursor: text; }
+	.analysis-multiselect-box:focus-within { outline: 0 none; border-color: #004488; box-shadow: inset 0 1px 2px #d2d2d2, 0 0 6px #2266aa; background: #fff; }
+	.analysis-multiselect-disabled, .analysis-multiselect-disabled:hover { background: #ccc; cursor: default; }
+	.analysis-multiselect-chip { display: inline-flex; align-items: center; gap: 1px; padding: 0 1px 0 6px; border: 1px solid #b6c2cb; border-radius: 9px; background: #e9eff4; color: #24323c; font-size: 8pt; line-height: 15px; white-space: nowrap; }
+	.analysis-multiselect-remove { padding: 0 4px; border: 0; background: none; color: #53616b; font-size: 9pt; line-height: 1; cursor: pointer; }
+	.analysis-multiselect-remove:hover:not(:disabled) { color: #c0392b; }
+	.analysis-multiselect-remove:disabled { color: #aaa; cursor: default; }
+	.analysis-multiselect-input { flex: 1 1 7em; min-width: 7em; padding: 0; border: 0; outline: 0 none; background: none; font-family: inherit; font-size: 8pt; }
+	.analysis-multiselect-list { position: absolute; z-index: 10; right: 0; left: 0; max-height: 11.5em; margin: 1px 0 0; padding: 0; overflow-y: auto; border: 1px solid #aaa; border-radius: 3px; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,.25); list-style: none; }
+	.analysis-multiselect-option { padding: 2px 6px; font-size: 8pt; cursor: pointer; }
+	/* the tick is always in the box, so a selected option doesn't shift its neighbours' text */
+	.analysis-multiselect-option::before { content: '\2713'; display: inline-block; width: 1.2em; color: #53616b; visibility: hidden; }
+	.analysis-multiselect-option[aria-selected="true"] { color: #53616b; }
+	.analysis-multiselect-option[aria-selected="true"]::before { visibility: visible; }
+	.analysis-multiselect-option:hover { background: #eef3f7; }
+	.analysis-multiselect-option.active { background: #d7e5f0; }
+	/* options the sim would refuse: listed so they can be found, with the reason beside them */
+	.analysis-multiselect-blocked { color: #999; cursor: default; }
+	.analysis-multiselect-blocked:hover { background: none; }
+	.analysis-multiselect-reason { color: #a09080; font-style: italic; }
+	.analysis-multiselect-reason::before { content: ' — '; }
+	.analysis-multiselect-empty { padding: 2px 6px 2px 1.7em; color: #53616b; font-size: 8pt; font-style: italic; }
 	.analysis-selection-edit { margin-left: auto; }
 	.analysis-field-invalid { border-color: #c0392b; background: #fdecea; }
 	.analysis-field-note { color: #53616b; font-style: italic; }
@@ -252,11 +330,13 @@
 <script src="js/analysis-tooltips.js?"></script>
 <script src="js/analysis-battle.js?"></script>
 <script src="js/analysis-team-utils.js?"></script>
+<script src="js/analysis-settings.js?"></script>
 <script src="js/analysis-header.js?"></script>
 <script src="js/analysis-choice-summary.js?"></script>
 <script src="js/analysis-turn-events.js?"></script>
 <script src="js/analysis-node-tree.js?"></script>
 <script src="js/analysis-field-editor.js?"></script>
+<script src="js/analysis-multiselect.js?"></script>
 <script src="js/analysis-pokemon-editor.js?"></script>
 <script src="js/analysis-teambuilder.js?"></script>
 <script src="js/analysis-replay-controls.js?"></script>

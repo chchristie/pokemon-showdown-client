@@ -28,6 +28,31 @@ export class AnalysisBattleRenderer extends Battle {
 				if (args[3] === 'sleep') pokemon.statusData.sleepTurns = turns;
 			}
 		}
+		/*
+		 * `|-message|analysisfaint|SIDE|TEAMSLOT|1|[silent]`: an edit fainted or revived a **benched** Pokémon,
+		 * so its team icon greys out or comes back (`Dex.getPokemonIcon` reads `fainted`).
+		 *
+		 * The protocol can say neither. `|faint|` assumes an active Pokémon and throws on one the renderer has
+		 * never seen, since team-preview entries have no ident until they switch in, and there is no revive
+		 * line at all. That is also why this names the Pokémon by team slot — the order the renderer keeps its
+		 * own `side.pokemon` in — rather than by an ident `getPokemon` may fail to resolve.
+		 */
+		if (args[0] === '-message' && args[1] === 'analysisfaint') {
+			const side = this.sides[args[2] === 'p1' ? 0 : 1];
+			const pokemon = side?.pokemon[Number(args[3])];
+			if (pokemon) {
+				pokemon.fainted = args[4] === '1';
+				if (pokemon.fainted) {
+					pokemon.hp = 0;
+					pokemon.status = '';
+				} else if (!pokemon.hp) {
+					// the `-sethp` that follows corrects this whenever it can resolve the Pokémon; when it
+					// can't, the renderer never knew this Pokémon's HP in the first place
+					pokemon.hp = pokemon.maxhp;
+				}
+				this.scene.updateSidebar(side);
+			}
+		}
 		// `|-message|analysistera|POKEMON||[silent]`: an edit took a Terastallization back. No protocol line
 		// clears it on a living Pokémon, and the client keeps it in three places, so clear all of them the
 		// way the client's own faint path does (battle.ts).

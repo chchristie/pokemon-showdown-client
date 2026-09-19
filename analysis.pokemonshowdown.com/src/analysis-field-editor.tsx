@@ -325,14 +325,17 @@ export class AnalysisFieldEditor extends preact.Component<{
 				</div>
 			</div>
 			{this.props.error && <p class="message-error">{this.props.error}</p>}
-			<div class="analysis-field-rows">
+			{/* boxed like the Pokémon panel's info groups: the field, then one per side */}
+			<div class="analysis-info-group analysis-field-rows">
 				{groupOptions('weather').length > 0 && this.renderExclusiveGroup('weather', groupOptions('weather'))}
 				{groupOptions('terrain').length > 0 && this.renderExclusiveGroup('terrain', groupOptions('terrain'))}
 				{this.renderToggleRows(visible.filter(option => option.kind === 'pseudoWeather'))}
 			</div>
 			<div class="analysis-field-sides">
-				{SIDES.map((side, sideNumber) => <div class={`analysis-field-side analysis-field-side-${side}`}>
-					<strong>Side {sideNumber + 1}</strong>
+				{SIDES.map((side, sideNumber) => <div
+					class={`analysis-info-group analysis-field-side analysis-field-side-${side}`}
+				>
+					<span class="analysis-field-side-title">Side {sideNumber + 1}</span>
 					{this.renderToggleRows(sideOptions, side)}
 				</div>)}
 			</div>

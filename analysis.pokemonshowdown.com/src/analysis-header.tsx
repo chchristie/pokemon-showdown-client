@@ -1,6 +1,7 @@
 /** @jsx preact.h */
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
 import type { AnalysisTab } from './analysis-model';
+import { AnalysisSettings } from './analysis-settings';
 
 interface AnalysisHeaderProps {
 	tabs: AnalysisTab[];
@@ -11,10 +12,26 @@ interface AnalysisHeaderProps {
 	onDragStart: (event: DragEvent, tabId: string) => void;
 	onDragEnter: (event: DragEvent, tabId: string) => void;
 	onDragEnd: () => void;
+	settingsOpen: boolean;
+	debugMode: boolean;
+	onToggleSettings: () => void;
+	onChangeDebugMode: (on: boolean) => void;
+	onCloseSettings: () => void;
 }
 
 export function AnalysisHeader(props: AnalysisHeaderProps) {
 	return <div id="header" class="header" role="navigation">
+		{/* the gear sits where play.pokemonshowdown.com puts it, in the old client's top-right userbar */}
+		<div class="userbar">
+			<button
+				class="icon button analysis-settings-button" aria-label="Settings" aria-haspopup="dialog"
+				aria-expanded={props.settingsOpen} onClick={props.onToggleSettings}
+			><i class="fa fa-cog" aria-hidden></i></button>
+			{props.settingsOpen && <AnalysisSettings
+				debugMode={props.debugMode} onChangeDebugMode={props.onChangeDebugMode}
+				onClose={props.onCloseSettings}
+			/>}
+		</div>
 		<div class="maintabbarbottom"></div>
 		<div class="tabbar maintabbar"><div class="inner">
 			<ul class="maintabbar-left" role="tablist">
