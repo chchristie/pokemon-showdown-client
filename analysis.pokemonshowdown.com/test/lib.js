@@ -190,6 +190,28 @@ async function startAnalysisFromTeams(page, format) {
 }
 
 /**
+ * Home page -> Set Up Position -> (optional format) -> Set Up Position. Needs no teams: the server builds
+ * placeholder ones, and the tab opens straight at Turn 1 (docs/analysis/plan.md, Phase 4).
+ */
+async function startSetUpPosition(page, format) {
+	await clickButton(page, 'Set Up Position');
+	if (format) {
+		await page.evaluate(formatId => {
+			const select = document.querySelector('select.formatselect');
+			select.value = formatId;
+			select.dispatchEvent(new Event('change', { bubbles: true }));
+		}, format);
+	}
+	// the home button and the submit button share their text, so pick the one inside the form
+	await page.evaluate(() => {
+		const button = [...document.querySelectorAll('.analysis-form button')]
+			.find(candidate => candidate.type === 'submit' && !candidate.disabled);
+		if (!button) throw new Error('no enabled submit button on the start form');
+		button.click();
+	});
+}
+
+/**
  * Team preview: picks leads by team index (0-based) and sends them out. Pass a number for one lead
  * (singles) or an array for several (e.g. doubles picks two).
  */
@@ -286,6 +308,7 @@ async function dumpFailure(page, name = 'failure') {
 
 module.exports = {
 	config, SMOKE_TEAM, OUTPUT_DIR, sleep, step, checkServers, openAnalysisPage, clickButton, waitFor,
-	battleControlsText, linesText, waitForDecision, startAnalysisFromTeams, selectLeads, openActionMenu, chooseMove,
+	battleControlsText, linesText, waitForDecision, startAnalysisFromTeams, startSetUpPosition,
+	selectLeads, openActionMenu, chooseMove,
 	hoverTooltip, calcLineCount, dumpFailure,
 };

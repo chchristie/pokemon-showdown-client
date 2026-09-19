@@ -13,6 +13,24 @@ export interface AnalysisRequest {
 	/** choices to execute from the reconstructed position; the server picks a fresh seed */
 	inputLog?: string[];
 	autoTurn?: boolean;
+	/**
+	 * Skip team validation. Set by a Set Up Position tab, whose placeholder team is deliberately illegal
+	 * for the format; see AnalysisTeamValidationError below for why that is consistent.
+	 */
+	sandbox?: boolean;
+}
+
+/** One side's placeholder team for a Set Up Position tab (server tools/analysis-setup.ts). */
+export interface AnalysisSetupResponse {
+	format: string;
+	gameType: string;
+	/** placeholders per side: one per active slot */
+	count: number;
+	/** one species per active slot, all different so the renderer can tell them apart */
+	species: string[];
+	level: number;
+	team1: string;
+	team2: string;
 }
 
 export interface AnalysisBatchRequest extends AnalysisRequest {
@@ -65,7 +83,8 @@ export interface AnalysisBatchResponse {
  *
  * Only teams sent as `team1`/`team2` are validated, which means the Team Preview teambuilder (it edits
  * the team the battle is built from) and the start form. Mid-battle edits are applied during replay and
- * never go through the validator, on purpose: the tool is a sandbox.
+ * never go through the validator, on purpose: the tool is a sandbox. A Set Up Position tab extends that
+ * to its own starting team, through `sandbox` on the request.
  */
 export class AnalysisTeamValidationError extends Error {
 	problems: { team1: string[], team2: string[] };
@@ -98,6 +117,12 @@ async function postAnalysis(path: string, request: AnalysisRequest, signal?: Abo
 
 export async function runAnalysis(request: AnalysisRequest): Promise<AnalysisStartResponse> {
 	return postAnalysis('/analysis/start', request);
+}
+
+/** Builds the placeholder teams a Set Up Position tab starts from. The server owns this: picking a species
+ * the format allows needs its rule table, which the client doesn't have. */
+export async function runAnalysisSetup(format: string): Promise<AnalysisSetupResponse> {
+	return postAnalysis('/analysis/setup', { format } as AnalysisRequest);
 }
 
 export async function runAnalysisBatch(

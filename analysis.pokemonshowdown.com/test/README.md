@@ -28,6 +28,8 @@ npm run calc             # damage calc tooltips (calc.js)
 npm run turn-events      # turn outcome summaries from hand-written logs (turn-events.js)
 npm run edits            # field state edit form (edits.js)
 npm run pokemon-edits    # Pokémon state edit form (pokemon-edits.js)
+npm run teambuilder      # embedded teambuilder (teambuilder.js)
+npm run setup            # Set Up Position (setup.js)
 ```
 
 Server-side edit logic (what gets written to the sim and which protocol lines are emitted) has its own mocha test in the server repo: `npx mocha --no-config --exit test/main.js test/tools/analysis/edits.js`.
@@ -118,6 +120,24 @@ Regression checks from the first review: the Pokémon tooltip shows edited PP, a
 
 Selectors: `data-pokemon-field` (HP, `HP percent`, `Hydro Pump PP`, `Toxic stage`, `Sleep turns`), `data-pokemon-boost` (`atk`…`evasion`), and `data-field-effect` for the buttons (`status:brn`, `active:0`, `terastallized`).
 
+## What `setup.js` covers
+
+Set Up Position (docs/analysis/plan.md, Phase 4). It is the one suite that starts with **no teams in
+`localStorage`**, because the whole point is that it needs none:
+
+1. **Starting:** Home → Set Up Position → a format → the button. The tab opens at Turn 1, and Lines shows no
+   Team Preview node (it exists, hidden, to hold the seed and the auto-chosen `team` input).
+2. **Placeholders:** one on each side of the field in singles, two each in doubles, all active.
+3. **The sprite opens the teambuilder**, with that Pokémon's species field genuinely focused
+   (`document.activeElement` is `[data-focus="set-0-pokemon"]`) and the focused form having a real height.
+4. **The sidebar icon still opens the Pokémon panel**, which shows **four move rows** for a Pokémon with
+   none. Giving it moves and saving is enough to make its sprite open the action menu instead, with the
+   saved moves choosable.
+5. **The other side's untouched placeholder** still opens its own (Team 2's) teambuilder.
+
+It picks its moves out of the dropdown's own options rather than naming them: the legal moves depend on the
+placeholder species, and setting a `<select>` to a value it doesn't offer silently leaves it empty.
+
 ## Writing or extending tests
 
 `lib.js` has the reusable pieces. Use them from new scenario files (e.g. `calc.js`) or new steps in `smoke.js`:
@@ -125,6 +145,7 @@ Selectors: `data-pokemon-field` (HP, `HP percent`, `Hydro Pump PP`, `Toxic stage
 - `checkServers()`: fails fast with instructions if the client or API isn't running.
 - `openAnalysisPage(teams)`: launches Chrome with teams in `localStorage`, then returns `{ browser, page, errors }`. Each team is `{ format, name, packed }`. Add teams for every format the scenario starts.
 - `startAnalysisFromTeams(page, format?)`: home page → New Analysis From Teams → pick the format → Start.
+- `startSetUpPosition(page, format?)`: home page → Set Up Position → pick the format → Set Up Position. Needs no teams; the tab opens straight at Turn 1 on placeholder Pokémon.
 - **Clicking and waiting:**
   - `clickButton(page, text)`: clicks by visible button text; retries until it's enabled.
   - `waitFor(page, fn, label)`: polls a function in the page.

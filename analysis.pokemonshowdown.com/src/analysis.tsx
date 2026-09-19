@@ -3,16 +3,19 @@
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
 import { BattleChoiceBuilder } from '../../play.pokemonshowdown.com/src/battle-choices';
 import type { ID } from '../../play.pokemonshowdown.com/src/battle-dex';
+import { BattleSound } from '../../play.pokemonshowdown.com/src/battle-sound';
 import { Teams } from '../../play.pokemonshowdown.com/src/battle-teams';
 import {
-	FORMATS, LAYOUT, getRequestState,
+	FORMATS, LAYOUT, getRenderedLog, getReplayStartTurn, getRequestState, isPlaceholderPokemon,
+	stripAnalysisNoise,
 	type AnalysisBattle, type AnalysisCalcMode, type AnalysisCalcState, type AnalysisChoiceSummary,
 	type AnalysisEdits, type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisNode,
 	type AnalysisPhase, type AnalysisSideID, type AnalysisSimulationGroup, type AnalysisSimulationRoll, type AnalysisTab,
 	type AnalysisTeamEdit, type LocalTeam, type PlaybackStage, type StartMode,
 } from './analysis-model';
 import {
-	AnalysisTeamValidationError, runAnalysis, runAnalysisBatch, runAnalysisCalc, type AnalysisStartResponse,
+	AnalysisTeamValidationError, runAnalysis, runAnalysisBatch, runAnalysisCalc, runAnalysisSetup,
+	type AnalysisStartResponse,
 } from './analysis-api';
 import { AnalysisBattleRenderer } from './analysis-battle';
 import { AnalysisChoiceDraft, getStaleChoiceSlots, sideIndex } from './analysis-choices';
@@ -22,6 +25,7 @@ import {
 	AnalysisPokemonEditor, AnalysisPokemonFormState, mergePokemonEdits, type AnalysisPokemonTarget,
 } from './analysis-pokemon-editor';
 import { AnalysisHeader } from './analysis-header';
+import { loadDebugMode, saveDebugMode } from './analysis-settings';
 import { hasChildNodes, replayNodesFor, resolveTeamsFor } from './analysis-nodes';
 import { AnalysisNodeTree } from './analysis-node-tree';
 import { PSIcon } from './analysis-ps-shims';
@@ -30,6 +34,17 @@ import { AnalysisReplayControls } from './analysis-replay-controls';
 import { packTeamSyntax } from './analysis-team-utils';
 import { AnalysisTooltips } from './analysis-tooltips';
 import { AnalysisTurnEventSummaryView, getLogTurnEventSummary, getTurnEventSummary } from './analysis-turn-events';
+
+/**
+ * What you can click in the battle window, as the hover tooltip on the controls' info icon. It replaced a
+ * line of text under the buttons, so the panel isn't carrying a permanent instruction. The tooltip renders
+ * it with `white-space: pre-line`, so these are three lines.
+ */
+const DEFAULT_CONTROLS_HELP = [
+	'Click on an active Pokémon to choose its actions.',
+	'Click on a Pokémon icon to edit that Pokémon.',
+	'Click on a trainer to open the teambuilder.',
+].join('\n');
 
 function pokemonLabel(pokemon: any) {
 	return (pokemon?.details || pokemon?.name || '').split(',')[0];
@@ -64,6 +79,9 @@ class AnalysisApp extends preact.Component {
 	battleLogFrame: HTMLElement | null = null;
 	battleTooltipObserver: MutationObserver | null = null;
 	analysisTeams: any[] = [];
+	/** developer panels, behind the header's settings popup; remembered across reloads */
+	debugMode = loadDebugMode();
+	settingsOpen = false;
 	choiceControlsFrame: HTMLElement | null = null;
 	choiceTooltips: AnalysisTooltips | null = null;
 	/** damage calcs for the current decision point and draft (see refreshCalcs) */
@@ -276,6 +294,8 @@ class AnalysisApp extends preact.Component {
 		tab.requests = data.requests;
 		tab.requestState = getRequestState(data.requestState, data.requests);
 		tab.gameType = data.gameType || tab.gameType;
+		// only ever surfaced in debug mode; a dropped edit is also removed from the node, so it can't re-apply
+		tab.droppedEdits = data.droppedEdits || [];
 		return tab.requestState;
 	}
 
@@ -312,7 +332,8 @@ class AnalysisApp extends preact.Component {
 			tab.log[index] === line || (line.startsWith('|t:|') && tab.log[index]?.startsWith('|t:|')));
 		if (battle && prefixMatches) {
 			battle.pause();
-			for (const line of tab.log.slice(previousLog.length)) battle.add(line);
+			// the renderer's queue is filtered (getRenderedLog), so the lines appended to it are too
+			for (const line of stripAnalysisNoise(tab.log.slice(previousLog.length))) battle.add(line);
 			this.playbackStage = 'playing';
 			battle.play();
 		} else {
@@ -453,6 +474,24 @@ class AnalysisApp extends preact.Component {
 		if (pokemon) this.openPokemonEditor(tab, { side, teamSlot: pokemon.teamSlot });
 	}
 
+	/**
+	 * On a Set Up Position tab, an untouched placeholder's sprite opens **the teambuilder**, focused on that
+	 * Pokémon's species — the same place you would land by clicking the trainer sprite and then its species.
+	 * The point of that Pokémon is that it still has to be built, and there is nothing to choose for it
+	 * anyway (no moves means a Struggle-only menu). Once it has been edited it behaves like any other.
+	 *
+	 * It wins over the action menu too: clicking a placeholder while choosing another Pokémon's action used
+	 * to switch to the placeholder's own action selection, which is never what you wanted (user report,
+	 * 2026-09-19). `openTeambuilder` cancels the open selection first.
+	 */
+	openPlaceholderInTeambuilder(tab: AnalysisTab, side: AnalysisSideID, index: number) {
+		if (!tab.sandbox || (tab.phase !== 'default' && tab.phase !== 'selection')) return false;
+		const pokemon = tab.snapshot?.sides[sideIndex(side)]?.pokemon[index];
+		if (!isPlaceholderPokemon(pokemon)) return false;
+		this.openTeambuilder(tab, side, pokemon!.teamSlot);
+		return true;
+	}
+
 	/** Opens the Pokémon edit form in place of the field form, leaving the action menu if one is open. */
 	openPokemonEditor = (tab: AnalysisTab, target: AnalysisPokemonTarget) => {
 		if (tab.phase === 'selection') this.cancelActionSelection(tab);
@@ -466,13 +505,15 @@ class AnalysisApp extends preact.Component {
 	 * Opens the teambuilder for one side, replacing the battle and controls. Only at a decision point,
 	 * where the sim's queues are empty and the server can rebuild a roster safely.
 	 */
-	openTeambuilder = (tab: AnalysisTab, side: AnalysisSideID) => {
+	openTeambuilder = (tab: AnalysisTab, side: AnalysisSideID, focusTeamSlot?: number) => {
 		if (tab.phase === 'selection') this.cancelActionSelection(tab);
 		if ((tab.phase !== 'default' && tab.phase !== 'preview') || !tab.snapshot) return;
 		this.editPokemon = null;
 		this.editError = '';
 		this.editProblems = null;
-		this.teamForm.open(side, tab.snapshot, tab.format);
+		// the setup tab's opening instruction has been followed, so the normal controls take over
+		tab.sandboxIntroDone = true;
+		this.teamForm.open(side, tab.snapshot, tab.format, focusTeamSlot);
 		this.forceUpdate();
 	};
 
@@ -1174,6 +1215,7 @@ class AnalysisApp extends preact.Component {
 		if (args[0] === 'analysispokemon') {
 			const sideNumber = Number(args[1]);
 			const teamIndex = Number(args[2]);
+			if (this.openPlaceholderInTeambuilder(tab, sideNumber === 0 ? 'p1' : 'p2', teamIndex)) return;
 			const battleSide = (this.battle as any)?.sides?.[sideNumber];
 			const activeIndex = battleSide?.active?.findIndex((pokemon: any) =>
 				this.findAnalysisTeamIndex(sideNumber, pokemon) === teamIndex);
@@ -1181,7 +1223,10 @@ class AnalysisApp extends preact.Component {
 			this.selectMovePokemon(sideNumber === 0 ? 'p1' : 'p2', activeIndex);
 		} else if (args[0] === 'activepokemon') {
 			const sideNumber = Number(args[1]);
-			this.selectMovePokemon(sideNumber === 0 ? 'p1' : 'p2', Number(args[2]) || 0);
+			// the actives sit at the front of the snapshot's roster, so the slot is its index there too
+			const slot = Number(args[2]) || 0;
+			if (this.openPlaceholderInTeambuilder(tab, sideNumber === 0 ? 'p1' : 'p2', slot)) return;
+			this.selectMovePokemon(sideNumber === 0 ? 'p1' : 'p2', slot);
 		} else {
 			return;
 		}
@@ -1193,7 +1238,8 @@ class AnalysisApp extends preact.Component {
 		this.turnView = false;
 		const battle = this.battle as any;
 		battle?.pause();
-		battle?.seekTurn(0);
+		// a setup tab's battle starts at turn 1, with its position already built
+		battle?.seekTurn(getReplayStartTurn(tab));
 		this.forceUpdate();
 	};
 
@@ -1518,6 +1564,16 @@ class AnalysisApp extends preact.Component {
 		this.syncChoiceTooltips();
 	};
 
+	override componentDidMount() {
+		/*
+		 * No sound. The renderer is driven as a replay that is constantly rebuilt, rewound and fast-forwarded
+		 * (see componentDidUpdate), so effects fire in bursts while seeking and are cut off mid-play by the
+		 * next rebuild — which is also where the browser's "play() request was interrupted" warnings that
+		 * lib.js has to ignore come from. There is no PS prefs object on this page, so nothing unsets it.
+		 */
+		BattleSound.setMute(true);
+	}
+
 	override componentDidUpdate() {
 		this.applyOutcomeScroll();
 		this.syncChoiceTooltips();
@@ -1531,7 +1587,8 @@ class AnalysisApp extends preact.Component {
 			id: tab.id as ID,
 			$frame: $(this.battleFrame),
 			$logFrame: $(this.battleLogFrame),
-			log: tab.log,
+			// not tab.log: a setup tab plays its turn-1 edits as setup, before |turn|1 (see getRenderedLog)
+			log: getRenderedLog(tab),
 			isReplay: true,
 			paused: true,
 			autoresize: true,
@@ -1564,7 +1621,7 @@ class AnalysisApp extends preact.Component {
 			this.forceUpdate();
 		}
 		if (tab.phase === 'replay') {
-			battle.seekTurn(0);
+			battle.seekTurn(getReplayStartTurn(tab));
 		} else if (tab.phase === 'one-turn') {
 			if (this.oneTurnStartTurn !== null) {
 				const startTurn = this.oneTurnStartTurn;
@@ -1605,8 +1662,8 @@ class AnalysisApp extends preact.Component {
 			this.team2 = packTeamSyntax(this.teamSyntax2);
 		}
 		if (this.mode === 'teams' && (!this.team1 || !this.team2)) return;
-		if (this.mode !== 'teams') {
-			this.startError = 'Only New Analysis From Teams is connected to the simulator yet.';
+		if (this.mode === 'replay') {
+			this.startError = 'Import Replay is not connected to the simulator yet.';
 			this.forceUpdate();
 			return;
 		}
@@ -1614,45 +1671,10 @@ class AnalysisApp extends preact.Component {
 		this.startError = '';
 		this.forceUpdate();
 		try {
-			const data = await runAnalysis({ format: this.format, team1: this.team1, team2: this.team2 });
-			const rootNodeId = `node-${Date.now()}-root`;
-			const teamSelectionNodeId = `node-${Date.now()}-0`;
-			const requestState = getRequestState(data.requestState, data.requests);
-			const tab: AnalysisTab = {
-				id: `analysis-${Date.now()}`,
-				title: 'New analysis',
-				format: this.format,
-				log: data.log || [],
-				snapshot: data.snapshot,
-				gameType: data.gameType,
-				team1: this.team1,
-				team2: this.team2,
-				requests: data.requests,
-				requestState,
-				phase: requestState === 'teampreview' ? 'preview' : 'default',
-				nodes: {
-					[rootNodeId]: {
-						id: rootNodeId,
-						parentId: null,
-						seed: null,
-						turn: -1,
-						inputLog: [],
-					},
-					[teamSelectionNodeId]: {
-						id: teamSelectionNodeId,
-						parentId: rootNodeId,
-						seed: null,
-						turn: 0,
-						inputLog: [],
-					},
-				},
-				currentNodeId: teamSelectionNodeId,
-				rootSeed: data.seed,
-				simulationCount: 1000,
-			};
+			const tab = this.mode === 'setup' ? await this.startSetupAnalysis() : await this.startTeamsAnalysis();
 			this.tabs = [...this.tabs, tab];
 			this.activeTab = tab.id;
-			this.setChoiceBuilders(data.requests, data.gameType);
+			this.setChoiceBuilders(tab.requests, tab.gameType);
 			this.initializeCurrentNodeSummary(tab);
 			this.mode = null;
 		} catch (error: any) {
@@ -1662,6 +1684,109 @@ class AnalysisApp extends preact.Component {
 		}
 		this.forceUpdate();
 	};
+
+	/** New Analysis From Teams: two real teams, starting at Team Preview. */
+	async startTeamsAnalysis(): Promise<AnalysisTab> {
+		const data = await runAnalysis({ format: this.format, team1: this.team1, team2: this.team2 });
+		const rootNodeId = `node-${Date.now()}-root`;
+		const teamSelectionNodeId = `node-${Date.now()}-0`;
+		const requestState = getRequestState(data.requestState, data.requests);
+		return {
+			id: `analysis-${Date.now()}`,
+			title: 'New analysis',
+			format: this.format,
+			log: data.log || [],
+			snapshot: data.snapshot,
+			gameType: data.gameType,
+			team1: this.team1,
+			team2: this.team2,
+			requests: data.requests,
+			requestState,
+			phase: requestState === 'teampreview' ? 'preview' : 'default',
+			nodes: {
+				[rootNodeId]: {
+					id: rootNodeId,
+					parentId: null,
+					seed: null,
+					turn: -1,
+					inputLog: [],
+				},
+				[teamSelectionNodeId]: {
+					id: teamSelectionNodeId,
+					parentId: rootNodeId,
+					seed: null,
+					turn: 0,
+					inputLog: [],
+				},
+			},
+			currentNodeId: teamSelectionNodeId,
+			rootSeed: data.seed,
+			simulationCount: 1000,
+		};
+	}
+
+	/**
+	 * Set Up Position: start at turn 1 with a placeholder in every active slot, which the user then edits
+	 * into the position they wanted with the Phase 2 and 3 tools (docs/analysis/plan.md, Phase 4).
+	 *
+	 * There is no new battle machinery here. The server builds a placeholder team the format's own rule
+	 * table allows, the tab asks it not to validate it (`sandbox`), and Team Preview is answered in default
+	 * order on the turn-0 node exactly as the normal flow would — that node is simply hidden, so the tree
+	 * starts at Turn 1. Everything downstream (replay records, copy-on-edit, calcs) is unchanged.
+	 */
+	async startSetupAnalysis(): Promise<AnalysisTab> {
+		const setup = await runAnalysisSetup(this.format);
+		const picks = [];
+		for (let i = 1; i <= setup.count; i++) picks.push(i);
+		const inputLog = [`>p1 team ${picks.join(', ')}`, `>p2 team ${picks.join(', ')}`];
+		const data = await runAnalysis({
+			format: this.format, team1: setup.team1, team2: setup.team2, sandbox: true, inputLog,
+		});
+		const rootNodeId = `node-${Date.now()}-root`;
+		const teamSelectionNodeId = `node-${Date.now()}-0`;
+		const firstTurnNodeId = `node-${Date.now()}-1`;
+		return {
+			id: `analysis-${Date.now()}`,
+			title: 'New position',
+			format: this.format,
+			log: data.log || [],
+			snapshot: data.snapshot,
+			editOptions: data.editOptions,
+			gameType: data.gameType,
+			team1: setup.team1,
+			team2: setup.team2,
+			sandbox: true,
+			requests: data.requests,
+			requestState: getRequestState(data.requestState, data.requests),
+			phase: 'default',
+			nodes: {
+				[rootNodeId]: {
+					id: rootNodeId,
+					parentId: null,
+					seed: null,
+					turn: -1,
+					inputLog: [],
+				},
+				[teamSelectionNodeId]: {
+					id: teamSelectionNodeId,
+					parentId: rootNodeId,
+					seed: data.actionSeed || null,
+					turn: 0,
+					inputLog,
+				},
+				[firstTurnNodeId]: {
+					id: firstTurnNodeId,
+					parentId: teamSelectionNodeId,
+					seed: null,
+					turn: 1,
+					inputLog: [],
+				},
+			},
+			currentNodeId: firstTurnNodeId,
+			rootSeed: data.seed,
+			simulationCount: 1000,
+		};
+	}
 
 	renderHome() {
 		return <div class="analysis-home">
@@ -1705,6 +1830,10 @@ class AnalysisApp extends preact.Component {
 		}
 		return <form class="analysis-form" onSubmit={onSubmit}>
 			<h2>{this.mode === 'teams' ? 'New Analysis From Teams' : 'Set Up Position'}</h2>
+			{this.mode === 'setup' && <p>
+				Starts at Turn 1 with a placeholder Pokémon on each side of the field. Click one to build it,
+				and the trainer sprite to build the rest of that team.
+			</p>}
 			<p>
 				<label class="label">Format:</label>
 				<select
@@ -1745,7 +1874,7 @@ class AnalysisApp extends preact.Component {
 			<button
 				class="button" type="submit"
 				disabled={this.starting || (this.mode === 'teams' && (!this.team1 || !this.team2))}
-			>{this.starting ? 'Starting...' : 'Start Analysis'}</button>
+			>{this.starting ? 'Starting...' : (this.mode === 'setup' ? 'Set Up Position' : 'Start Analysis')}</button>
 			<button class="button" type="button" onClick={this.openHome}>Cancel</button>
 		</form>;
 	}
@@ -2080,8 +2209,10 @@ class AnalysisApp extends preact.Component {
 				});
 				this.draft.builders[side] = builder;
 			}
-			return <div class="switchcontrols">
-				<h3 class="switchselect">Team {side === 'p1' ? 1 : 2} Choose Pokémon</h3>
+			return <div class="switchcontrols analysis-info-group analysis-team-preview-side">
+				<h3 class="switchselect analysis-field-side-title">
+					Team {side === 'p1' ? 1 : 2} Choose Pokémon
+				</h3>
 				<div class="switchmenu">{request.side.pokemon.map((pokemon: any, index: number) => {
 					const selected = builder.alreadySwitchingIn.includes(index + 1);
 					const name = pokemon.name || pokemon.details || `Pokemon ${index + 1}`;
@@ -2092,28 +2223,32 @@ class AnalysisApp extends preact.Component {
 						onMouseUp={() => this.selectPreviewPokemon(side, index)}
 					><PSIcon pokemon={pokemonLabel(pokemon)} />{name}</button>;
 				})}</div>
-				<p>{builder.alreadySwitchingIn.length}/{builder.requestLength()} Chosen</p>
+				<p class="analysis-team-preview-count">
+					{builder.alreadySwitchingIn.length}/{builder.requestLength()} Chosen
+				</p>
 			</div>;
 		};
 		const { p1, p2 } = this.draft.builders;
 		const ready = !!p1?.isDone() && !!p2?.isDone();
 		const hasChoices = !!(p1?.alreadySwitchingIn.length || p2?.alreadySwitchingIn.length);
 		return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
-			<button
-				class="button" disabled={!hasChoices}
-				onClick={() => {
-					this.setChoiceBuilders(tab.requests, tab.gameType);
-					this.saveLeafDraft(tab);
-					this.forceUpdate();
-				}}
-			>Back</button>
+			<div>
+				<button
+					class="button" disabled={!hasChoices}
+					onClick={() => {
+						this.setChoiceBuilders(tab.requests, tab.gameType);
+						this.saveLeafDraft(tab);
+						this.forceUpdate();
+					}}
+				>Back</button>{' '}
+				<button
+					class="button" disabled={!ready}
+					onClick={() => {
+						if (ready) void this.submitChoices(tab, p1!.toString(), p2!.toString());
+					}}
+				>Send out Pokémon</button>
+			</div>
 			{renderSide('p1')}{renderSide('p2')}
-			<button
-				class="button" disabled={!ready}
-				onClick={() => {
-					if (ready) void this.submitChoices(tab, p1!.toString(), p2!.toString());
-				}}
-			>Send out Pokémon</button>
 		</div>;
 	}
 
@@ -2128,27 +2263,33 @@ class AnalysisApp extends preact.Component {
 			/> {label}
 		</label>;
 		return <div class="analysis-choice-controls">
+			{/* browsing the outcomes, with the same icons the replay controls use for the same actions */}
 			<div>
-				<button class="button" onClick={() => this.cancelSimulation(tab)}>Cancel</button>
 				<button
-					class="button" disabled={selectedIndex <= 0}
+					class="button button-first" disabled={selectedIndex <= 0}
 					onClick={() => this.showSimulation(tab, selectedIndex - 1, roll, 'reveal')}
-				>Prev</button>
+				><i class="fa fa-step-backward" aria-hidden></i><br />Prev</button>
 				<button
-					class="button" disabled={selectedIndex >= groupCount - 1}
+					class="button button-last" disabled={selectedIndex >= groupCount - 1}
 					onClick={() => this.showSimulation(tab, selectedIndex + 1, roll, 'reveal')}
-				>Next</button>
-				<button class="button" onClick={() => this.replaySimulationTurn(tab)}>Replay Turn</button>
-				<button
-					class="button" disabled={tab.loading}
-					onClick={() => void this.selectSimulationOutcome(tab)}
-				>Select Outcome</button>
+				><i class="fa fa-step-forward" aria-hidden></i><br />Next</button>{' '}
+				<button class="button" onClick={() => this.replaySimulationTurn(tab)}>
+					<i class="fa fa-repeat" aria-hidden></i><br />Replay Turn
+				</button>
 			</div>
 			<fieldset class="analysis-radio-group"><legend>Damage Rolls</legend>
 				{rollOption('min', 'Min')}
 				{rollOption('median', 'Median')}
 				{rollOption('max', 'Max')}
 			</fieldset>
+			{/* the two that leave this screen sit below the rolls, away from the browsing controls */}
+			<div>
+				<button class="button" onClick={() => this.cancelSimulation(tab)}>Cancel</button>{' '}
+				<button
+					class="button" disabled={tab.loading}
+					onClick={() => void this.selectSimulationOutcome(tab)}
+				>Select Outcome</button>
+			</div>
 		</div>;
 	}
 
@@ -2176,6 +2317,16 @@ class AnalysisApp extends preact.Component {
 				onOpenTurn={this.openTurn} onCloseTurn={this.closeTurn} onGoToTurn={this.goToTurn}
 				onChangeSpeed={this.changeReplaySpeed}
 			/>;
+		}
+		/*
+		 * A Set Up Position tab opens on nothing but placeholders, so until the teambuilder has been opened
+		 * once the controls are just the line that says how to start. Showing the turn controls there would
+		 * invite you to play a turn between two Pokémon that don't exist yet.
+		 */
+		if (tab.sandbox && !tab.sandboxIntroDone) {
+			return <div class="analysis-choice-controls">
+				<p>Click on a placeholder Pokémon to replace it, or click on a trainer to open the teambuilder.</p>
+			</div>;
 		}
 		/*
 		 * `choiceSide` can be null here: rebuilding the battle after a save calls setChoiceBuilders, which
@@ -2207,26 +2358,40 @@ class AnalysisApp extends preact.Component {
 			</div>;
 		}
 		const currentNode = tab.nodes[tab.currentNodeId];
-		const canReplayPrevious = !!currentNode?.parentId;
+		// a setup tab's turn-1 node is where its battle begins: its parent is the hidden Team Preview node,
+		// and there is no earlier turn to replay or step back to
+		const atStart = !currentNode?.parentId || (!!tab.sandbox && (currentNode.turn ?? 0) <= 1);
 		const nextNode = Object.values(tab.nodes).find(node => node.parentId === tab.currentNodeId);
 		const ready = this.draft.actionChoicesReady(tab.requests, 'p1') && this.draft.actionChoicesReady(tab.requests, 'p2');
 		return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
+			{/* icons above the labels, reusing the replay controls' so the same action reads the same way */}
 			<div>
-				<button class="button" onClick={() => this.openReplayFromStart(tab)}>Replay from Start</button>
-				<button class="button" disabled={!canReplayPrevious} onClick={() => this.replayPreviousTurn(tab)}>
-					Replay Prev Turn
+				<span
+					class="analysis-grouping-help analysis-controls-help" data-help={DEFAULT_CONTROLS_HELP}
+					aria-label="What you can click in the battle"
+				><i class="fa fa-hand-pointer-o" aria-hidden="true" /> Controls</span>
+				<button class="button" disabled={atStart} onClick={() => this.openReplayFromStart(tab)}>
+					<i class="fa fa-fast-backward" aria-hidden></i><br />Replay from Start
+				</button>{' '}
+				<button class="button" disabled={atStart} onClick={() => this.replayPreviousTurn(tab)}>
+					<i class="fa fa-repeat" aria-hidden></i><br />Replay Prev Turn
+				</button>{' '}
+				<button class="button button-first" disabled={atStart} onClick={() => this.previousNode(tab)}>
+					<i class="fa fa-step-backward" aria-hidden></i><br />Prev Turn
 				</button>
-				<button class="button" disabled={!canReplayPrevious} onClick={() => this.previousNode(tab)}>Prev Turn</button>
 				<button
-					class="button" disabled={!nextNode}
+					class="button button-last" disabled={!nextNode}
 					onClick={() => nextNode && this.selectAnalysisNode(tab, nextNode.id)}
-				>Next Turn</button>
+				><i class="fa fa-step-forward" aria-hidden></i><br />Next Turn</button>
 			</div>
-			<p>Click on an active Pokémon (or its row below) to choose its actions.</p>
-			<AnalysisChoiceSummaryView
-				choices={this.getMoveChoiceSummary(tab)} gameType={tab.gameType} tooltips
-				onSelect={this.selectMovePokemon}
-			/>
+			{/* boxed like the field editor's Side groups, so it reads as a panel rather than loose rows */}
+			<div class="analysis-info-group analysis-action-summary">
+				<span class="analysis-field-side-title">Action Summary</span>
+				<AnalysisChoiceSummaryView
+					choices={this.getMoveChoiceSummary(tab)} gameType={tab.gameType} tooltips
+					onSelect={this.selectMovePokemon}
+				/>
+			</div>
 			<div>
 				<button
 					class="button" disabled={!ready || tab.loading}
@@ -2237,9 +2402,12 @@ class AnalysisApp extends preact.Component {
 				<button class="button" disabled={!ready || tab.loading} onClick={() => this.prepareSimulation(tab)}>
 					{tab.loading ? 'Simulating...' : 'Simulate Possible Turns'}
 				</button>{' '}
-				<label>
-					# Simulations: <input
-						class="textbox" type="number" min="1" step="1" value={tab.simulationCount}
+				{/* the panel's own small-caps label and narrow number input, rather than a full-width textbox */}
+				<label class="analysis-sim-count">
+					<span class="analysis-field-side-title">Simulations</span>
+					<input
+						class="textbox analysis-number-input" type="number" min="1" step="1"
+						value={tab.simulationCount}
 						onInput={event => {
 							tab.simulationCount = Math.max(1, Number((event.target as HTMLInputElement).value) || 1);
 							this.forceUpdate();
@@ -2367,8 +2535,13 @@ class AnalysisApp extends preact.Component {
 								else this.selectAnalysisNode(tab, nodeId);
 							}}
 						/>}
-					<h2>{tab.simulationGroups ? 'Selected Simulation Result' : 'Selected Node Data'}</h2>
-					<pre class="analysis-debug-log">{JSON.stringify(selectedData, null, 2)}</pre>
+					{this.debugMode && <>
+						<h2>{tab.simulationGroups ? 'Selected Simulation Result' : 'Selected Node Data'}</h2>
+						<pre class="analysis-debug-log">{JSON.stringify(selectedData, null, 2)}</pre>
+						<h2>Dropped Edits</h2>
+						<pre class="analysis-debug-log">{tab.droppedEdits?.length ?
+							tab.droppedEdits.join('\n') : 'None'}</pre>
+					</>}
 				</div>
 			</div>,
 		];
@@ -2381,6 +2554,14 @@ class AnalysisApp extends preact.Component {
 			onActivateTab={tabId => { this.activeTab = tabId; this.forceUpdate(); }}
 			onCloseTab={this.closeTab} onDragStart={this.dragStart} onDragEnter={this.dragEnter}
 			onDragEnd={() => { this.draggedTab = null; }}
+			settingsOpen={this.settingsOpen} debugMode={this.debugMode}
+			onToggleSettings={() => { this.settingsOpen = !this.settingsOpen; this.forceUpdate(); }}
+			onCloseSettings={() => { this.settingsOpen = false; this.forceUpdate(); }}
+			onChangeDebugMode={on => {
+				this.debugMode = on;
+				saveDebugMode(on);
+				this.forceUpdate();
+			}}
 		/>;
 		const rooms = activeTab ? this.renderAnalysis(activeTab) : [<div class="analysis-panel">{this.renderHome()}</div>];
 		return preact.h(preact.Fragment, null, header, ...rooms) as any;

@@ -45,9 +45,14 @@ export class AnalysisTeamFormState {
 	originalSpecies: string[] = [];
 	editor: any = null;
 	dirty = false;
+	/**
+	 * A set to open focused, as its index in the editor's own list. Set Up Position uses it so that clicking
+	 * a placeholder lands on the same view as clicking the trainer sprite and then that Pokémon's species.
+	 */
+	pendingFocusIndex: number | null = null;
 
 	/** Rebuilds the panel for one side from the node's snapshot. */
-	open(side: AnalysisSideID, snapshot: AnalysisSnapshot, format: string) {
+	open(side: AnalysisSideID, snapshot: AnalysisSnapshot, format: string, focusTeamSlot?: number) {
 		const sideSnapshot = snapshot.sides[side === 'p1' ? 0 : 1];
 		const roster = sideSnapshot?.pokemon || [];
 		this.side = side;
@@ -55,6 +60,8 @@ export class AnalysisTeamFormState {
 		this.originalSpecies = roster.map(pokemon => pokemon.set.species || pokemon.species);
 		this.editor = null;
 		this.dirty = false;
+		const focusIndex = focusTeamSlot === undefined ? -1 : this.slots.indexOf(focusTeamSlot);
+		this.pendingFocusIndex = focusIndex >= 0 ? focusIndex : null;
 		this.team = {
 			name: sideSnapshot?.name || (side === 'p1' ? 'Team 1' : 'Team 2'),
 			format: toID(format),
@@ -73,6 +80,7 @@ export class AnalysisTeamFormState {
 		this.slots = [];
 		this.originalSpecies = [];
 		this.dirty = false;
+		this.pendingFocusIndex = null;
 	}
 
 	/** Tags the editor's set objects the first time it hands us its state. */
@@ -127,6 +135,29 @@ export class AnalysisTeambuilder extends preact.Component<{
 	onSave: (edit: AnalysisTeamEdit) => void,
 	onCancel: () => void,
 }> {
+	/**
+	 * Opens a set focused, by focusing its species textbox the way a click would (`setFocusTextbox` in
+	 * `battle-team-editor.tsx`). Driving the editor's own markup keeps that upstream file untouched.
+	 * Cleared before focusing, because entering the focused view re-renders this component.
+	 */
+	applyPendingFocus() {
+		const { state } = this.props;
+		const index = state.pendingFocusIndex;
+		if (index === null || !this.base) return;
+		state.pendingFocusIndex = null;
+		const field = this.base
+			.querySelector<HTMLInputElement>(`input.set-field[data-focus="set-${index}-pokemon"]`);
+		field?.focus();
+	}
+
+	override componentDidMount() {
+		this.applyPendingFocus();
+	}
+
+	override componentDidUpdate() {
+		this.applyPendingFocus();
+	}
+
 	override render() {
 		const { state, side, disabled, error, problems, validated } = this.props;
 		if (!state.team) return null;
