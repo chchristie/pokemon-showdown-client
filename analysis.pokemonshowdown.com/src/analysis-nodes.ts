@@ -30,6 +30,22 @@ export function getReplayAnchor(tab: AnalysisTab, nodeId = tab.currentNodeId) {
 }
 
 /**
+ * A node's turn number **in the log the server just rebuilt**, which on an imported replay is not
+ * `node.turn`.
+ *
+ * A replay position is rebuilt from the deepest replay node on its path rather than from the root
+ * (`pathFromLastReplayNode`), so the new battle opens at that node's turn and calls it `|turn|1`. Anything
+ * that looks a turn up in a freshly returned `log` has to ask in the battle's numbering, not the replay's —
+ * `node.turn` finds nothing there and reads as "this turn did nothing".
+ *
+ * The same offset `getReplaySplice` uses to renumber the rendered log; only the direction differs.
+ */
+export function rebuiltTurnNumber(tab: AnalysisTab, node: AnalysisNode) {
+	const anchor = getReplayAnchor(tab, node.id);
+	return anchor ? node.turn - anchor.turn + 1 : node.turn;
+}
+
+/**
  * The path with the turns before the deepest replay node dropped, since that node's edits already describe
  * the whole position. Setup nodes (turn ≤ 0) are kept either way: the Team Preview choices are what carry
  * the battle to turn 1, which is where an imported position is built.

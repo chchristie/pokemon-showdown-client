@@ -35,7 +35,9 @@ import {
 } from './analysis-pokemon-editor';
 import { AnalysisHeader } from './analysis-header';
 import { loadDebugMode, saveDebugMode } from './analysis-settings';
-import { getReplayAnchor, getSetupNode, hasChildNodes, replayNodesFor, resolveTeamsFor } from './analysis-nodes';
+import {
+	getReplayAnchor, getSetupNode, hasChildNodes, rebuiltTurnNumber, replayNodesFor, resolveTeamsFor,
+} from './analysis-nodes';
 import { AnalysisNodeTree } from './analysis-node-tree';
 import { PSIcon } from './analysis-ps-shims';
 import { AnalysisTeambuilder, AnalysisTeamFormState, summarizeTeam } from './analysis-teambuilder';
@@ -354,7 +356,15 @@ class AnalysisApp extends preact.Component {
 	 */
 	completeNodeIfResolved(tab: AnalysisTab, node: AnalysisNode, data: AnalysisStartResponse, requestState: string) {
 		if (data.pendingMidTurnSwitches?.length || requestState === 'switch') return false;
-		node.turnEventSummary = getLogTurnEventSummary(data.log || [], node.turn);
+		/*
+		 * Asked in the rebuilt battle's numbering, not the replay's: a turn played off an imported replay
+		 * node comes back in a log that calls that node's turn `|turn|1`, so looking up `node.turn` found
+		 * nothing and stored an empty summary. `[]` is truthy, so the Lines tooltip still opened for the
+		 * node's edits with the outcome section silently blank.
+		 */
+		const events = getLogTurnEventSummary(data.log || [], rebuiltTurnNumber(tab, node));
+		// stored as absent rather than empty, so the tooltip offers no outcome section at all
+		node.turnEventSummary = events.length ? events : undefined;
 		this.storeAnalysisNode(tab, [], node.id);
 		return true;
 	}

@@ -456,6 +456,30 @@ async function main() {
 		step('a turn simulated from a replay node continues the replay rather than restarting it');
 
 		/*
+		 * That turn forked a **sibling** of the Turn 2 node, because the imported one already had a child,
+		 * and the sibling now has a child of its own — so Lines should offer its outcome on hover.
+		 *
+		 * It did not (user report, 2026-09-19). The outcome is read out of the log the server just
+		 * returned, which for a position rebuilt from a replay node calls that node's turn `|turn|1`, so
+		 * looking it up as `node.turn` found nothing and stored `[]`. An empty array is truthy, so the
+		 * tooltip still opened for the node's edits with the outcome section blank — which is why this
+		 * checks the events and not merely that a tooltip exists.
+		 */
+		const siblingOutcome = await page.evaluate(() => {
+			const buttons = [...document.querySelectorAll('.analysis-node-button')]
+				.filter(entry => /^\s*Turn 2\b/.test(entry.textContent));
+			// the imported node comes first; the fork is the later one
+			const tooltip = buttons[buttons.length - 1]?.nextElementSibling;
+			return tooltip?.classList.contains('analysis-node-tooltip') ?
+				tooltip.textContent.replace(/\s+/g, ' ') : '';
+		});
+		expect(/Turn 2 → Turn 3/.test(siblingOutcome),
+			`expected an outcome tooltip on the forked node, got: ${siblingOutcome}`);
+		expect(/Body Slam/.test(siblingOutcome),
+			`expected the forked turn's events in its tooltip, got: ${siblingOutcome}`);
+		step('a turn played off a replay node carries its outcome into Lines');
+
+		/*
 		 * The end of the game is its own node. A replay's last `|turn|` is the *start* of the turn that
 		 * decided it, so without this the result had nowhere to live.
 		 */
