@@ -6,8 +6,8 @@ import type { ID } from '../../play.pokemonshowdown.com/src/battle-dex';
 import { BattleSound } from '../../play.pokemonshowdown.com/src/battle-sound';
 import { Teams } from '../../play.pokemonshowdown.com/src/battle-teams';
 import {
-	FORMATS, LAYOUT, getRenderedLog, getReplayStartTurn, getRequestState, isPlaceholderPokemon,
-	stripAnalysisNoise,
+	FORMATS, LAYOUT, getRenderedLog, getRenderedLogTail, getReplayStartTurn, getRequestState,
+	isPlaceholderPokemon,
 	type AnalysisBattle, type AnalysisCalcMode, type AnalysisCalcState, type AnalysisChoiceSummary,
 	type AnalysisEdits, type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisNode,
 	type AnalysisPhase, type AnalysisSideID, type AnalysisSimulationGroup, type AnalysisSimulationRoll, type AnalysisTab,
@@ -18,6 +18,11 @@ import {
 	type AnalysisStartResponse,
 } from './analysis-api';
 import { AnalysisBattleRenderer } from './analysis-battle';
+import {
+	buildReplayNodes, fetchReplayLog, packReplayTeams, readReplayFileText, replayInputLog,
+	replayPreviewStep, teamPreviewPicks, undecidedReplaySlots,
+} from './analysis-replay-import';
+import { parseAnalysisReplay } from './analysis-replay-parse';
 import { AnalysisChoiceDraft, getStaleChoiceSlots, sideIndex } from './analysis-choices';
 import { AnalysisChoiceSummaryView } from './analysis-choice-summary';
 import { AnalysisFieldEditor, AnalysisFieldFormState, mergeFieldEdits } from './analysis-field-editor';
@@ -26,7 +31,7 @@ import {
 } from './analysis-pokemon-editor';
 import { AnalysisHeader } from './analysis-header';
 import { loadDebugMode, saveDebugMode } from './analysis-settings';
-import { hasChildNodes, replayNodesFor, resolveTeamsFor } from './analysis-nodes';
+import { getReplayAnchor, getSetupNode, hasChildNodes, replayNodesFor, resolveTeamsFor } from './analysis-nodes';
 import { AnalysisNodeTree } from './analysis-node-tree';
 import { PSIcon } from './analysis-ps-shims';
 import { AnalysisTeambuilder, AnalysisTeamFormState, summarizeTeam } from './analysis-teambuilder';
@@ -67,6 +72,9 @@ class AnalysisApp extends preact.Component {
 	team1 = '';
 	team2 = '';
 	replayURL = '';
+	/** a replay log read from an uploaded file, which takes precedence over the URL box */
+	replayFileLog: string[] | null = null;
+	replayFileName = '';
 	teams: LocalTeam[] = [];
 	showSyntaxImport = false;
 	teamSyntax1 = '';
@@ -273,7 +281,10 @@ class AnalysisApp extends preact.Component {
 			this.teamForm.close();
 			const requestState = this.applyBattleResponse(tab, data);
 			tab.phase = requestState === 'teampreview' ? 'preview' : 'default';
-			this.pendingHydration = { tabId: tab.id, inputLog: [...(inputLog ?? node.inputLog)] };
+			const undecided = this.fillReplayChoices(tab, node);
+			this.pendingHydration = {
+				tabId: tab.id, inputLog: [...(inputLog ?? node.inputLog)], clearedSlots: undecided,
+			};
 			this.destroyBattle();
 			this.forceUpdate();
 		} catch (error: any) {
@@ -285,6 +296,26 @@ class AnalysisApp extends preact.Component {
 	/*********************************************************
 	 * Applying API responses
 	 *********************************************************/
+
+	/**
+	 * Turns an imported node's replay actions into the choices it actually holds, the first time the
+	 * position behind it exists. Returns the slots the replay couldn't explain, which stay undecided.
+	 *
+	 * This is deliberately not done at import: a choice is written as `move 2` and `switch 3`, and which
+	 * move and which Pokémon those are depends on the team the user finishes in onboarding. Once resolved
+	 * it is stored on the node, so it survives selecting another node and behaves like any other draft —
+	 * the Action Summary shows it, and it can be submitted or changed an action at a time.
+	 */
+	fillReplayChoices(tab: AnalysisTab, node: AnalysisNode) {
+		if (!node.replayActions?.length) return undefined;
+		if (!node.inputLog.length) {
+			const { inputLog } = replayInputLog(node.replayActions, tab.requests, tab.gameType);
+			node.inputLog = inputLog;
+		}
+		// Recomputed from the stored line rather than kept alongside it: `hydrate` needs to know which
+		// slots are `pass` every time, and a forked copy carries the line but nothing else.
+		return undecidedReplaySlots(node.inputLog);
+	}
 
 	/** Copies the reconstructed position onto the tab. Returns the normalized request state. */
 	applyBattleResponse(tab: AnalysisTab, data: AnalysisStartResponse) {
@@ -332,8 +363,10 @@ class AnalysisApp extends preact.Component {
 			tab.log[index] === line || (line.startsWith('|t:|') && tab.log[index]?.startsWith('|t:|')));
 		if (battle && prefixMatches) {
 			battle.pause();
-			// the renderer's queue is filtered (getRenderedLog), so the lines appended to it are too
-			for (const line of stripAnalysisNoise(tab.log.slice(previousLog.length))) battle.add(line);
+			// the renderer's queue is filtered and renumbered (getRenderedLog), so appended lines are too
+			for (const line of getRenderedLogTail(tab, getReplayAnchor(tab), tab.log.slice(previousLog.length))) {
+				battle.add(line);
+			}
 			this.playbackStage = 'playing';
 			battle.play();
 		} else {
@@ -1323,13 +1356,17 @@ class AnalysisApp extends preact.Component {
 		if (!builder || builder.alreadySwitchingIn.includes(index + 1)) return;
 		const error = builder.addChoice(`team ${index + 1}`);
 		if (error) this.startError = error;
-		if (tab) this.saveLeafDraft(tab);
+		// The import's brought-Pokémon step answers the turn-0 node, not the node being browsed, so it
+		// must not draft onto it: the current node is a replay turn, and a one-turn replay's is a leaf.
+		if (tab && !tab.importPreview) this.saveLeafDraft(tab);
 		this.forceUpdate();
 	};
 
 	selectMovePokemon = (side: AnalysisSideID, index: number) => {
 		const tab = this.tabs.find(entry => entry.id === this.activeTab);
 		if (!tab || (tab.phase !== 'default' && tab.phase !== 'selection')) return;
+		// nothing to choose once the game is over, and the action menu has no way back from an empty request
+		if (tab.nodes[tab.currentNodeId]?.gameOver) return;
 		if (tab.phase === 'default') {
 			this.draft.saveSnapshot();
 			tab.phase = 'selection';
@@ -1587,8 +1624,9 @@ class AnalysisApp extends preact.Component {
 			id: tab.id as ID,
 			$frame: $(this.battleFrame),
 			$logFrame: $(this.battleLogFrame),
-			// not tab.log: a setup tab plays its turn-1 edits as setup, before |turn|1 (see getRenderedLog)
-			log: getRenderedLog(tab),
+			// not tab.log: a sandbox tab plays its turn-1 edits as setup, before |turn|1, and an imported
+			// replay plays its own history in front of them (see getRenderedLog)
+			log: getRenderedLog(tab, getReplayAnchor(tab)),
 			isReplay: true,
 			paused: true,
 			autoresize: true,
@@ -1662,8 +1700,8 @@ class AnalysisApp extends preact.Component {
 			this.team2 = packTeamSyntax(this.teamSyntax2);
 		}
 		if (this.mode === 'teams' && (!this.team1 || !this.team2)) return;
-		if (this.mode === 'replay') {
-			this.startError = 'Import Replay is not connected to the simulator yet.';
+		if (this.mode === 'replay' && !this.replayURL && !this.replayFileLog) {
+			this.startError = 'Paste a replay URL or choose a replay file.';
 			this.forceUpdate();
 			return;
 		}
@@ -1671,11 +1709,18 @@ class AnalysisApp extends preact.Component {
 		this.startError = '';
 		this.forceUpdate();
 		try {
-			const tab = this.mode === 'setup' ? await this.startSetupAnalysis() : await this.startTeamsAnalysis();
+			let tab;
+			if (this.mode === 'setup') tab = await this.startSetupAnalysis();
+			else if (this.mode === 'replay') tab = await this.startReplayAnalysis();
+			else tab = await this.startTeamsAnalysis();
 			this.tabs = [...this.tabs, tab];
 			this.activeTab = tab.id;
 			this.setChoiceBuilders(tab.requests, tab.gameType);
 			this.initializeCurrentNodeSummary(tab);
+			// An imported replay opens straight into its onboarding pass rather than into the battle.
+			if (tab.onboarding) {
+				this.teamForm.openPacked(tab.onboarding, tab.team1, tab.format);
+			}
 			this.mode = null;
 		} catch (error: any) {
 			this.startError = error.message || 'Unable to start the analysis.';
@@ -1684,6 +1729,251 @@ class AnalysisApp extends preact.Component {
 		}
 		this.forceUpdate();
 	};
+
+	/**
+	 * Saves the team the user has been completing onto the **tab**, not onto a node.
+	 *
+	 * An imported replay's teams are what every node is rebuilt from, so onboarding edits `tab.team1` and
+	 * `tab.team2` directly rather than going through the edit layer. That is also what keeps the node
+	 * edits correct: HP rides on each node as a percentage and resolves against whatever max HP the
+	 * finished team ends up with.
+	 */
+	async saveOnboardingTeam(tab: AnalysisTab, next: AnalysisSideID | null) {
+		const side = this.teamForm.side;
+		if (!side || tab.loading) return;
+		const packed = Teams.pack(this.teamForm.collect().sets as any) || '';
+		if (!packed) {
+			this.editError = 'A team needs at least one Pokémon.';
+			this.forceUpdate();
+			return;
+		}
+		if (side === 'p1') tab.team1 = packed;
+		else tab.team2 = packed;
+		this.editError = '';
+		if (next) {
+			this.openOnboardingSide(tab, next);
+			return;
+		}
+		await this.finishOnboarding(tab);
+	}
+
+	/**
+	 * Shows the other side's reconstruction without leaving the onboarding pass.
+	 *
+	 * Built from the **tab's** packed team, not from the snapshot: onboarding saves straight onto the tab
+	 * and doesn't rebuild the battle, so the snapshot is still the position as first loaded and would undo
+	 * whatever the user had already saved for this side (user report, 2026-09-19).
+	 */
+	openOnboardingSide(tab: AnalysisTab, side: AnalysisSideID) {
+		tab.onboarding = side;
+		this.teamForm.openPacked(side, side === 'p1' ? tab.team1 : tab.team2, tab.format);
+		this.forceUpdate();
+	}
+
+	/**
+	 * Leaves onboarding and opens the analysis, via the brought-Pokémon step where the replay needs one.
+	 *
+	 * `discard` is Skip, which means "use the reconstruction as it came out of the replay". That includes
+	 * undoing a side already committed with Save and Continue, not just the unsaved editor state — and it
+	 * takes the roster-order default for the brought-Pokémon question rather than asking it.
+	 */
+	async finishOnboarding(tab: AnalysisTab, discard = false) {
+		if (discard && tab.importedTeams) {
+			tab.team1 = tab.importedTeams.p1;
+			tab.team2 = tab.importedTeams.p2;
+		}
+		tab.onboarding = null;
+		this.teamForm.close();
+		if (!discard && tab.importPreview) {
+			await this.openImportPreview(tab);
+			return;
+		}
+		tab.importPreview = null;
+		await this.rebuildImportedPosition(tab);
+	}
+
+	/**
+	 * The imported replay's Team Preview step: which Pokémon each side brought.
+	 *
+	 * A replay can't tell a Pokémon that was brought but never sent out from one left behind (audit, Q7),
+	 * so in a VGC-like the user settles it here. The battle is rebuilt at Team Preview — with the teams as
+	 * onboarding left them, so the picker shows the sets the user just completed — and the ones the replay
+	 * did show are locked in.
+	 */
+	async openImportPreview(tab: AnalysisTab) {
+		tab.loading = true;
+		this.forceUpdate();
+		try {
+			const data = await runAnalysis({
+				format: tab.format, team1: tab.team1, team2: tab.team2, sandbox: true,
+			});
+			const requestState = this.applyBattleResponse(tab, data);
+			tab.phase = requestState === 'teampreview' ? 'preview' : 'default';
+			// A format that turns out not to pick a team at all leaves nothing to ask, so don't strand the
+			// user on a step with no question: fall through to the analysis.
+			if (tab.phase !== 'preview') {
+				tab.importPreview = null;
+				tab.loading = false;
+				await this.rebuildImportedPosition(tab);
+				return;
+			}
+			this.setAnalysisTeams(tab.requests);
+			this.setChoiceBuilders(tab.requests, tab.gameType);
+			// The locked picks are seeded from the render, not here: creating the battle calls
+			// `setChoiceBuilders` again with fresh builders, which would drop anything seeded now.
+			this.destroyBattle();
+		} catch (error: any) {
+			this.startError = error.message || 'Unable to open the Team Preview step.';
+		} finally {
+			tab.loading = false;
+		}
+		this.forceUpdate();
+	}
+
+	/** Locks the Pokémon the replay proved were brought into the step's builders, in roster order. */
+	seedImportPreviewPicks(tab: AnalysisTab) {
+		const locked = tab.importPreview;
+		if (!locked) return;
+		for (const side of ['p1', 'p2'] as const) {
+			const builder = this.draft.builders[side];
+			if (!builder) continue;
+			for (const slot of locked[side]) {
+				if (builder.isDone()) break;
+				if (!builder.alreadySwitchingIn.includes(slot + 1)) builder.addChoice(`team ${slot + 1}`);
+			}
+		}
+	}
+
+	/** How many of a side's picks are locked, which is where the user's own choices start. */
+	importPreviewLockedCount(tab: AnalysisTab, side: AnalysisSideID) {
+		return tab.importPreview?.[side].length || 0;
+	}
+
+	/**
+	 * Answers the brought-Pokémon step and opens the analysis.
+	 *
+	 * The picks replace the roster-order default the import wrote onto the turn-0 node, editing that node
+	 * **in place**: `commitCurrentDraft` would fork it, and the whole replay line hangs off it. Nothing on
+	 * the replay nodes needs revisiting, because their Pokémon are keyed by index into `side.team`, which
+	 * keeps the full roster in its original order however the picks reorder `side.pokemon`.
+	 */
+	async confirmImportPreview(tab: AnalysisTab, p1Choice: string, p2Choice: string) {
+		const setupNode = getSetupNode(tab);
+		if (!setupNode || !p1Choice || !p2Choice || tab.loading) return;
+		setupNode.inputLog = [`>p1 ${p1Choice}`, `>p2 ${p2Choice}`];
+		tab.importPreview = null;
+		tab.phase = 'default';
+		await this.rebuildImportedPosition(tab);
+	}
+
+	/** Rebuilds the imported replay's current node from the tab's teams and the replay line. */
+	async rebuildImportedPosition(tab: AnalysisTab) {
+		tab.loading = true;
+		this.forceUpdate();
+		try {
+			const data = await runAnalysis({
+				format: tab.format, ...resolveTeamsFor(tab, tab.currentNodeId), seed: tab.rootSeed,
+				replayNodes: replayNodesFor(tab, tab.currentNodeId, false),
+			});
+			this.applyBattleResponse(tab, data);
+			// the first node the import opens on needs its replay choices too, and gets here rather than
+			// through restoreAnalysisNode
+			const node = tab.nodes[tab.currentNodeId];
+			const undecided = node && this.fillReplayChoices(tab, node);
+			this.pendingHydration = {
+				tabId: tab.id, inputLog: [...(node?.inputLog || [])], clearedSlots: undecided,
+			};
+			this.destroyBattle();
+		} catch (error: any) {
+			this.startError = error.message || 'Unable to rebuild the position.';
+		} finally {
+			tab.loading = false;
+		}
+		this.forceUpdate();
+	}
+
+	/** Reads a chosen replay file up front, so a bad one is reported before Open is pressed. */
+	async readReplayFile(input: HTMLInputElement) {
+		const file = input.files?.[0];
+		this.startError = '';
+		this.replayFileLog = null;
+		this.replayFileName = '';
+		if (file) {
+			try {
+				this.replayFileLog = readReplayFileText(await file.text(), file.name);
+				this.replayFileName = file.name;
+			} catch (error: any) {
+				this.startError = error.message || "Couldn't read that file.";
+			}
+		}
+		this.forceUpdate();
+	}
+
+	/**
+	 * Import Replay: reconstruct both teams and one absolute position per turn, then open the replay as the
+	 * main line. The user completes the inferred teams in stage D's onboarding; for now the inferences go
+	 * straight in.
+	 *
+	 * A format the fork doesn't have is refused rather than substituted (audit, QA): `createAnalysisBattle`
+	 * throws `Unknown format: <id>`, which the server already turns into a 400, so the refusal falls out of
+	 * attempting the import.
+	 */
+	async startReplayAnalysis(): Promise<AnalysisTab> {
+		const log = this.replayFileLog || (await fetchReplayLog(this.replayURL)).log;
+		const parsed = parseAnalysisReplay(log);
+		if (!parsed.turns.length) throw new Error('That replay has no turns to analyse.');
+		const { team1, team2 } = packReplayTeams(parsed);
+		if (!team1 || !team2) throw new Error("Couldn't reconstruct both teams from that replay.");
+
+		const inputLog = [
+			`>p1 team ${teamPreviewPicks(parsed, 'p1').join(', ')}`,
+			`>p2 team ${teamPreviewPicks(parsed, 'p2').join(', ')}`,
+		];
+		// The tab is a sandbox: inferred sets have no EVs, guessed abilities and often fewer than four
+		// moves, so they would fail the validator exactly as a Set Up Position placeholder does.
+		/*
+		 * Team Preview only. The turn-1 edits deliberately are **not** sent here: the server applies
+		 * `replayNodes` before the top-level `inputLog`, so they would land on a battle still sitting at
+		 * Team Preview — marking Pokémon active with positions outside `side.slotConditions`, which throws
+		 * in `getSwitchRequestData`. The node line carries them in the right order instead, and
+		 * `finishOnboarding` rebuilds through it once the teams are settled.
+		 */
+		const data = await runAnalysis({
+			format: parsed.formatId, team1, team2, sandbox: true, inputLog,
+		});
+		const { nodes, nodeIds } = buildReplayNodes(parsed, inputLog, data.actionSeed || null);
+		return {
+			id: `analysis-${Date.now()}`,
+			title: `${parsed.players.p1} vs. ${parsed.players.p2}`,
+			format: parsed.formatId,
+			log: data.log || [],
+			snapshot: data.snapshot,
+			editOptions: data.editOptions,
+			gameType: data.gameType,
+			team1,
+			team2,
+			sandbox: true,
+			requests: data.requests,
+			requestState: getRequestState(data.requestState, data.requests),
+			phase: 'default',
+			onboarding: 'p1',
+			importedTeams: { p1: team1, p2: team2 },
+			// Only set where the replay leaves the question open; onboarding's Proceed then goes through the
+			// brought-Pokémon step instead of straight into the analysis.
+			importPreview: replayPreviewStep(parsed),
+			// Sandbox because the inferred sets would fail the validator, but not a Set Up Position tab:
+			// there are no placeholders to click, so its intro line would be wrong here.
+			sandboxIntroDone: true,
+			importWarnings: parsed.warnings,
+			// The real history, which the renderer plays in front of every reconstructed position on this
+			// tab rather than opening each one on a fresh battle's leads (audit Q6).
+			replayLog: log,
+			nodes,
+			currentNodeId: nodeIds[0],
+			rootSeed: data.seed,
+			simulationCount: 1000,
+		};
+	}
 
 	/** New Analysis From Teams: two real teams, starting at Team Preview. */
 	async startTeamsAnalysis(): Promise<AnalysisTab> {
@@ -1823,8 +2113,18 @@ class AnalysisApp extends preact.Component {
 						onInput={event => { this.replayURL = (event.target as HTMLInputElement).value; }}
 					/>
 				</label>
-				<label>Replay HTML file<input type="file" accept=".html,.log,.json" /></label>
-				<button class="button" type="submit">Open Replay Analysis</button>
+				<label>Replay HTML file<input
+					type="file" accept=".html,.log,.json"
+					onChange={event => void this.readReplayFile(event.target as HTMLInputElement)}
+				/></label>
+				{/* reading the file is async, so say when it's ready rather than failing on an early click */}
+				{this.replayFileLog && <p class="analysis-field-note">
+					Loaded <strong>{this.replayFileName}</strong> ({this.replayFileLog.length} lines).
+				</p>}
+				{this.startError && <p class="message-error">{this.startError}</p>}
+				<button class="button" type="submit" disabled={this.starting}>
+					{this.starting ? 'Reading replay…' : 'Open Replay Analysis'}
+				</button>
 				<button class="button" type="button" onClick={this.openHome}>Cancel</button>
 			</form>;
 		}
@@ -2050,8 +2350,10 @@ class AnalysisApp extends preact.Component {
 			const builder = this.draft.builders[side];
 			if (!request?.forceSwitch || !builder || !request.side?.pokemon) return null;
 			const pending = request.forceSwitch.filter(Boolean).length;
-			return <div class="switchcontrols">
-				<h3 class="switchselect">{side.toUpperCase()} Choose replacement</h3>
+			return <div class="switchcontrols analysis-info-group analysis-switch-group">
+				<h3 class="switchselect analysis-field-side-title">
+					Team {side === 'p1' ? 1 : 2} Choose replacement
+				</h3>
 				<div class="switchmenu">{request.side.pokemon.map((pokemon: any, index: number) => {
 					const unavailable = pokemon.fainted || pokemon.active || builder.alreadySwitchingIn.includes(index + 1);
 					return <button
@@ -2068,34 +2370,37 @@ class AnalysisApp extends preact.Component {
 						}}
 					><PSIcon pokemon={pokemonLabel(pokemon)} />{pokemon.name || pokemon.details}</button>;
 				})}</div>
-				<p>{builder.alreadySwitchingIn.length}/{pending} Chosen</p>
+				<p class="analysis-switch-count">{builder.alreadySwitchingIn.length}/{pending} Chosen</p>
 			</div>;
 		};
 		const ready = (['p1', 'p2'] as const).every(side =>
 			!tab.requests?.[sideIndex(side)]?.forceSwitch || !!this.draft.builders[side]?.isDone());
 		const hasChoices = (['p1', 'p2'] as const).some(side => !this.draft.builders[side]?.isEmpty());
 		return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
-			<button
-				class="button" disabled={!hasChoices}
-				onClick={() => {
-					this.setChoiceBuilders(tab.requests, tab.gameType);
-					this.forceUpdate();
-				}}
-			>Back</button>
+			<div>
+				<button
+					class="button" disabled={!hasChoices}
+					onClick={() => {
+						this.setChoiceBuilders(tab.requests, tab.gameType);
+						this.forceUpdate();
+					}}
+				>Back</button>{' '}
+				<button
+					class="button" disabled={!ready}
+					onClick={() => {
+						if (!ready) return;
+						if (onSubmit) {
+							onSubmit(tab);
+						} else {
+							void this.submitChoices(
+								tab, this.draft.builders.p1?.toString() || 'default',
+								this.draft.builders.p2?.toString() || 'default'
+							);
+						}
+					}}
+				>Submit replacements</button>
+			</div>
 			{renderSide('p1')}{renderSide('p2')}
-			<button
-				class="button" disabled={!ready}
-				onClick={() => {
-					if (!ready) return;
-					if (onSubmit) {
-						onSubmit(tab);
-					} else {
-						void this.submitChoices(
-							tab, this.draft.builders.p1?.toString() || 'default', this.draft.builders.p2?.toString() || 'default'
-						);
-					}
-				}}
-			>Submit replacements</button>
 		</div>;
 	}
 
@@ -2195,6 +2500,11 @@ class AnalysisApp extends preact.Component {
 	}
 
 	renderTeamPreviewChoices(tab: AnalysisTab) {
+		// An imported replay's brought-Pokémon step: the Pokémon the replay showed are already in the
+		// builders and can't be taken out. Seeded here rather than when the step opens, because creating
+		// the battle rebuilds the builders from the requests and would drop them.
+		const importStep = !!tab.importPreview;
+		if (importStep) this.seedImportPreviewPicks(tab);
 		const renderSide = (side: AnalysisSideID) => {
 			const request = tab.requests?.[sideIndex(side)];
 			if (!request?.side?.pokemon) {
@@ -2209,44 +2519,59 @@ class AnalysisApp extends preact.Component {
 				});
 				this.draft.builders[side] = builder;
 			}
-			return <div class="switchcontrols analysis-info-group analysis-team-preview-side">
+			const lockedCount = importStep ? this.importPreviewLockedCount(tab, side) : 0;
+			return <div class="switchcontrols analysis-info-group analysis-switch-group">
 				<h3 class="switchselect analysis-field-side-title">
 					Team {side === 'p1' ? 1 : 2} Choose Pokémon
 				</h3>
 				<div class="switchmenu">{request.side.pokemon.map((pokemon: any, index: number) => {
 					const selected = builder.alreadySwitchingIn.includes(index + 1);
+					// A locked Pokémon is one the replay showed on the field, so it was certainly brought.
+					const locked = importStep && !!tab.importPreview?.[side].includes(index);
 					const name = pokemon.name || pokemon.details || `Pokemon ${index + 1}`;
 					return <button
 						data-cmd={`/switch ${index + 1}`} class={`has-tooltip${selected ? ' disabled' : ''}`}
 						style={selected ? 'opacity:.5' : ''} data-tooltip={`analysispokemon|${sideIndex(side)}|${index}`}
 						aria-disabled={selected} aria-pressed={selected}
+						title={locked ? 'The replay shows this Pokémon was brought.' : undefined}
 						onMouseUp={() => this.selectPreviewPokemon(side, index)}
-					><PSIcon pokemon={pokemonLabel(pokemon)} />{name}</button>;
+					><PSIcon pokemon={pokemonLabel(pokemon)} />{name}{locked ? ' (seen)' : ''}</button>;
 				})}</div>
-				<p class="analysis-team-preview-count">
+				<p class="analysis-switch-count">
 					{builder.alreadySwitchingIn.length}/{builder.requestLength()} Chosen
+					{lockedCount ? ` (${lockedCount} seen in the replay)` : ''}
 				</p>
 			</div>;
 		};
 		const { p1, p2 } = this.draft.builders;
 		const ready = !!p1?.isDone() && !!p2?.isDone();
-		const hasChoices = !!(p1?.alreadySwitchingIn.length || p2?.alreadySwitchingIn.length);
+		const lockedTotal = importStep ?
+			this.importPreviewLockedCount(tab, 'p1') + this.importPreviewLockedCount(tab, 'p2') : 0;
+		const chosen = (p1?.alreadySwitchingIn.length || 0) + (p2?.alreadySwitchingIn.length || 0);
+		// Back only clears what the user chose; the locked picks come straight back on the next render.
+		const hasChoices = importStep ? chosen > lockedTotal : chosen > 0;
 		return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
+			{importStep ? <p class="analysis-field-note">
+				A replay can't show which Pokémon were brought but never sent out. The ones it did show are
+				locked in; choose the rest.
+			</p> : null}
 			<div>
 				<button
 					class="button" disabled={!hasChoices}
 					onClick={() => {
 						this.setChoiceBuilders(tab.requests, tab.gameType);
-						this.saveLeafDraft(tab);
+						if (!importStep) this.saveLeafDraft(tab);
 						this.forceUpdate();
 					}}
 				>Back</button>{' '}
 				<button
 					class="button" disabled={!ready}
 					onClick={() => {
-						if (ready) void this.submitChoices(tab, p1!.toString(), p2!.toString());
+						if (!ready) return;
+						if (importStep) void this.confirmImportPreview(tab, p1!.toString(), p2!.toString());
+						else void this.submitChoices(tab, p1!.toString(), p2!.toString());
 					}}
-				>Send out Pokémon</button>
+				>{importStep ? 'Start Analysis' : 'Send out Pokémon'}</button>
 			</div>
 			{renderSide('p1')}{renderSide('p2')}
 		</div>;
@@ -2302,7 +2627,9 @@ class AnalysisApp extends preact.Component {
 		}
 		if (tab.phase === 'one-turn') {
 			return <div class="analysis-choice-controls">
-				<button class="button" onClick={() => this.skipOneTurn(tab)}>Skip Turn</button>
+				<button class="button" onClick={() => this.skipOneTurn(tab)}>
+					<i class="fa fa-step-forward" aria-hidden></i><br />Skip Turn
+				</button>
 			</div>;
 		}
 		if (tab.phase === 'simulation-switch-selection') return this.renderMidTurnSwitchChoice(tab, true);
@@ -2363,27 +2690,44 @@ class AnalysisApp extends preact.Component {
 		const atStart = !currentNode?.parentId || (!!tab.sandbox && (currentNode.turn ?? 0) <= 1);
 		const nextNode = Object.values(tab.nodes).find(node => node.parentId === tab.currentNodeId);
 		const ready = this.draft.actionChoicesReady(tab.requests, 'p1') && this.draft.actionChoicesReady(tab.requests, 'p2');
+		// icons above the labels, reusing the replay controls' so the same action reads the same way
+		const turnControls = <div>
+			<span
+				class="analysis-grouping-help analysis-controls-help" data-help={DEFAULT_CONTROLS_HELP}
+				aria-label="What you can click in the battle"
+			><i class="fa fa-hand-pointer-o" aria-hidden="true" /> Controls</span>
+			<button class="button" disabled={atStart} onClick={() => this.openReplayFromStart(tab)}>
+				<i class="fa fa-fast-backward" aria-hidden></i><br />Replay from Start
+			</button>{' '}
+			<button class="button" disabled={atStart} onClick={() => this.replayPreviousTurn(tab)}>
+				<i class="fa fa-repeat" aria-hidden></i><br />Replay Prev Turn
+			</button>{' '}
+			<button class="button button-first" disabled={atStart} onClick={() => this.previousNode(tab)}>
+				<i class="fa fa-step-backward" aria-hidden></i><br />Prev Turn
+			</button>
+			<button
+				class="button button-last" disabled={!nextNode}
+				onClick={() => nextNode && this.selectAnalysisNode(tab, nextNode.id)}
+			><i class="fa fa-step-forward" aria-hidden></i><br />Next Turn</button>
+		</div>;
+		/*
+		 * The imported replay's final position: the battle is over, so there is no action to choose, nothing
+		 * to simulate and nothing worth editing — only the turn controls, to walk back through the game
+		 * (user request, 2026-09-19). Next Turn greys itself out, since the end node has no child.
+		 */
+		if (currentNode?.gameOver) {
+			return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
+				{turnControls}
+				<p class="analysis-field-note">
+					{currentNode.gameOver.winner ?
+						`${currentNode.gameOver.winner} won the battle.` :
+						'The battle ended in a tie.'}{' '}
+					Go back to an earlier turn to analyse it.
+				</p>
+			</div>;
+		}
 		return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
-			{/* icons above the labels, reusing the replay controls' so the same action reads the same way */}
-			<div>
-				<span
-					class="analysis-grouping-help analysis-controls-help" data-help={DEFAULT_CONTROLS_HELP}
-					aria-label="What you can click in the battle"
-				><i class="fa fa-hand-pointer-o" aria-hidden="true" /> Controls</span>
-				<button class="button" disabled={atStart} onClick={() => this.openReplayFromStart(tab)}>
-					<i class="fa fa-fast-backward" aria-hidden></i><br />Replay from Start
-				</button>{' '}
-				<button class="button" disabled={atStart} onClick={() => this.replayPreviousTurn(tab)}>
-					<i class="fa fa-repeat" aria-hidden></i><br />Replay Prev Turn
-				</button>{' '}
-				<button class="button button-first" disabled={atStart} onClick={() => this.previousNode(tab)}>
-					<i class="fa fa-step-backward" aria-hidden></i><br />Prev Turn
-				</button>
-				<button
-					class="button button-last" disabled={!nextNode}
-					onClick={() => nextNode && this.selectAnalysisNode(tab, nextNode.id)}
-				><i class="fa fa-step-forward" aria-hidden></i><br />Next Turn</button>
-			</div>
+			{turnControls}
 			{/* boxed like the field editor's Side groups, so it reads as a panel rather than loose rows */}
 			<div class="analysis-info-group analysis-action-summary">
 				<span class="analysis-field-side-title">Action Summary</span>
@@ -2415,7 +2759,10 @@ class AnalysisApp extends preact.Component {
 					/>
 				</label>
 			</div>
-			{requestState === 'move' && (currentNode?.turn ?? 0) >= 1 && tab.snapshot && tab.editOptions &&
+			{/* `gameOver` is checked above too; the sim never declares a winner here, so requestState is
+				still 'move' and this would otherwise offer an edit form for a finished battle */}
+			{requestState === 'move' && !currentNode?.gameOver && (currentNode?.turn ?? 0) >= 1 &&
+				tab.snapshot && tab.editOptions &&
 				(this.editPokemon ?
 					<AnalysisPokemonEditor
 						state={this.pokemonForm} snapshot={tab.snapshot} target={this.editPokemon}
@@ -2427,7 +2774,7 @@ class AnalysisApp extends preact.Component {
 						state={this.fieldForm} snapshot={tab.snapshot} options={tab.editOptions.field}
 						showMore={this.showMoreFieldEffects} disabled={!!tab.loading} error={this.editError}
 						onToggleShowMore={() => { this.showMoreFieldEffects = !this.showMoreFieldEffects; this.forceUpdate(); }}
-						onSave={changes => void this.saveEdits(tab, { field: changes })}
+						onSave={(changes, sides) => void this.saveEdits(tab, { field: changes, sides })}
 					/>)}
 		</div>;
 	}
@@ -2510,6 +2857,12 @@ class AnalysisApp extends preact.Component {
 							state={this.teamForm} side={teamSide} disabled={!!tab.loading} error={this.editError}
 							problems={this.editProblems} validated={tab.phase === 'preview'}
 							onSave={edit => void this.saveTeamEdits(tab, edit)} onCancel={this.closeTeambuilder}
+							onboarding={tab.onboarding ? {
+								warnings: tab.importWarnings,
+								onSwitchSide: side => void this.saveOnboardingTeam(tab, side),
+								onProceed: () => void this.saveOnboardingTeam(tab, null),
+								onSkip: () => void this.finishOnboarding(tab, true),
+							} : undefined}
 						/>
 					</div>}
 					<div
@@ -2534,6 +2887,9 @@ class AnalysisApp extends preact.Component {
 								if (tab.phase === 'simulating') this.cancelSimulation(tab, nodeId);
 								else this.selectAnalysisNode(tab, nodeId);
 							}}
+							// An import isn't a line to browse until it has been through onboarding and the
+							// brought-Pokémon step: leaving either half-done strands the tab in that mode.
+							locked={!!tab.onboarding || !!tab.importPreview}
 						/>}
 					{this.debugMode && <>
 						<h2>{tab.simulationGroups ? 'Selected Simulation Result' : 'Selected Node Data'}</h2>

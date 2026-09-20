@@ -16,7 +16,113 @@ import { toID } from '../../play.pokemonshowdown.com/src/battle-dex';
 import type { Args, KWArgs } from '../../play.pokemonshowdown.com/src/battle-text-parser';
 
 export class AnalysisBattleRenderer extends Battle {
+	/**
+	 * `[analysisresync]` marks a line that states **how the position already stands**, rather than reporting
+	 * something that just happened. `getRenderedLog` puts it on the reconstruction's whole edit block when it
+	 * splices an imported replay's own history in front of that position.
+	 *
+	 * Against real history such a line is a restatement, and saying it again is wrong twice over.
+	 *
+	 * It **corrupts the field**, because `switch` and `swap` resolve *positionally* upstream while the edit
+	 * layer wrote them as a delta from a fresh battle's Team Preview leads: a `|swap|` moves whoever happens
+	 * to be sitting in the named slot, and `getSwitchedPokemon` skips Pokémon that are already active, so the
+	 * `|switch|` after it adds a *second* copy of one that is already out (measured: Ceruledge in both of
+	 * p1's slots).
+	 *
+	 * And it **narrates setup as history** — a Mega Evolution announced a second time, a Disable re-applied —
+	 * in the middle of a replay the user is watching (user report, 2026-09-19).
+	 *
+	 * So each line is read absolutely: skipped wherever the replay already agrees, which is almost everywhere,
+	 * and still applied where it doesn't, so a Set Active edit on a replay node moves the sprite as ever.
+	 */
+	override runMajor(args: Args, kwArgs: KWArgs, preempt?: boolean) {
+		if (kwArgs.analysisresync && this.applyAnalysisResync(args)) return;
+		super.runMajor(args, kwArgs, preempt);
+	}
+
+	/** True when the line has been dealt with and upstream should not see it. */
+	applyAnalysisResync(args: Args) {
+		if (args[0] === 'faint') {
+			// already fainted in the replay's own history, so saying it again only re-plays the animation
+			return !!this.getPokemon(args[1])?.fainted;
+		}
+		if (args[0] === 'detailschange' || args[0] === '-formechange') {
+			const pokemon = this.getPokemon(args[1]);
+			return !!pokemon && pokemon.speciesForme === (args[2] || '').split(',')[0];
+		}
+		if (args[0] === '-mega') {
+			// the `detailschange` beside it carries the forme; this line is only the announcement
+			return !!this.getPokemon(args[1])?.speciesForme.includes('-Mega');
+		}
+		if (args[0] === '-ability') {
+			return this.getPokemon(args[1])?.ability === args[2];
+		}
+		if (args[0] === '-start' || args[0] === '-end') {
+			// a volatile the replay already announced, Disable and its locked move included
+			const pokemon = this.getPokemon(args[1]);
+			const id = toID((args[2] || '').replace(/^(?:move|ability|item): /, ''));
+			return !!pokemon && !!pokemon.volatiles[id] === (args[0] === '-start');
+		}
+		if (args[0] !== 'switch' && args[0] !== 'swap') return false;
+		const { name, siden, slot } = this.parsePokemonId(args[1]);
+		const side = this.sides[siden];
+		if (!side) return false;
+		// Where this Pokémon actually is on the field right now, which is what both lines are talking about.
+		let index = -1;
+		for (let i = 0; i < side.active.length; i++) {
+			if (side.active[i]?.name === name) index = i;
+		}
+		const target = args[0] === 'swap' ? Number(args[2]) : slot;
+		if (isNaN(target) || target < 0) return false;
+		if (index === target) return true;
+		// Already out, in the wrong slot: an arrangement change, whichever line said so.
+		if (index >= 0) {
+			side.swapTo(side.active[index]!, target);
+			return true;
+		}
+		// Not on the field at all, so it really is switching in. A `swap` naming it is stale and does nothing.
+		return args[0] === 'swap';
+	}
+
+	/**
+	 * Whether the scene was animating before a resync block muted it, or `null` outside one.
+	 *
+	 * Skipping the lines a resync block restates isn't enough on its own to make it invisible: `-sethp`
+	 * animates a heal or a hit whatever its keywords say, and the exact HP it sets never quite matches the
+	 * percentage a replay showed. So the block is bracketed and the scene simply doesn't animate inside it.
+	 */
+	analysisResyncAnimating: boolean | null = null;
+
+	beginAnalysisResync() {
+		if (this.analysisResyncAnimating !== null) return;
+		const scene = this.scene as any;
+		this.analysisResyncAnimating = !!scene.animating;
+		// Already seeking: playback is silent anyway, and turning it back on would end the seek early.
+		if (scene.animating) scene.animating = false;
+	}
+
+	endAnalysisResync() {
+		const wasAnimating = this.analysisResyncAnimating;
+		this.analysisResyncAnimating = null;
+		// `animationOn` is upstream's own way back: it re-enables the scene and resets every sprite, weather
+		// and side condition to the state the block just wrote, which is exactly the resync we want.
+		if (wasAnimating) (this.scene as any).animationOn();
+	}
+
 	override runMinor(args: Args, kwArgs: KWArgs, nextArgs?: Args, nextKwargs?: KWArgs) {
+		// `|-message|analysisresync|start|[silent]` brackets a block the renderer applies but never shows
+		if (args[0] === '-message' && args[1] === 'analysisresync') {
+			if (args[2] === 'start') {
+				this.beginAnalysisResync();
+			} else {
+				// the block's own summary line was dropped, so its exact durations ride on this bracket;
+				// applied before the scene comes back, so the re-render shows the corrected turn counts
+				if (kwArgs.analysisdurations) this.applyAnalysisDurations(kwArgs.analysisdurations);
+				this.endAnalysisResync();
+			}
+			return;
+		}
+		if (kwArgs.analysisresync && this.applyAnalysisResync(args)) return;
 		super.runMinor(args, kwArgs, nextArgs, nextKwargs);
 		if (args[0] === '-message' && kwArgs.analysisdurations) this.applyAnalysisDurations(kwArgs.analysisdurations);
 		// `|-message|analysiscounter|POKEMON|toxic|3|[silent]`: the toxic and sleep counters an edit set
@@ -26,7 +132,20 @@ export class AnalysisBattleRenderer extends Battle {
 			if (pokemon && turns >= 0) {
 				if (args[3] === 'toxic') pokemon.statusData.toxicTurns = turns;
 				if (args[3] === 'sleep') pokemon.statusData.sleepTurns = turns;
+				// Rage Fist's base power; the renderer only counts hits it watched land
+				if (args[3] === 'timesattacked') pokemon.timesAttacked = turns;
 			}
+		}
+		/*
+		 * `|-message|analysisfaintcounter|SIDE|N|[silent]`: how many Pokémon have fainted on that side, which
+		 * an imported replay restores. The renderer's own tally only counts faints it watched happen, and a
+		 * reconstructed position never watched any — so Last Respects and Supreme Overlord would read 0 in
+		 * the tooltips while the sim had the real number.
+		 */
+		if (args[0] === '-message' && args[1] === 'analysisfaintcounter') {
+			const side = this.sides[args[2] === 'p1' ? 0 : 1];
+			const fainted = Number(args[3]);
+			if (side && fainted >= 0) side.faintCounter = fainted;
 		}
 		/*
 		 * `|-message|analysisfaint|SIDE|TEAMSLOT|1|[silent]`: an edit fainted or revived a **benched** Pokémon,

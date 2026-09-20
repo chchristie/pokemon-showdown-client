@@ -399,10 +399,14 @@ async function main() {
 
 		// --- volatiles ---
 		const listed = await filterVolatiles(page, '');
-		expect(listed.length === 27, `singles should list 27 volatiles, not ${listed.length}`);
+		expect(listed.length === 31, `singles should list 31 volatiles, not ${listed.length}`);
 		expect(!listed.find(option => option.key === 'dynamax'), 'Dynamax should be absent outside gen 8');
 		expect(listed.find(option => option.key === 'leechseed'),
 			'Leech Seed should be one option in singles, not one per slot');
+		// added 2026-09-19; Protosynthesis and Quark Drive are gen 9+, the other two are every generation
+		for (const key of ['taunt', 'imprison', 'protosynthesis', 'quarkdrive']) {
+			expect(listed.find(option => option.key === key), `${key} should be offered in gen 9`);
+		}
 		step(`the volatiles list has ${listed.length} entries, gen-filtered`);
 
 		const filtered = await filterVolatiles(page, 'sub');

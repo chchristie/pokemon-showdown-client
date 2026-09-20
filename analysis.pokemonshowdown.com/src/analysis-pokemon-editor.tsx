@@ -18,6 +18,7 @@
  * the user changed; the server drops entries that change nothing.
  */
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
+import { toID } from '../../play.pokemonshowdown.com/src/battle-dex';
 import {
 	ANALYSIS_VOLATILES, type AnalysisEdits, type AnalysisPokemonSnapshot, type AnalysisPokemonStateEdit,
 	type AnalysisSideID, type AnalysisSnapshot, type AnalysisTeamEdit, type AnalysisVolatileContext,
@@ -77,6 +78,13 @@ interface PokemonForm {
 	teraType: string;
 	nature: string;
 	ability: string;
+	/**
+	 * The **current**, while-active ability, as opposed to the set's — what Trace, Skill Swap or a Mega
+	 * Evolution leaves behind. Empty means "same as the set". Only active Pokémon can have one.
+	 */
+	currentAbility: string;
+	/** hits taken, for Rage Fist; only offered when the Pokémon actually has the move */
+	timesAttacked: string;
 	item: string;
 	moves: string[];
 	evs: { [stat in StatID]: string };
@@ -146,6 +154,10 @@ export function getPokemonForm(pokemon: AnalysisPokemonSnapshot, doubles = false
 		teraType: set.teraType || pokemon.teraType || '',
 		nature: set.nature || 'Serious',
 		ability: set.ability || pokemon.ability,
+		// A current ability that already differs from the set is an in-battle change (Trace, a Mega), so
+		// the dropdown should show it as such rather than silently rewriting the set to match.
+		currentAbility: toID(pokemon.ability) !== toID(set.ability || pokemon.ability) ? pokemon.ability : '',
+		timesAttacked: `${pokemon.timesAttacked ?? 0}`,
 		item: set.item || '',
 		moves: pokemon.moves.map(move => move.name),
 		evs: statTable(set.evs, 0),
@@ -234,6 +246,16 @@ export function getPokemonFormChanges(
 	// that came from an earlier node, since no protocol line takes it back)
 	if (form.terastallized !== initial.terastallized) edit.terastallized = form.terastallized;
 	if (form.megaEvolved && !initial.megaEvolved) edit.megaEvolved = true;
+	// The while-active ability is state, not a set change: picking from the dropdown's second group sets
+	// this instead of rewriting the team (see the audit's "Agreed design").
+	if (form.currentAbility !== initial.currentAbility) {
+		edit.ability = form.currentAbility || form.ability;
+	}
+	if (form.timesAttacked !== initial.timesAttacked) {
+		const hits = toNumber(form.timesAttacked);
+		if (isNaN(hits) || hits < 0) return null;
+		edit.timesAttacked = hits;
+	}
 
 	const changes: AnalysisEdits = {};
 	if (Object.keys(edit).length) changes.pokemon = { [`${target.side}:${target.teamSlot}`]: edit };
@@ -299,6 +321,8 @@ export function mergePokemonEdits(existing: AnalysisEdits, changes: AnalysisEdit
 	}
 	// a team edit is the whole roster, so a later save for a side replaces the earlier one outright
 	if (changes.teams) merged.teams = { ...merged.teams, ...changes.teams };
+	// per-side state is one value per side, so the same rule applies
+	if (changes.sides) merged.sides = { ...merged.sides, ...changes.sides };
 	if (changes.active) {
 		merged.active = { ...merged.active };
 		for (const side of ['p1', 'p2'] as const) {
@@ -455,7 +479,7 @@ export function megaFormeFor(dex: any, item: string, species: string) {
  */
 const OPTION_CACHE = new Map<string, string[]>();
 
-function searchOptions(type: 'item' | 'move', formatId: string, set: any, cacheKey: string): string[] {
+function searchOptions(type: 'item' | 'move' | 'ability', formatId: string, set: any, cacheKey: string): string[] {
 	const cached = OPTION_CACHE.get(cacheKey);
 	if (cached) return cached;
 	const names: string[] = [];
@@ -466,7 +490,10 @@ function searchOptions(type: 'item' | 'move', formatId: string, set: any, cacheK
 		const dex = search.dex || Dex;
 		for (const row of search.results || []) {
 			if (row[0] !== type || !row[1]) continue;
-			const name = type === 'item' ? dex.items.get(row[1])?.name : dex.moves.get(row[1])?.name;
+			let name;
+			if (type === 'item') name = dex.items.get(row[1])?.name;
+			else if (type === 'ability') name = dex.abilities.get(row[1])?.name;
+			else name = dex.moves.get(row[1])?.name;
 			if (name && !names.includes(name)) names.push(name);
 		}
 	} catch {
@@ -482,6 +509,16 @@ export function itemOptions(formatId: string, set: any): string[] {
 
 export function moveOptions(formatId: string, set: any): string[] {
 	return searchOptions('move', formatId, set, `move|${formatId}|${set?.species || ''}`);
+}
+
+/**
+ * Every ability the format has, alphabetically — what Skill Swap or Trace could have left on an active
+ * Pokémon. Sourced from `DexSearch` like items and moves, so mod abilities are included.
+ */
+export function abilityListOptions(formatId: string): string[] {
+	// Deliberately no species: `DexSearch` filters abilities to the set's own when given one, which is the
+	// opposite of what this list is for — Skill Swap and Trace can leave anything on an active Pokémon.
+	return [...searchOptions('ability', formatId, {}, `ability|${formatId}`)].sort();
 }
 
 /** Natures with their stat changes, as the teambuilder labels them. */
@@ -597,6 +634,47 @@ export class AnalysisPokemonEditor extends preact.Component<{
 		>
 			{extra.allowEmpty !== undefined && <option value="">{extra.allowEmpty}</option>}
 			{entries.map(entry => <option value={entry.id}>{entry.label}</option>)}
+		</select>;
+	}
+
+	/**
+	 * The ability picker. A **benched** Pokémon gets its own abilities only, editing the set as before —
+	 * nothing can have Skill Swapped a Pokémon that isn't on the field.
+	 *
+	 * An **active** one gets two groups (user request, 2026-09-19), because Skill Swap, Trace and Mega
+	 * Evolution can give it anything. **Which group you pick from decides what is written**: its own
+	 * abilities set the *set's* ability, as before; anything from the full list sets only the current,
+	 * while-active ability, since "this was Traced into Intimidate" is not a claim about its team.
+	 */
+	abilitySelect(form: PokemonForm, dex: any, snapshot: AnalysisSnapshot, isActive: boolean) {
+		const own = abilityOptions(dex, form.species);
+		if (!isActive) {
+			return this.select(form.ability, own, value => this.update({ ability: value, currentAbility: '' }), {
+				label: 'Ability',
+			});
+		}
+		const all = abilityListOptions(snapshot.formatId);
+		// `current:` marks the second group, so an ability that appears in both stays unambiguous.
+		const value = form.currentAbility ? `current:${toID(form.currentAbility)}` : form.ability;
+		const onChange = (picked: string) => {
+			if (picked.startsWith('current:')) {
+				const name = all.find(entry => toID(entry) === picked.slice(8)) || '';
+				this.update({ currentAbility: name });
+			} else {
+				this.update({ ability: picked, currentAbility: '' });
+			}
+		};
+		return <select
+			class="select" value={value} disabled={this.props.disabled}
+			aria-label="Ability" data-pokemon-select="Ability"
+			onChange={event => onChange((event.target as HTMLSelectElement).value)}
+		>
+			<optgroup label={`${form.species}'s abilities`}>
+				{own.map(name => <option value={name}>{name}</option>)}
+			</optgroup>
+			<optgroup label="Set as its current ability">
+				{all.map(name => <option value={`current:${toID(name)}`}>{name}</option>)}
+			</optgroup>
 		</select>;
 	}
 
@@ -769,9 +847,7 @@ export class AnalysisPokemonEditor extends preact.Component<{
 				{row('Nature', this.select(form.nature, natureOptions(), value => this.update({ nature: value }), {
 					label: 'Nature',
 				}))}
-				{row('Ability', this.select(form.ability, abilityOptions(dex, form.species), value => this.update({
-					ability: value,
-				}), { label: 'Ability' }))}
+				{row('Ability', this.abilitySelect(form, dex, snapshot, pokemon.isActive))}
 				{row('Item', this.select(form.item, items, value => this.update({ item: value }), {
 					label: 'Item', allowEmpty: '(none)',
 				}))}
@@ -857,6 +933,18 @@ export class AnalysisPokemonEditor extends preact.Component<{
 					nextPP[slot] = `${maxPPFor(dex, value)}`;
 					this.update({ moves, pp: nextPP });
 				}, { label: `Move ${slot + 1}`, allowEmpty: '(none)' })}
+				{/*
+					Rage Fist's power comes from how many hits the Pokémon has taken, which a rebuilt battle
+					has no way to know — so it gets an input, beside the move it belongs to (user request,
+					2026-09-19). Every other history counter is restored by the replay parser and never shown.
+				*/}
+				{toID(name) === 'ragefist' && <span class="analysis-move-hits">
+					{this.numberInput(form.timesAttacked, text => this.update({ timesAttacked: text }), {
+						label: 'Times Attacked', className: 'analysis-stat-input',
+						valid: toNumber(form.timesAttacked) >= 0,
+					})}
+					<span>hits taken</span>
+				</span>}
 				<span class="analysis-move-pp">
 					{this.numberInput(form.pp[slot] ?? '', text => {
 						const nextPP = [...form.pp];

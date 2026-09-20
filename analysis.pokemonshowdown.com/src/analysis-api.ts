@@ -28,6 +28,8 @@ export interface AnalysisSetupResponse {
 	count: number;
 	/** one species per active slot, all different so the renderer can tell them apart */
 	species: string[];
+	/** the nickname each placeholder carries: "Placeholder", or "Placeholder N" when a side has several */
+	names: string[];
 	level: number;
 	team1: string;
 	team2: string;

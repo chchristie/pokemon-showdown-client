@@ -7,6 +7,7 @@
  * - the placeholders are active, have no moves, and can only Struggle
  * - clicking a placeholder's sprite opens the teambuilder focused on that Pokémon's species, rather than
  *   its action menu, and stops doing so once it has been built into a real Pokémon
+ * - the placeholders are nicknamed "Placeholder", and replacing one's species drops that nickname
  * - the Pokémon panel offers four move rows, so a Pokémon that starts with none can be given a full set
  * - doubles puts two placeholders on each side, both out
  * Usage and prerequisites: see README.md in this folder.
@@ -195,8 +196,35 @@ async function main() {
 		const opponentSide = await page.evaluate(() =>
 			document.querySelector('.analysis-teambuilder-heading strong')?.textContent || '');
 		expect(opponentSide === 'Edit Team 2', `it should open Team 2's teambuilder, got "${opponentSide}"`);
-		await clickTeambuilderButton(page, 'Cancel');
 		step("a placeholder clicked from another Pokémon's action menu opens its teambuilder");
+
+		/*
+		 * Replacing a placeholder renames it. "Placeholder" is a real nickname, and upstream's editor keeps
+		 * real nicknames across a species change (it only drops one equal to the old species), so without
+		 * the fork's own rule this leaves a Garchomp still called Placeholder.
+		 * `lstatbar` is the far side's active Pokémon, i.e. Team 2's.
+		 */
+		const farName = () => page.evaluate(() =>
+			document.querySelector('.battle .lstatbar strong')?.textContent?.trim() || '');
+		const placeholderSet = await page.evaluate(() => window.editor?.sets?.[0]?.name || '');
+		expect(placeholderSet === 'Placeholder',
+			`a singles placeholder should be nicknamed Placeholder, got "${placeholderSet}"`);
+		expect(await farName() === 'Placeholder',
+			`the field should show the nickname, got "${await farName()}"`);
+		// drive the editor's own changeSpecies, which is the upstream path that decides about the nickname
+		await page.evaluate(() => {
+			const editor = window.editor;
+			editor.changeSpecies(editor.sets[0], 'Garchomp');
+			editor.save();
+			editor.update();
+		});
+		await clickTeambuilderButton(page, 'Save');
+		await waitFor(page, () => !document.querySelector('.analysis-teambuilder'), 'the teambuilder to close');
+		await waitForDecision(page);
+		const replaced = await farName();
+		expect(replaced === 'Garchomp',
+			`replacing a placeholder should leave a Garchomp called Garchomp, got "${replaced}"`);
+		step('replacing a placeholder drops the Placeholder nickname');
 
 		if (errors.length) throw new Error(`page errors:\n${errors.join('\n')}`);
 

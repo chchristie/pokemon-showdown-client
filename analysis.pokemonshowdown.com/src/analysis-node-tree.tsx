@@ -24,9 +24,9 @@ function positionNodeTooltip(event: Event) {
 }
 
 function NodeSummary(props: {
-	key?: string, tab: AnalysisTab, node: AnalysisNode, onSelect: (nodeId: string) => void,
+	key?: string, tab: AnalysisTab, node: AnalysisNode, onSelect: (nodeId: string) => void, locked?: boolean,
 }) {
-	const { tab, node, onSelect } = props;
+	const { tab, node, onSelect, locked } = props;
 	const tooltipId = `analysis-node-events-${node.id}`;
 	const hasChild = hasChildNodes(tab, node.id);
 	const showTurnEvents = node.turn > 0 && hasChild && !!node.turnEventSummary;
@@ -41,15 +41,21 @@ function NodeSummary(props: {
 	const showTooltip = showTurnEvents || !!editSummary || !!teamSummary;
 	return <li class={`analysis-node-entry${node.id === tab.currentNodeId ? ' analysis-node-current' : ''}`}>
 		<button
-			class="analysis-node-button" onClick={() => onSelect(node.id)}
+			class="analysis-node-button" onClick={() => onSelect(node.id)} disabled={locked}
 			onMouseEnter={showTooltip ? positionNodeTooltip : undefined}
 			onFocus={showTooltip ? positionNodeTooltip : undefined}
 			aria-describedby={showTooltip ? tooltipId : undefined}
 		>
-			<strong>{node.turn === 0 ? 'Team Preview' : `Turn ${node.turn}`}</strong>
-			{node.turn === 0 ?
-				<AnalysisTeamSelectionSummaryView teams={node.teamSelectionSummary || { p1: [], p2: [] }} /> :
-				<AnalysisChoiceSummaryView choices={node.choiceSummary || []} gameType={tab.gameType} />}
+			<strong>
+				{node.gameOver ? 'Game Over' : node.turn === 0 ? 'Team Preview' : `Turn ${node.turn}`}
+			</strong>
+			{node.gameOver ?
+				<span class="analysis-node-outcome">
+					{node.gameOver.winner ? `${node.gameOver.winner} won` : 'Tie'}
+				</span> :
+				node.turn === 0 ?
+					<AnalysisTeamSelectionSummaryView teams={node.teamSelectionSummary || { p1: [], p2: [] }} /> :
+					<AnalysisChoiceSummaryView choices={node.choiceSummary || []} gameType={tab.gameType} />}
 		</button>
 		{showTooltip ? <div id={tooltipId} class="analysis-node-tooltip" role="tooltip">
 			{teamSummary ? <div class="analysis-node-edits">
@@ -80,18 +86,34 @@ function NodeSummary(props: {
 }
 
 function NodeTreeItems(props: {
-	tab: AnalysisTab, items: AnalysisNodeTreeItem[], onSelect: (nodeId: string) => void,
+	tab: AnalysisTab, items: AnalysisNodeTreeItem[], onSelect: (nodeId: string) => void, locked?: boolean,
 }) {
 	return <>{props.items.map(item => 'node' in item ?
-		<NodeSummary key={item.node.id} tab={props.tab} node={item.node} onSelect={props.onSelect} /> :
+		<NodeSummary
+			key={item.node.id} tab={props.tab} node={item.node} onSelect={props.onSelect} locked={props.locked}
+		/> :
 		<li class="analysis-node-branch" key={`branch-${item.branch[0] && 'node' in item.branch[0] ? item.branch[0].node.id : ''}`}>
-			<ol><NodeTreeItems tab={props.tab} items={item.branch} onSelect={props.onSelect} /></ol>
+			<ol>
+				<NodeTreeItems
+					tab={props.tab} items={item.branch} onSelect={props.onSelect} locked={props.locked}
+				/>
+			</ol>
 		</li>
 	)}</>;
 }
 
-export function AnalysisNodeTree(props: { tab: AnalysisTab, onSelect: (nodeId: string) => void }) {
+/**
+ * `locked` makes every node unselectable, for the steps an import has to finish before there is a line to
+ * browse at all. Selecting a node there closed the teambuilder while leaving the tab mid-onboarding, so
+ * reopening it came back in "complete the reconstruction" mode on a tab that was already past it.
+ */
+export function AnalysisNodeTree(props: {
+	tab: AnalysisTab, onSelect: (nodeId: string) => void, locked?: boolean,
+}) {
 	return <ol class="analysis-node-tree">
-		<NodeTreeItems tab={props.tab} items={getAnalysisNodeTreeItems(props.tab)} onSelect={props.onSelect} />
+		<NodeTreeItems
+			tab={props.tab} items={getAnalysisNodeTreeItems(props.tab)} onSelect={props.onSelect}
+			locked={props.locked}
+		/>
 	</ol>;
 }

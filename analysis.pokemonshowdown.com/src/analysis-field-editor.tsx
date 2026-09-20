@@ -56,6 +56,20 @@ function findEffect(effects: AnalysisEffectSnapshot[] | undefined, id: string) {
 	return null;
 }
 
+/** The `edits.sides` half of a field-form save: only the counts the user actually changed. */
+export function getSideStateChanges(initial: FieldForm, form: FieldForm) {
+	const before = (initial as any).fainted || {};
+	const after = (form as any).fainted || {};
+	const sides: { p1?: { totalFainted: number }, p2?: { totalFainted: number } } = {};
+	for (const side of SIDES) {
+		if (after[side] === before[side]) continue;
+		const count = Number(after[side]);
+		if (!Number.isInteger(count) || count < 0 || count > 100) return null;
+		sides[side] = { totalFainted: count };
+	}
+	return Object.keys(sides).length ? sides : undefined;
+}
+
 function optionKey(option: AnalysisFieldEffectOption, side?: AnalysisSideID) {
 	if (option.kind === 'weather' || option.kind === 'terrain') return option.kind;
 	return side ? `${side}:${option.id}` : option.id;
@@ -67,6 +81,12 @@ export function getFieldForm(snapshot: AnalysisSnapshot, options: AnalysisFieldE
 		weather: effectValue(snapshot.field.weather),
 		terrain: effectValue(snapshot.field.terrain),
 	};
+	// Not a field effect, but per-side state with nowhere else to live: Last Respects and Supreme Overlord
+	// read it, and a reconstructed position has nobody fainted (user request, 2026-09-19).
+	form.fainted = {
+		p1: `${snapshot.sides[0]?.totalFainted ?? 0}`,
+		p2: `${snapshot.sides[1]?.totalFainted ?? 0}`,
+	} as any;
 	// plain loops: the client build rejects closures that capture loop variables
 	for (const option of options) {
 		if (option.kind === 'pseudoWeather') {
@@ -167,7 +187,10 @@ export class AnalysisFieldEditor extends preact.Component<{
 	disabled: boolean,
 	onToggleShowMore: () => void,
 	error?: string,
-	onSave: (changes: AnalysisFieldStateEdit) => void,
+	onSave: (
+		changes: AnalysisFieldStateEdit,
+		sides?: { p1?: { totalFainted: number }, p2?: { totalFainted: number } },
+	) => void,
 }> {
 	resetIfNeeded() {
 		const { state } = this.props;
@@ -299,12 +322,35 @@ export class AnalysisFieldEditor extends preact.Component<{
 			<div class="analysis-field-row">{this.renderToggle(row[0], side, inline)}</div>);
 	}
 
+	/** How many Pokémon have fainted on this side, which Last Respects and Supreme Overlord read. */
+	renderFaintedInput(side: AnalysisSideID) {
+		const form = this.props.state.form as any;
+		const value = form.fainted?.[side] ?? '0';
+		const count = Number(value);
+		const valid = Number.isInteger(count) && count >= 0 && count <= 100;
+		return <div class="analysis-field-row analysis-field-fainted">
+			<label>Number Fainted</label>
+			<input
+				type="number" min="0" max="100" value={value} disabled={this.props.disabled}
+				aria-label={`Side ${side === 'p1' ? 1 : 2} Number Fainted`}
+				class={`textbox analysis-field-turns${valid ? '' : ' analysis-field-invalid'}`}
+				onInput={event => {
+					const next = { ...(form.fainted || {}) };
+					next[side] = (event.target as HTMLInputElement).value;
+					form.fainted = next;
+					this.forceUpdate();
+				}}
+			/>
+		</div>;
+	}
+
 	override render() {
 		this.resetIfNeeded();
 		const { options, showMore, disabled } = this.props;
 		const visible = options.filter(option => showMore || option.common);
 		const changes = getFieldFormChanges(this.props.state.initial, this.props.state.form, options);
-		const changed = !changes || Object.keys(changes).length > 0;
+		const sideState = getSideStateChanges(this.props.state.initial, this.props.state.form);
+		const changed = !changes || Object.keys(changes).length > 0 || sideState === null || !!sideState;
 		const groupOptions = (kind: 'weather' | 'terrain') => options.filter(option => option.kind === kind);
 		const sideOptions = visible.filter(option => option.kind === 'sideCondition');
 		return <div class="analysis-field-editor">
@@ -312,8 +358,8 @@ export class AnalysisFieldEditor extends preact.Component<{
 				<strong>Edit Field</strong>
 				<div class="analysis-field-actions">
 					<button
-						type="button" class="button" disabled={disabled || !changed || !changes}
-						onClick={() => { if (changes) this.props.onSave(changes); }}
+						type="button" class="button" disabled={disabled || !changed || !changes || sideState === null}
+						onClick={() => { if (changes && sideState !== null) this.props.onSave(changes, sideState); }}
 					>Save</button>
 					<button
 						type="button" class="button" disabled={disabled || !changed}
@@ -337,6 +383,11 @@ export class AnalysisFieldEditor extends preact.Component<{
 				>
 					<span class="analysis-field-side-title">Side {sideNumber + 1}</span>
 					{this.renderToggleRows(sideOptions, side)}
+					{/*
+						Uncommon, so it sits behind Show more: it only matters for an imported replay, or for
+						setting up a Last Respects / Supreme Overlord position by hand.
+					*/}
+					{showMore && this.renderFaintedInput(side)}
 				</div>)}
 			</div>
 		</div>;

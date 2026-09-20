@@ -64,6 +64,8 @@
 	.analysis-node-branch { margin: 3px 0; padding-left: 16px; border-left: 2px solid #8ba4b3; list-style: none; }
 	.analysis-node-button { display: block; box-sizing: border-box; width: 100%; min-width: 0; padding: 4px 6px; overflow: hidden; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
 	.analysis-node-button > strong { display: block; }
+	/* the end-of-game node's result, where a turn node shows its chosen actions */
+	.analysis-node-outcome { display: block; margin: 6px 0 0; font: 9pt monospace; color: #53616b; }
 	.analysis-node-button .analysis-choice-summary-wrap { margin-bottom: 0; }
 	.analysis-node-button:hover, .analysis-node-current .analysis-node-button { background: #dbeaf4; }
 	.analysis-node-tooltip { visibility: hidden; position: fixed; z-index: 30; top: 0; left: 0; pointer-events: none; box-sizing: border-box; width: 360px; max-width: calc(100vw - 16px); padding: 8px 10px; border: 1px solid #64757f; background: #26343d; color: #fff; font-size: 9pt; font-weight: normal; line-height: 1.35; white-space: normal; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
@@ -110,6 +112,12 @@
 	.analysis-field-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
 	.analysis-field-rows { display: flex; flex-direction: column; align-items: center; gap: 5px; }
 	.analysis-field-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 5px 10px; }
+	/* per-side state rather than a field effect, so it keeps its label beside the input; the label matches
+	   the segmented buttons' font, and Side 2 mirrors the input to the left as its toggles mirror */
+	.analysis-field-fainted { align-items: center; gap: 6px; }
+	.analysis-field-fainted label { color: #222; font: 8pt Verdana, Helvetica, Arial, sans-serif; white-space: nowrap; }
+	.analysis-field-fainted .analysis-field-turns { width: 44px; }
+	.analysis-field-side-p2 .analysis-field-fainted { flex-direction: row-reverse; }
 	.analysis-field-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; margin-top: 10px; }
 	.analysis-field-joined { gap: 0; }
 	/* joined rows overlap borders by moving whole items (button and input), not just the buttons */
@@ -167,11 +175,11 @@
 	 *   keeps that 102px as the ceiling so a short team looks like every other switch menu rather than
 	 *   stretching two buttons across the panel.
 	 */
-	.analysis-team-preview-side { max-width: none; margin: 10px 0; }
-	.analysis-team-preview-side .switchmenu { display: flex; flex-wrap: nowrap; gap: 4px; margin-right: 0; padding-left: 0; }
-	.analysis-team-preview-side .switchmenu button { flex: 1 1 0; float: none; width: auto; max-width: 102px; min-width: 0; margin-right: 0; }
-	.analysis-team-preview-side h3 { margin: 0; }
-	.analysis-team-preview-count { margin: 6px 0 0; padding: 0; color: #53616b; font: 9pt monospace; }
+	.analysis-switch-group { max-width: none; margin: 10px 0; }
+	.analysis-switch-group .switchmenu { display: flex; flex-wrap: nowrap; gap: 4px; margin-right: 0; padding-left: 0; }
+	.analysis-switch-group .switchmenu button { flex: 1 1 0; float: none; width: auto; max-width: 102px; min-width: 0; margin-right: 0; }
+	.analysis-switch-group h3 { margin: 0; }
+	.analysis-switch-count { margin: 6px 0 0; padding: 0; color: #53616b; font: 9pt monospace; }
 	.analysis-info-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
 	.analysis-info-row + .analysis-info-row { margin-top: 5px; }
 	.analysis-info-field { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
@@ -210,6 +218,14 @@
 	.analysis-stat-table .analysis-stat-total { font-weight: bold; }
 	.analysis-stat-input { box-sizing: border-box; width: 4.2em; padding: 1px 3px; text-align: right; }
 	.analysis-move-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+	/* Rage Fist's hit counter sits between its move and its PP, so the row needs a third column. It is
+	   left-aligned in that column, unlike the PP cell which hugs the right edge of the row. */
+	/* The hits column takes the free space so its input sits just after the move select, left-aligned;
+	   without that the 1fr select pushes both it and the PP cell against the right edge. The select is
+	   held to its column's width, or it overflows and covers the input. */
+	.analysis-move-row:has(.analysis-move-hits) { grid-template-columns: minmax(0, 16em) minmax(0, 1fr) auto; }
+	.analysis-move-row:has(.analysis-move-hits) > select { width: 100%; max-width: 100%; }
+	.analysis-move-hits { display: flex; justify-content: flex-start; align-items: center; gap: 4px; white-space: nowrap; }
 	.analysis-move-pp { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
 	.analysis-move-row + .analysis-move-row { margin-top: 4px; }
 	.analysis-move-row select { min-width: 0; }
@@ -311,6 +327,7 @@
 <script src="../play.pokemonshowdown.com/data/typechart.js?"></script>
 <script src="../play.pokemonshowdown.com/data/aliases.js?"></script>
 <script src="../play.pokemonshowdown.com/js/battle-tooltips.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-scene-stub.js?"></script>
 <script src="../play.pokemonshowdown.com/js/battle.js?"></script>
 <script src="../play.pokemonshowdown.com/js/battle-choices.js?"></script>
 <!--
@@ -340,4 +357,7 @@
 <script src="js/analysis-pokemon-editor.js?"></script>
 <script src="js/analysis-teambuilder.js?"></script>
 <script src="js/analysis-replay-controls.js?"></script>
+<!-- Replay import: the parser runs the client `Battle` headlessly, which needs the scene stub. -->
+<script src="js/analysis-replay-parse.js?"></script>
+<script src="js/analysis-replay-import.js?"></script>
 <script src="js/analysis.js?"></script>

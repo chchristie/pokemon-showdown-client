@@ -56,16 +56,36 @@ export interface AnalysisEdits {
 	active?: { p1?: (number | null)[], p2?: (number | null)[] };
 	/** keyed `p1:<teamSlot>` (see AnalysisPokemonSnapshot) */
 	pokemon?: { [sideAndTeamSlot: string]: AnalysisPokemonStateEdit };
+	/** per-side state that isn't a side condition; side conditions live under `field.sides` */
+	sides?: { p1?: AnalysisSideStateEdit, p2?: AnalysisSideStateEdit };
 	field?: AnalysisFieldStateEdit;
 }
 
 export interface AnalysisPokemonStateEdit {
 	hp?: number;
 	/**
+	 * HP as a percentage, resolved against the Pokémon's live max HP when the edit applies. A replay only
+	 * ever shows percentages and never reveals the EVs and IVs max HP depends on, so an imported position
+	 * stores this and stays correct however the user later edits the team. `hp` wins if both are given.
+	 */
+	hpPercent?: number;
+	/**
+	 * Current item and ability, as opposed to the set's: a Pokémon that ate its berry still holds it on its
+	 * team, and Trace or a Mega Evolution changes the ability without changing the set. `''` removes.
+	 */
+	item?: string;
+	ability?: string;
+	/**
 	 * PP by move id, not by slot: a slot's move can change, and an edit naming a move that is no longer
 	 * there is simply irrelevant rather than something to invalidate.
 	 */
 	pp?: { [moveid: string]: number };
+	/**
+	 * PP **spent**, subtracted from the move's real max PP by the server — the same trick as `hpPercent`.
+	 * A replay says how many times a move was used, never how many uses it had; only the sim knows that,
+	 * since a mod may replace the formula outright (Champions does). `pp` wins where both name a move.
+	 */
+	ppUsed?: { [moveid: string]: number };
 	status?: '' | 'brn' | 'par' | 'slp' | 'frz' | 'psn' | 'tox';
 	toxicStage?: number;
 	sleepTurns?: number;
@@ -75,6 +95,25 @@ export interface AnalysisPokemonStateEdit {
 	megaEvolved?: boolean;
 	boosts?: AnalysisBoostsTable;
 	volatiles?: { [id: string]: null | { [param: string]: number | string | boolean } };
+	/**
+	 * History the protocol can't express. A reconstructed position is a fresh battle at turn 1, so without
+	 * these every Pokémon looks like it just switched in and Fake Out succeeds from one that has been out
+	 * all game. See docs/analysis/replay-import-audit.md.
+	 */
+	activeTurns?: number;
+	activeMoveActions?: number;
+	/** hits taken, for Rage Fist; unlike the others this survives switching out */
+	timesAttacked?: number;
+	/** move id, for Encore, Disable, Torment and the Gigaton Hammer lockout */
+	lastMove?: string;
+	/** consecutive successful Protect-likes; the server converts to the sim's 3, 9, 27… counter */
+	stallCount?: number;
+}
+
+/** Per-side state that isn't a side condition. Mirrors AnalysisSideStateEdit in tools/analysis-state.ts. */
+export interface AnalysisSideStateEdit {
+	/** Pokémon fainted on this side, for Last Respects and Supreme Overlord */
+	totalFainted?: number;
 }
 
 /** Turns remaining (including the current turn) and layers; each defaults to the condition's standard value. */
@@ -127,12 +166,64 @@ export interface AnalysisFieldEffectOption {
 	maxLayers?: number;
 }
 
+/**
+ * What one active slot did on a turn, as the replay shows it — a Pokémon and a move or a switch, rather
+ * than the move *slot* and roster position a choice is written in.
+ *
+ * It has to stay in this form until the position it belongs to has been rebuilt: `move 2` means whatever
+ * sits in slot 2 of the finished team, which onboarding and later set edits can change. `replayInputLog`
+ * resolves it against the real request, once there is one.
+ */
+export interface AnalysisReplayAction {
+	side: AnalysisSideID;
+	slot: number;
+	/** the species in that slot when the turn began */
+	pokemon: string;
+	moveId?: string;
+	moveName?: string;
+	/** the species that came in, when the slot's action was a switch */
+	switchTo?: string;
+	/** the position the move named (`p2a`), which a doubles target is resolved from */
+	targetPosition?: string;
+	targetPokemon?: string;
+	terastallize?: boolean;
+	mega?: boolean;
+}
+
 export interface AnalysisNode {
 	id: string;
 	parentId: string | null;
 	seed: string | null;
 	turn: number;
 	inputLog: string[];
+	/**
+	 * A node imported from a replay. Its `edits` describe the **whole** position absolutely, so it is
+	 * rebuilt from itself rather than by replaying its ancestors, and its `inputLog` holds the choices
+	 * inferred from the replay for display only — they are never executed. Simulated children replay from
+	 * it normally. See docs/analysis/replay-import-audit.md.
+	 */
+	kind?: 'replay';
+	/**
+	 * The **reconstruction**: the absolute position the replay showed at this turn, as the parser read it.
+	 * It is deliberately separate from `edits`, which stays what the *user* has changed here, because the
+	 * two are shown quite differently — the reconstruction is how the position came to exist and is applied
+	 * invisibly (see `getRenderedLog`), while a user's edit is a thing that happens at the start of this
+	 * turn and should be seen happening. Never modified after import.
+	 */
+	importedEdits?: AnalysisEdits;
+	/**
+	 * What the replay shows each side doing on this turn, kept in terms of Pokémon and moves rather than
+	 * the slot numbers a choice is written in. It becomes this node's `inputLog` the first time the
+	 * position behind it is built (`replayInputLog`), because `move 2` means whatever sits in slot 2 of the
+	 * team the user finished, which onboarding and later set edits can both change.
+	 */
+	replayActions?: AnalysisReplayAction[];
+	/**
+	 * The imported replay's final position, after the last turn resolved — there is nothing left to choose
+	 * here, so the controls are only the turn navigation. `winner` is empty for a tie. It shares a turn
+	 * number with the turn that decided the game, which is why it has an id of its own.
+	 */
+	gameOver?: { winner: string };
 	/**
 	 * Packed teams for the whole line, only meaningful on the Team Preview node (turn 0). Editing a team
 	 * there changes what is fed to the battle constructor rather than being applied as an edit layer, so
@@ -193,6 +284,8 @@ export interface AnalysisPokemonSnapshot {
 	teraType: string;
 	terastallized: string | null;
 	canTerastallize: boolean;
+	/** hits taken, which Rage Fist reads */
+	timesAttacked: number;
 	megaEvolved: boolean;
 	canMegaEvo: boolean;
 	stats: Dex.StatsTable;
@@ -215,6 +308,8 @@ export interface AnalysisSnapshot {
 export interface AnalysisSideSnapshot {
 	id: AnalysisSideID;
 	name: string;
+	/** Pokémon fainted on this side, which Last Respects and Supreme Overlord read */
+	totalFainted: number;
 	sideConditions: AnalysisEffectSnapshot[];
 	/** index into `pokemon` for each active slot */
 	active: (number | null)[];
@@ -323,6 +418,30 @@ export interface AnalysisTab {
 	 */
 	sandbox?: boolean;
 	/**
+	 * An imported replay's onboarding pass: which side's reconstructed team the user is completing before
+	 * the analysis opens. `null` once they have finished or skipped. See docs/analysis/replay-import-audit.md.
+	 */
+	onboarding?: AnalysisSideID | null;
+	/** what the replay could not determine, shown above the reconstructed team during onboarding */
+	importWarnings?: string[];
+	/**
+	 * An imported VGC-style replay's Team Preview step: the roster slots (0-based) the replay proved each
+	 * side brought, which are locked in while the user picks the rest. Set on import when the question needs
+	 * asking at all (`replayPreviewStep`), cleared once it has been answered or skipped.
+	 */
+	importPreview?: { p1: number[], p2: number[] } | null;
+	/**
+	 * The teams exactly as the replay was reconstructed into them, kept so **Skip** can go back to them:
+	 * Skip means "use the inferences", so it also undoes a side already committed with Save and Continue.
+	 */
+	importedTeams?: { p1: string, p2: string };
+	/**
+	 * The imported replay's own log, kept so the renderer can play the real history in front of a
+	 * reconstructed position instead of a fresh battle's opening (see `getRenderedLog`). It is the replay
+	 * exactly as it was fetched or read from the file, and is never sent anywhere.
+	 */
+	replayLog?: string[];
+	/**
 	 * Whether the teambuilder has been opened on this sandbox tab yet. Until it has, the controls are just
 	 * the line telling you how to start (see renderBattleControls): there is nothing useful to do with a
 	 * field of placeholders, and the turn controls would only invite you to play one.
@@ -404,20 +523,6 @@ export function isPlaceholderPokemon(pokemon: AnalysisPokemonSnapshot | undefine
 }
 
 /**
- * The log the renderer should play, which for a Set Up Position tab is not quite the log the server sent.
- *
- * A setup tab's turn-1 edits *are* the position: watching them apply — a roster resync, HP jumping, a
- * Bulbasaur turning into a Garchomp — is setup noise, not battle history. The sim emits them straight after
- * `|turn|1`, because a node's edits apply at the start of its turn, so anything that starts playing at turn
- * 1 (Submit Choices, Simulate, Replay Prev Turn from turn 2) animates them first.
- *
- * Hoisting that block above `|turn|1` makes it part of the battle's silent setup instead, and leaves
- * `|turn|1` marking the real start of play. Nothing else has to change: every seek is by turn number, and
- * `seekTurn(1)` then lands on the built position rather than in front of the edits.
- *
- * Only turn 1 is hoisted. Later turns' edits are ordinary history and stay where they are.
- */
-/**
  * Upstream `battle.resetRNG` announces itself, and the determinism model reseeds at the start of every node
  * (see replayAnalysisRecords), so this lands in the log once per node and says nothing about the battle.
  * `sim/battle.ts` is an upstream file, so it is dropped here rather than suppressed at the source.
@@ -428,21 +533,157 @@ export function stripAnalysisNoise(log: string[]) {
 	return log.filter(line => line !== RNG_RESET_LINE);
 }
 
-export function getRenderedLog(tab: AnalysisTab) {
+/**
+ * Room chatter a replay carries around the battle itself. None of it is state, and joins and leaves in
+ * particular are pure noise in an analysis log. Chat (`c`) is deliberately **kept**: it is what the players
+ * actually said, and hiding parts of an imported replay is not this tool's habit.
+ */
+const REPLAY_ROOM_COMMANDS = ['j', 'J', 'join', 'l', 'L', 'leave', 'n', 'N', 'name', 'inactive', 'inactiveoff',
+	'askreg', 'debug'];
+
+function isReplayRoomLine(line: string) {
+	return REPLAY_ROOM_COMMANDS.includes(line.split('|')[1]);
+}
+
+/** `|turn|3` → `|turn|8` for an offset of 5. Every other line passes through untouched. */
+export function renumberAnalysisTurns(log: string[], offset: number) {
+	if (!offset) return log;
+	return log.map(line => (line.startsWith('|turn|') ? `|turn|${Number(line.split('|')[2]) + offset}` : line));
+}
+
+/**
+ * Marks a line from the reconstruction's edit block as a **resync**: a statement of how the position
+ * already stands, rather than a report of something that just happened. `AnalysisBattleRenderer` acts on
+ * the distinction, skipping whatever the replay's own history has already established.
+ *
+ * The edit layer writes its lines as a delta against the position the sim happened to start from, which for
+ * a reconstruction is a fresh battle's Team Preview leads. Spliced in front of the replay's own history that
+ * assumption is simply false, and `switch`/`swap` resolve **positionally** in the renderer — so an untouched
+ * `|swap|p1b: Sinistcha|0` moved whoever the replay had left in `p1b`, and the `|switch|` after it put a
+ * second copy of that Pokémon on the field (measured: Ceruledge in both of p1's slots).
+ */
+function markAnalysisResync(line: string) {
+	return `${line}|[analysisresync]`;
+}
+
+/**
+ * Brackets a block the renderer applies but never shows (`AnalysisBattleRenderer`). Marking the lines alone
+ * isn't enough: `-sethp` animates a heal or a hit whatever its keywords say, and the exact HP a
+ * reconstruction sets never quite matches the percentage a replay showed, so the whole block is muted.
+ */
+export const ANALYSIS_RESYNC_START = '|-message|analysisresync|start|[silent]';
+export const ANALYSIS_RESYNC_END = '|-message|analysisresync|end|[silent]';
+
+/**
+ * The replay history to play in front of a reconstructed position, for a tab imported from a replay.
+ *
+ * `anchor` is the deepest replay node on the path (`getReplayAnchor`): the turn the position was rebuilt
+ * from, and therefore the turn the real history has to run up to. The history stops **just before** that
+ * turn's `|turn|` line, so the reconstruction's edit block can sit where a node's edits belong — at the
+ * start of its own turn, before it is announced.
+ *
+ * The end-of-game node is the one exception: it has no `|turn|` line of its own (it shares a turn number
+ * with the turn that decided the game), so its history is the whole replay, result included.
+ */
+function getReplaySplice(tab: AnalysisTab, anchor: AnalysisNode | null | undefined) {
+	if (!anchor || !tab.replayLog?.length) return null;
+	// The end-of-game node shares its turn number with the turn that decided the game, so it has no `|turn|`
+	// line of its own to stop in front of: its history is the whole replay, result included.
+	if (anchor.gameOver) {
+		return {
+			history: tab.replayLog.filter(line => !isReplayRoomLine(line)),
+			turnLine: [],
+			turnOffset: anchor.turn - 1,
+		};
+	}
+	const marker = `|turn|${anchor.turn}`;
+	const index = tab.replayLog.indexOf(marker);
+	// A turn the replay never announced has no history to show; fall back to the reconstruction's own log.
+	if (index < 0) return null;
+	return {
+		history: tab.replayLog.slice(0, index).filter(line => !isReplayRoomLine(line)),
+		turnLine: [marker],
+		// the reconstruction's `|turn|1` *is* this turn, so its later turns count on from here
+		turnOffset: anchor.turn - 1,
+	};
+}
+
+/**
+ * The log the renderer should play, which for a sandbox tab is not quite the log the server sent.
+ *
+ * **Set Up Position.** A setup tab's turn-1 edits *are* the position: watching them apply — a roster resync,
+ * HP jumping, a Bulbasaur turning into a Garchomp — is setup noise, not battle history. The sim emits them
+ * straight after `|turn|1`, because a node's edits apply at the start of its turn, so anything that starts
+ * playing at turn 1 (Submit Choices, Simulate, Replay Prev Turn from turn 2) animates them first. Hoisting
+ * that block above `|turn|1` makes it part of the battle's silent setup instead, and leaves `|turn|1` marking
+ * the real start of play. Only turn 1 is hoisted; later turns' edits are ordinary history.
+ *
+ * **Import Replay** (audit Q6) does the same thing one step further: the block is hoisted above a `|turn|`
+ * line taken from the **replay's own log**, with everything the replay did before that turn in front of it.
+ * So a reconstruction stops opening on a fresh battle's Team Preview leads — entry abilities and all, an
+ * "Incineroar's Intimidate!" on turn 1 of a position where that never happened — and replaying from the
+ * start reads as one continuous replay that happens to diverge wherever the user took over.
+ *
+ * Nothing else has to change for either, because **every seek is by turn number**: the reconstruction's own
+ * turns are renumbered onto the replay's, so `seekTurn(N)` lands on the built position and `seekTurn(N - 1)`
+ * on the last thing that really happened before it.
+ *
+ * **The two kinds of edit part company here** (user request, 2026-09-19). A replay node sends the
+ * reconstruction and the user's own edits as two records (`replayNodesFor`), so the sim emits two blocks.
+ * The reconstruction is *how this position came to exist* — against the replay's history it restates what
+ * already happened, so it is bracketed as a resync and applied without a word or an animation. A user's
+ * edit is *a thing that happens at the start of this turn*, so it stays where the sim put it, after the
+ * `|turn|` line, and is seen happening exactly as on any other node.
+ */
+export function getRenderedLog(tab: AnalysisTab, anchor?: AnalysisNode | null) {
 	const log = stripAnalysisNoise(tab.log);
 	if (!tab.sandbox) return log;
+	const splice = getReplaySplice(tab, anchor);
 	const turnIndex = log.findIndex(line => line === '|turn|1');
 	if (turnIndex < 0) return log;
-	// the block runs to its `Analysis edits:` summary, the last line the edit layer emits for a node
-	let end = -1;
+	// an edit block runs to its `Analysis edits:` summary, the last line the edit layer emits for a record
+	const blockEnds: number[] = [];
 	for (let i = turnIndex + 1; i < log.length; i++) {
 		if (log[i].startsWith('|turn|')) break;
-		if (log[i].startsWith('|-message|Analysis edits:')) end = i;
+		if (log[i].startsWith('|-message|Analysis edits:')) blockEnds.push(i);
 	}
-	if (end < 0) return log;
+	const end = blockEnds.length ? blockEnds[blockEnds.length - 1] : -1;
+	// A node with no edits has no block to hoist, and a setup tab's log is then already in the right order.
+	if (end < 0 && !splice) return log;
+	if (!splice) {
+		return [
+			...log.slice(0, turnIndex), ...log.slice(turnIndex + 1, end + 1), log[turnIndex],
+			...log.slice(end + 1),
+		];
+	}
+	// The first block is the reconstruction; anything after it belongs to the user and stays visible.
+	const resyncEnd = blockEnds.length ? blockEnds[0] : turnIndex;
+	const resync = log.slice(turnIndex + 1, resyncEnd).map(markAnalysisResync);
+	const userEdits = log.slice(resyncEnd + 1, end + 1);
+	const tail = log.slice((end < 0 ? turnIndex : end) + 1);
+	/*
+	 * The summary line is dropped — it describes how the position was reconstructed, not anything that
+	 * happens on this turn — but turns remaining ride on it as a keyword and the protocol can say them
+	 * nowhere else, so they move onto the closing bracket rather than being lost with it.
+	 */
+	const durations = blockEnds.length ?
+		/\|\[analysisdurations\][^|]*/.exec(log[resyncEnd])?.[0] || '' : '';
 	return [
-		...log.slice(0, turnIndex), ...log.slice(turnIndex + 1, end + 1), log[turnIndex], ...log.slice(end + 1),
+		...splice.history,
+		...(resync.length ? [ANALYSIS_RESYNC_START, ...resync, ANALYSIS_RESYNC_END + durations] : []),
+		...splice.turnLine,
+		...userEdits,
+		...renumberAnalysisTurns(tail, splice.turnOffset),
 	];
+}
+
+/**
+ * The same treatment for lines appended to a live renderer rather than rebuilt into a new one
+ * (`continuePlayback`), which is the one path that adds to a battle instead of replacing it.
+ */
+export function getRenderedLogTail(tab: AnalysisTab, anchor: AnalysisNode | null | undefined, lines: string[]) {
+	const splice = getReplaySplice(tab, anchor);
+	return renumberAnalysisTurns(stripAnalysisNoise(lines), splice?.turnOffset || 0);
 }
 
 /** Where "from the start" is for a tab: a setup tab's battle begins once its turn-1 edits have been applied. */
@@ -522,6 +763,7 @@ export const ANALYSIS_VOLATILES: AnalysisVolatileInfo[] = [
 		unavailable: context => volatileId(context.item) === 'abilityshield' ? 'an Ability Shield blocks it' : null,
 	},
 	{ id: 'healblock', name: 'Heal Block' },
+	{ id: 'imprison', name: 'Imprison' },
 	{ id: 'laserfocus', name: 'Laser Focus' },
 	{ id: 'leechseed', name: 'Leech Seed', perFoeSlot: true },
 	{ id: 'magnetrise', name: 'Magnet Rise' },
@@ -537,6 +779,14 @@ export const ANALYSIS_VOLATILES: AnalysisVolatileInfo[] = [
 	{ id: 'partiallytrapped', name: 'Partially Trapped', perFoeSlot: true },
 	{ id: 'powershift', name: 'Power Shift' },
 	{ id: 'powertrick', name: 'Power Trick' },
+	/*
+	 * The boosted stat isn't offered: the sim picks it with `getBestStat`, which is already the answer for
+	 * this Pokémon's stats, and the `-start` line it emits carries the stat so the sprite reads
+	 * "Protosynthesis: Atk". Outside sun / Electric Terrain the server attributes these to a Booster
+	 * Energy, because the ability would otherwise take the volatile straight back (see `needsBooster`).
+	 */
+	{ id: 'protosynthesis', name: 'Protosynthesis', minGen: 9 },
+	{ id: 'quarkdrive', name: 'Quark Drive', minGen: 9 },
 	{ id: 'saltcure', name: 'Salt Cure' },
 	{
 		id: 'smackdown',
@@ -552,5 +802,6 @@ export const ANALYSIS_VOLATILES: AnalysisVolatileInfo[] = [
 	},
 	{ id: 'substitute', name: 'Substitute' },
 	{ id: 'syrupbomb', name: 'Syrup Bomb' },
+	{ id: 'taunt', name: 'Taunt' },
 	{ id: 'yawn', name: 'Yawn' },
 ];
