@@ -1428,7 +1428,7 @@ export class Battle {
 		if (turnNum === this.turn + 1) {
 			this.endLastTurnPending = true;
 		}
-		if (this.turn && !this.usesUpkeep) this.updateTurnCounters(); // for compatibility with old replays
+		if (this.turn > 0 && !this.usesUpkeep) this.updateTurnCounters(); // for compatibility with old replays
 		this.turn = turnNum;
 		this.started = true;
 
@@ -3476,6 +3476,18 @@ export class Battle {
 			this.nextStep();
 		}
 	}
+	addBatch(commands: string[]) {
+		for (const command of commands) {
+			switch (command.split('|', 2)[1]) {
+			case 'c': case 'c:': case 'chat': case 'chatmsg': case 'inactive':
+				this.run(command, true);
+				this.preemptStepQueue.push(command);
+				break;
+			}
+			this.stepQueue.push(command);
+		}
+		this.add();
+	}
 	/**
 	 * PS's preempt system is intended to show chat messages immediately,
 	 * instead of waiting for the battle to get to the point where the
@@ -3924,7 +3936,8 @@ export class Battle {
 			}
 		}
 
-		if (nextLine.startsWith('|start') || args[0] === 'teampreview') {
+		// Replays before clicking "Play" will pause themselves on the line before `|start`
+		if (nextLine.startsWith('|start') || args[0] === 'start' || args[0] === 'teampreview') {
 			if (this.turn === -1) {
 				this.turn = 0;
 				this.scene.updateBgm();

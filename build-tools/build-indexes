@@ -6,19 +6,30 @@ const child_process = require('node:child_process');
 
 process.chdir(__dirname + '/..');
 
+fs.mkdirSync('play.pokemonshowdown.com/data', { recursive: true });
+
+// DigiPen fork: the client indexes the fork's server, not upstream's.
 const branch = 'master';
+const noUpdate = process.argv.includes('--no-update');
 if (!fs.existsSync('caches/pokemon-showdown')) {
+	if (noUpdate) {
+		console.error('Missing caches/pokemon-showdown. Check out the server before using --no-update.');
+		process.exit(1);
+	}
 	child_process.execSync(`git clone -b ${branch} https://github.com/chchristie/pokemon-showdown`, {
 		cwd: 'caches',
 	});
 }
 
-process.stdout.write("Syncing data from Git repository... ");
-child_process.execSync(`git pull origin ${branch}`, { cwd: 'caches/pokemon-showdown' });
+process.stdout.write(
+	noUpdate ? "Building data from existing server checkout... " : "Syncing data from Git repository... "
+);
+if (!noUpdate) child_process.execSync(`git pull origin ${branch}`, { cwd: 'caches/pokemon-showdown' });
 child_process.execSync('npm run build', { cwd: 'caches/pokemon-showdown' });
 console.log("DONE");
 
 const Dex = require('../caches/pokemon-showdown/dist/sim/dex').Dex;
+const { CLIENT_MODS } = require('./build-translations');
 const CompoundWordNames = require('../caches/pokemon-showdown/dist/data/aliases').CompoundWordNames;
 const toID = Dex.toID;
 process.stdout.write("Loading gen 6 data... ");
@@ -1545,11 +1556,12 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 	const overrideSpeciesKeys = [
 		'abilities', 'baseStats', 'cosmeticFormes', 'digipenIcon', 'digipenSprite', 'evos', 'formeOrder', 'gender', 'isNonstandard', 'otherFormes', 'prevo', 'requiredItems', 'types', 'unreleasedHidden',
 	];
+	// Descs omitted (they're all compiled into data/text/*)
 	const overrideMoveKeys = [
-		'accuracy', 'basePower', 'category', 'desc', 'flags', 'isNonstandard', 'pp', 'priority', 'shortDesc', 'target', 'type',
+		'accuracy', 'basePower', 'category', 'flags', 'isNonstandard', 'pp', 'priority', 'target', 'type',
 	];
-	const overrideAbilityKeys = ['desc', 'flags', 'isNonstandard', 'rating', 'shortDesc'];
-	const overrideItemKeys = ['desc', 'fling', 'isNonstandard', 'naturalGift', 'shortDesc'];
+	const overrideAbilityKeys = ['flags', 'isNonstandard', 'rating'];
+	const overrideItemKeys = ['fling', 'isNonstandard', 'naturalGift'];
 
 	//
 	// Past gen table
@@ -1638,9 +1650,7 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 	// Mods
 	//
 
-	for (const mod of [
-		'gen3rs', 'gen3frlg', 'gen5bw1', 'gen7letsgo', 'gen8bdsp', 'gen9digipen', 'gen9fnaf', 'gen9ssb', 'champions',
-	]) {
+	for (const mod of CLIENT_MODS) {
 		const modDex = Dex.mod(mod);
 		const modData = modDex.data;
 		const parentDex = Dex.forGen(modDex.gen);
@@ -1847,9 +1857,6 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 	const Moves = requireNoCache('../caches/pokemon-showdown/dist/data/moves.js').Moves;
 	for (const id in Moves) {
 		const move = Dex.moves.get(Moves[id].name);
-		const text = Dex.text.get(move);
-		if (text.desc) Moves[id].desc = text.desc;
-		if (text.shortDesc) Moves[id].shortDesc = text.shortDesc;
 		if (move.basePowerCallback) Moves[id].basePowerCallback = true;
 	}
 
@@ -1927,13 +1934,6 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 
 {
 	const Items = requireNoCache('../caches/pokemon-showdown/dist/data/items.js').Items;
-	for (const id in Items) {
-		const item = Dex.items.get(Items[id].name);
-		const text = Dex.text.get(item);
-		if (text.desc) Items[id].desc = text.desc;
-		if (text.shortDesc) Items[id].shortDesc = text.shortDesc;
-	}
-
 	// Inject DigiPen-only items so the client can display tooltips.
 	const digiDex = Dex.mod('gen9digipen');
 
@@ -1995,13 +1995,6 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
 
 {
 	const Abilities = requireNoCache('../caches/pokemon-showdown/dist/data/abilities.js').Abilities;
-	for (const id in Abilities) {
-		const ability = Dex.abilities.get(Abilities[id].name);
-		const text = Dex.text.get(ability);
-		if (text.desc) Abilities[id].desc = text.desc;
-		if (text.shortDesc) Abilities[id].shortDesc = text.shortDesc;
-	}
-
 	// Inject DigiPen-only abilities so the client can display tooltips.
 	const digiDex = Dex.mod('gen9digipen');
 	for (const id in digiDex.data.Abilities) {
@@ -2123,20 +2116,7 @@ process.stdout.write("Building `data/moves,items,abilities,typechart,learnsets.j
  *********************************************************/
 
 {
-	const LANGS = fs.readdirSync('caches/pokemon-showdown/data/text', { withFileTypes: true })
-		.filter(entry => entry.isDirectory())
-		.map(entry => entry.name)
-		.concat('en');
-
-	fs.mkdirSync('play.pokemonshowdown.com/data/text', { recursive: true });
-	for (const lang of LANGS) {
-		const translation = Dex.loadTextData(lang);
-		fs.writeFileSync(
-			`play.pokemonshowdown.com/data/text/${lang}.js`,
-			'exports.BattleText = exports.BattleText || {};\n' +
-			`exports.BattleText[${JSON.stringify(lang)}] = ` + es3stringify(translation) + ';'
-		);
-	}
+	require('./build-translations').buildTextFiles(Dex);
 }
 
 console.log("DONE");

@@ -14,7 +14,7 @@ import { PSModel, PSStreamModel } from './client-core';
 import type { PSRoomPanel, PSRouter } from './panels';
 import { ChatRoom } from './panel-chat';
 import type { MainMenuRoom } from './panel-mainmenu';
-import { Dex, toID, type ID } from './battle-dex';
+import { Dex, TL, toID, type ID } from './battle-dex';
 import { BattleTextParser, type Args } from './battle-text-parser';
 import type { BattleRoom } from './panel-battle';
 import { Teams } from './battle-teams';
@@ -55,6 +55,7 @@ export interface PSConfig {
 		teams: string,
 	};
 	customcolors: Record<string, string>;
+	translationCachebuster?: string;
 	whitelist?: string[];
 	testclient?: boolean;
 }
@@ -467,7 +468,8 @@ class PSTeams extends PSStreamModel<'team' | 'format'> {
 		this.list.splice(index, 0, ...teams);
 	}
 	unpackOldBuffer(buffer: string) {
-		PS.alert(`Your team storage format is too old for PS. You'll need to upgrade it at https://${Config.routes.client}/recoverteams.html`);
+		const upgradeUrl = `https://${Config.routes.client}/recoverteams.html`;
+		PS.alert(TL`Your team storage format is too old for PS. You'll need to upgrade it at ${upgradeUrl}`);
 		this.list = [];
 	}
 	packAll(teams: Team[]) {
@@ -515,7 +517,7 @@ class PSTeams extends PSStreamModel<'team' | 'format'> {
 		PSLoginServer.query('getteams').then(data => {
 			if (!data) return;
 			if (data.actionerror) {
-				return PS.alert('Error loading uploaded teams: ' + data.actionerror);
+				return PS.alert(TL`Error loading uploaded teams: ${data.actionerror}`);
 			}
 			const teams: { [key: string]: UploadedTeam } = {};
 			for (const team of data.teams) {
@@ -598,7 +600,8 @@ class PSTeams extends PSStreamModel<'team' | 'format'> {
 		}).then(data => {
 			if (!team.uploaded) return;
 			if (!data?.team) {
-				PS.alert(`Failed to load team: ${data?.actionerror || "Error unknown. Try again later."}`);
+				const actionError = data?.actionerror as string || TL`Error unknown. Try again later.`;
+				PS.alert(TL`Failed to load team: ${actionError}`);
 				return;
 			}
 			team.uploaded.notLoaded = false;
@@ -730,7 +733,7 @@ class PSUser extends PSStreamModel<PSLoginState | null> {
 			this.loggingIn = null;
 			if (data?.curuser?.loggedin) {
 				// success!
-				const username = data.curuser.loggedin.username;
+				const username = data.curuser.username;
 				this.registered = { name: username, userid: toID(username) };
 				this.handleAssertion(name, data.assertion);
 			} else {
@@ -757,7 +760,7 @@ class PSUser extends PSStreamModel<PSLoginState | null> {
 	}
 	handleAssertion(name: string, assertion?: string | null) {
 		if (!assertion) {
-			PS.alert("Error logging in.");
+			PS.alert(TL`Error logging in.`);
 			return;
 		}
 		this.loggingIn = null;
@@ -769,7 +772,7 @@ class PSUser extends PSStreamModel<PSLoginState | null> {
 		if (assertion.startsWith('\r')) assertion = assertion.slice(1);
 		if (assertion.startsWith('\n')) assertion = assertion.slice(1);
 		if (assertion.includes('<')) {
-			PS.alert("Something is interfering with our connection to the login server. Most likely, your internet provider needs you to re-log-in, or your internet provider is blocking Pokémon Showdown.");
+			PS.alert(TL`Something is interfering with our connection to the login server. Most likely, your internet provider needs you to re-log-in, or your internet provider is blocking Pokémon Showdown.`);
 			return;
 		}
 		if (assertion === ';') {
@@ -779,7 +782,7 @@ class PSUser extends PSStreamModel<PSLoginState | null> {
 		} else if (assertion.startsWith(';;')) {
 			this.updateLogin({ error: assertion.slice(2) });
 		} else if (assertion.includes('\n') || !assertion) {
-			PS.alert("Something is interfering with our connection to the login server.");
+			PS.alert(TL`Something is interfering with our connection to the login server.`);
 		} else {
 			PS.send(`/trn ${name},0,${assertion}`);
 			this.update({ success: true });
@@ -792,7 +795,7 @@ class PSUser extends PSStreamModel<PSLoginState | null> {
 		PS.send(`/logout`);
 		PS.connection?.disconnect();
 
-		PS.alert("You have been logged out and disconnected.\n\nIf you wanted to change your name while staying connected, use the 'Change Name' button or the '/nick' command.");
+		PS.alert(TL`You have been logged out and disconnected.\n\nIf you wanted to change your name while staying connected, use the 'Change Name' button or the '/nick' command.`);
 		this.name = "";
 		this.group = '';
 		this.userid = "" as ID;
@@ -1054,19 +1057,10 @@ export class PSRoom extends PSStreamModel<Args | null> implements RoomOptions {
 	 * * `'not-found'` = got `noinit` from the server
 	 */
 	connectMode: null | 'normal' | 'deleted' | 'not-found' | 'pending-reconnect' | 'pending-login' = null;
-	onRequestFocus: ((options?: PSRoomFocusOptions) => boolean | void) | null = null;
 	onParentKeyDown: ((e?: Event) => boolean | void) | null = null;
 
 	width = 0;
 	height = 0;
-	/**
-	 * Preact means that the DOM state lags behind the app state. This means
-	 * rooms frequently have `display: none` at the time we want to focus them.
-	 * And popups sometimes initialize hidden, to calculate their position from
-	 * their width/height without flickering. But hidden HTML elements can't be
-	 * focused, so this is a note-to-self to focus the next time they can be.
-	 */
-	focusNextUpdate: boolean | PSRoomFocusOptions = false;
 	parentElem: HTMLElement | null = null;
 	parentRoomid: RoomID | null = null;
 	rightPopup = false;
@@ -1096,6 +1090,9 @@ export class PSRoom extends PSStreamModel<Args | null> implements RoomOptions {
 		if (options.backlog) this.backlog = options.backlog;
 		this.noURL = options.noURL || false;
 		this.args = options.args || null;
+	}
+	getTitle() {
+		return PS.roomTypes[this.type]?.getTitle?.(this) ?? this.title;
 	}
 	getParent() {
 		if (this.parentRoomid) return PS.rooms[this.parentRoomid] || null;
@@ -1172,6 +1169,12 @@ export class PSRoom extends PSStreamModel<Args | null> implements RoomOptions {
 		}
 		this.isSubtleNotifying = false;
 	}
+	dismissAllNotifications() {
+		for (let i = this.notifications.length - 1; i >= 0; i--) {
+			this.dismissNotificationAt(i);
+		}
+		this.isSubtleNotifying = false;
+	}
 	interruptClose(explicit?: boolean, elem?: HTMLElement | null): string | boolean {
 		return false;
 	}
@@ -1179,49 +1182,58 @@ export class PSRoom extends PSStreamModel<Args | null> implements RoomOptions {
 		throw new Error(`This room is not designed to connect to a server room`);
 	}
 	/**
-	 * By default, a reconnected room will receive the init message as a bunch
-	 * of `receiveLine`s as normal. Before that happens, handleReconnect is
+	 * By default, a reconnected room will receive the init message in `receiveBatch`
+	 * which calls `handleLine`s as normal. Before that happens, `handleReconnect` is
 	 * called, and you can return true to stop that behavior. You could also
 	 * prep for a bunch of `receiveLine`s and then not return anything.
 	 */
 	handleReconnect(msg: string): boolean | void {}
-	receiveLine(args: Args): void {
+	receiveBatch(batch: Args[]) {
+		for (const args of batch) {
+			(this as any).receiveLine(args);
+			if (!this.handleLine(args)) this.update(args);
+		}
+		this.update(null);
+	}
+	/** @deprecated ONLY FOR SHOWDEX */
+	private receiveLine(args: Args): void {}
+	/** Return true for handled, false to fall back to another handler. */
+	handleLine(args: Args): boolean {
 		switch (args[0]) {
 		case 'title': {
 			this.title = args[1];
 			PS.update();
-			break;
+			return true;
 		} case 'notify': {
 			const [, title, body, toHighlight] = args;
-			if (toHighlight && !ChatRoom.getHighlight(toHighlight, this.id)) break;
+			if (toHighlight && !ChatRoom.getHighlight(toHighlight, this.id)) return true;
 			this.notify({ title, body });
-			break;
+			return true;
 		} case 'tempnotify': {
 			const [, id, title, body, toHighlight] = args;
-			if (toHighlight && !ChatRoom.getHighlight(toHighlight, this.id)) break;
+			if (toHighlight && !ChatRoom.getHighlight(toHighlight, this.id)) return true;
 			this.notify({ title, body, id });
-			break;
+			return true;
 		} case 'tempnotifyoff': {
 			const [, id] = args;
 			this.dismissNotification(id);
-			break;
-		} default: {
-			this.update(args);
+			return true;
 		}
 		}
+		return false;
 	}
 	/**
 	 * Used only by commands; messages from the server go directly from
-	 * `PS.receive` to `room.receiveLine`
+	 * `PS.receive` to `room.receiveBatch`
 	 */
 	add(line: string, ifChat?: boolean) {
 		if (this.type !== 'chat' && this.type !== 'battle') {
 			if (!ifChat) {
 				PS.mainmenu.handlePM(PS.user.userid, PS.user.userid);
-				PS.rooms['dm-' as RoomID]?.receiveLine(BattleTextParser.parseLine(line));
+				PS.rooms['dm-' as RoomID]?.receiveBatch([BattleTextParser.parseLine(line)]);
 			}
 		} else {
-			this.receiveLine(BattleTextParser.parseLine(line));
+			this.receiveBatch([BattleTextParser.parseLine(line)]);
 		}
 	}
 	errorReply(message: string, element = this.currentElement) {
@@ -1244,6 +1256,19 @@ export class PSRoom extends PSStreamModel<Args | null> implements RoomOptions {
 		return parsedCommands;
 	}
 	globalClientCommands = this.parseClientCommands({
+		'language'(target) {
+			if (!target) return true;
+			if (['auto', 'automatic'].includes(toID(target))) {
+				PS.prefs.set('serversettings', { ...PS.prefs.serversettings, language: undefined });
+			} else {
+				const language = Dex.text.findLanguage(target)?.legacyId;
+				// on the off chance the server supports this language
+				if (!language) return true;
+				PS.prefs.set('serversettings', { ...PS.prefs.serversettings, language });
+			}
+			void Dex.loadTextData().then(() => PS.updateTranslatedText());
+			return `/language ${Dex.text.findLanguage(Dex.text.getLanguage())?.legacyId || 'english'}`;
+		},
 		'j,join'(target, cmd, elem) {
 			target = PS.router.extractRoomID(target) || target;
 			const roomid = /[^a-z0-9-]/.test(target) ? toID(target) as any as RoomID : target as RoomID;
@@ -1308,8 +1333,8 @@ export class PSRoom extends PSStreamModel<Args | null> implements RoomOptions {
 			// connect to server
 			const uptime = Date.now() - PS.startTime;
 			if (uptime > 24 * 60 * 60 * 1000) {
-				PS.confirm(`It's been over a day since you first connected. Please refresh.`, {
-					okButton: 'Refresh',
+				PS.confirm(TL`It's been over a day since you first connected. Please refresh.`, {
+					okButton: TL`[Refresh]`,
 				}).then(confirmed => {
 					if (confirmed) this.send(`/refresh`);
 				});
@@ -1391,8 +1416,12 @@ export class PSRoom extends PSStreamModel<Args | null> implements RoomOptions {
 			});
 		},
 		'ignore'(target) {
+			target ||= (this as any as ChatRoom).pmTarget || '';
 			const ignore = PS.prefs.ignore || {};
-			if (!target) return true;
+			if (!target) {
+				this.handleSend('/help ignore');
+				return;
+			}
 			if (toID(target) === PS.user.userid) {
 				this.add(`||You are not able to ignore yourself.`);
 			} else if (ignore[toID(target)]) {
@@ -1405,8 +1434,12 @@ export class PSRoom extends PSStreamModel<Args | null> implements RoomOptions {
 			}
 		},
 		'unignore'(target) {
+			target ||= (this as any as ChatRoom).pmTarget || '';
 			const ignore = PS.prefs.ignore || {};
-			if (!target) return false;
+			if (!target) {
+				this.handleSend('/help unignore');
+				return;
+			}
 			if (!ignore[toID(target)]) {
 				this.add(`||User '${target}' isn't on your ignore list.`);
 			} else {
@@ -1530,20 +1563,11 @@ export class PSRoom extends PSStreamModel<Args | null> implements RoomOptions {
 				this.add('||AFD is currently set to ' + curMode);
 				this.send('/help afd');
 			}
-			void Dex.loadTextData().then(() => {
-				for (const roomid in PS.rooms) {
-					const battle = (PS.rooms[roomid] as BattleRoom)?.battle;
-					if (battle) battle.resetToCurrentTurn();
-				}
-			});
+			void Dex.loadTextData().then(() => PS.updateTranslatedText());
 		},
-		'clearpms'() {
-			let rooms = PS.miniRoomList.filter(roomid => roomid.startsWith('dm-'));
-			if (!rooms.length) return this.add('||You do not have any PM windows open.');
-			for (const roomid of rooms) {
-				PS.leave(roomid);
-			}
-			this.add("||All PM windows cleared and closed.");
+		'cleardms,clearpms'() {
+			if (!PS.clearDMs()) return this.add('||You do not have any DM windows open.');
+			this.add("||All DM windows cleared and closed.");
 		},
 		'unpackhidden'() {
 			if (PS.prefs.nounlink) {
@@ -1805,9 +1829,7 @@ export class PSRoom extends PSStreamModel<Args | null> implements RoomOptions {
 			this.sendDirect(`/noreply /leave ${this.id}`);
 			this.connected = false;
 		}
-		for (let i = this.notifications.length - 1; i >= 0; i--) {
-			this.dismissNotificationAt(i);
-		}
+		this.dismissAllNotifications();
 	}
 }
 
@@ -1817,8 +1839,10 @@ class PlaceholderRoom extends PSRoom {
 		super(options);
 		this.isPlaceholder = true;
 	}
-	override receiveLine(args: Args) {
+	override handleLine(args: Args): boolean {
+		if (super.handleLine(args)) return true;
 		(this.backlog ||= []).push(args);
+		return true;
 	}
 }
 
@@ -1836,6 +1860,7 @@ type PSRoomPanelSubclass<T extends PSRoom = PSRoom> = (new () => PSRoomPanel<T>)
 	noURL?: boolean,
 	icon?: preact.ComponentChildren,
 	title?: string,
+	getTitle?: (room: T) => string,
 	handleDrop?: (ev: DragEvent) => boolean | void,
 };
 
@@ -1867,6 +1892,7 @@ export const PS = new class extends PSModel {
 	router: PSRouter = null!;
 
 	rooms: { [roomid: string]: PSRoom | undefined } = {};
+	detachedRooms: { [roomid: string]: PSRoom | undefined } = {};
 	roomTypes: {
 		[type: string]: PSRoomPanelSubclass | undefined,
 	} = {};
@@ -1932,6 +1958,14 @@ export const PS = new class extends PSModel {
 	miniRoomList: RoomID[] = [];
 	/** Currently active popups, in stack order (bottom to top) */
 	popups: RoomID[] = [];
+	/**
+	 * Preact means that the DOM state lags behind the app state. This means
+	 * rooms frequently have `display: none` at the time we want to focus them.
+	 * And popups sometimes initialize hidden, to calculate their position from
+	 * their width/height without flickering. But hidden HTML elements can't be
+	 * focused, so this is a note-to-self to focus the next time they can be.
+	 */
+	pendingFocus: { room: PSRoom, options: PSRoomFocusOptions } | null = null;
 
 	/**
 	 * The currently focused room. Should always be the topmost popup
@@ -2240,6 +2274,13 @@ export const PS = new class extends PSModel {
 		this.updateLayout();
 		super.update();
 	}
+	updateTranslatedText() {
+		for (const room of Object.values(this.rooms)) {
+			const battle = (room as BattleRoom | undefined)?.battle;
+			if (battle) battle.resetToCurrentTurn();
+		}
+		this.update();
+	}
 	receive(msg: string) {
 		msg = msg.endsWith('\n') ? msg.slice(0, -1) : msg;
 		let roomid = '' as RoomID;
@@ -2252,6 +2293,7 @@ export const PS = new class extends PSModel {
 		let room = PS.rooms[roomid];
 		console.log('\u2705 ' + (roomid ? '[' + roomid + '] ' : '') + '%c' + msg, "color: #007700");
 		let isInit = false;
+		const batch: Args[] = [];
 		for (const line of msg.split('\n')) {
 			const args = BattleTextParser.parseLine(line);
 			switch (args[0]) {
@@ -2276,6 +2318,7 @@ export const PS = new class extends PSModel {
 					room.type = type;
 					room.connected = 'init';
 					this.updateRoomTypes();
+					room = this.rooms[roomid2];
 				}
 				if (room) {
 					if (room.connectMode === 'pending-reconnect') {
@@ -2316,14 +2359,14 @@ export const PS = new class extends PSModel {
 					if (args[1] === 'namerequired') {
 						room.connectMode = 'pending-login';
 						if (!PS.user.initializing) {
-							room.receiveLine(['error', args[2]]);
+							batch.push(['error', args[2]]);
 						}
 					} else if (args[1] === 'nonexistent' || args[1] === 'joinfailed') {
 						// sometimes we assume a room is a chatroom when it's not
 						// when that happens, just ignore this error
 						if (room.type === 'chat' || room.type === 'battle') {
 							room.connectMode = roomPreviouslyConnected ? 'deleted' : 'not-found';
-							room.receiveLine(args);
+							batch.push(args);
 						}
 					} else if (args[1] === 'rename') {
 						room.connected = true;
@@ -2351,16 +2394,19 @@ export const PS = new class extends PSModel {
 			}
 
 			}
-			room?.receiveLine(args);
+			batch.push(args);
 		}
-		if (room && isInit) room.connected = true;
-		room?.update(isInit ? [`initdone`] : null);
+		if (room && isInit) {
+			room.connected = true;
+			batch.push(['initdone']);
+		}
+		room?.receiveBatch(batch);
 	}
 	send(msg: string, roomid?: RoomID) {
 		const bracketRoomid = roomid ? `[${roomid}] ` : '';
 		console.log(`\u25b6\ufe0f ${bracketRoomid}%c${msg}`, "color: #776677");
 		if (!this.connection) {
-			PS.alert(`You are not connected and cannot send ${msg}.`);
+			PS.alert(TL`You are not connected and cannot send ${msg}.`);
 			return;
 		}
 		this.connection.send(`${roomid || ''}|${msg}`);
@@ -2510,31 +2556,31 @@ export const PS = new class extends PSModel {
 			if (this.rightPanel === room) this.rightPanel = newRoom;
 			if (this.panel === room) this.panel = newRoom;
 			if (roomid === '') this.mainmenu = newRoom as MainMenuRoom;
+			if (this.pendingFocus?.room === room) this.pendingFocus.room = newRoom;
 			if (this.room === room) {
 				this.room = newRoom;
-				newRoom.focusNextUpdate = { preventScroll: true };
+				this.queueFocus(newRoom, { preventScroll: true });
 			}
 
+			newRoom.backlog = null;
+			newRoom.receiveBatch(room.backlog || []);
 			updated = true;
 		}
 		if (updated) this.update();
 	}
-	setFocus(room: PSRoom, options?: PSRoomFocusOptions) {
-		room.onRequestFocus?.(options);
+	queueFocus(room: PSRoom, options: PSRoomFocusOptions = {}) {
+		this.pendingFocus = { room, options };
 	}
 	focusRoom(roomid: RoomID) {
 		const room = this.rooms[roomid];
 		if (!room) return false;
+		if (room.location === 'mini-window') room.minimized = false;
 		if (this.room === room) {
-			const focusOptions = room.focusNextUpdate === true ? undefined : room.focusNextUpdate || undefined;
-			room.focusNextUpdate = false;
-			this.setFocus(room, focusOptions);
+			this.queueFocus(room);
+			this.update();
 			return true;
 		}
 		this.closePopupsAbove(room, true);
-		if (!this.isVisiblePanel(room)) {
-			room.focusNextUpdate = true;
-		}
 		if (PS.isPanel(room)) {
 			if (room.location === 'right') {
 				this.rightPanel = room;
@@ -2549,8 +2595,8 @@ export const PS = new class extends PSModel {
 			this.room = room;
 		}
 		this.room.autoDismissNotifications();
+		this.queueFocus(room);
 		this.update();
-		this.setFocus(room);
 		return true;
 	}
 	horizontalNav(room = this.room) {
@@ -2644,7 +2690,7 @@ export const PS = new class extends PSModel {
 		okButton?: string, cancelButton?: string,
 		otherButtons?: preact.ComponentChildren, parentElem?: HTMLElement,
 	} = {}) {
-		opts.cancelButton ??= 'Cancel';
+		opts.cancelButton ??= TL`[Cancel]`;
 		return new Promise<boolean>(resolve => {
 			this.join(`popup-${this.popups.length}` as RoomID, {
 				args: { message, okValue: true, cancelValue: false, callback: resolve, ...opts, parentElem: null },
@@ -2656,7 +2702,7 @@ export const PS = new class extends PSModel {
 		defaultValue?: string, okButton?: string, cancelButton?: string, type?: 'text' | 'password' | 'number' | 'numeric',
 		label?: string, otherButtons?: preact.ComponentChildren, parentElem?: HTMLElement | null,
 	} = {}): Promise<string | null> {
-		opts.cancelButton ??= 'Cancel';
+		opts.cancelButton ??= TL`[Cancel]`;
 		return new Promise(resolve => {
 			this.join(`popup-${this.popups.length}` as RoomID, {
 				args: {
@@ -2739,17 +2785,33 @@ export const PS = new class extends PSModel {
 			}
 			this.closePopupsAbove(parentPopup, true);
 		}
+		const detachedRoom = this.detachedRooms[options.id];
+		if (detachedRoom) {
+			delete this.detachedRooms[options.id];
+			this.rooms[detachedRoom.id] = detachedRoom;
+			detachedRoom.args = { ...detachedRoom.args, ...options.args };
+			if (detachedRoom.id.startsWith('dm-')) {
+				const detachedDM = detachedRoom as ChatRoom;
+				if (options.args?.pmTarget) detachedDM.updateTarget(options.args.pmTarget as string);
+				if (options.args?.challengeMenuOpen) detachedDM.openChallenge();
+			}
+			if (options.autofocus) detachedRoom.minimized = false;
+
+			const location = options.location || this.getRouteLocation(detachedRoom.id);
+			detachedRoom.location = null!;
+			this.moveRoom(detachedRoom, location, !options.autofocus);
+			if (options.backlog) detachedRoom.receiveBatch(options.backlog);
+			return detachedRoom;
+		}
 		const room = this.createRoom(options);
 		this.rooms[room.id] = room;
 		const location = room.location;
 		room.location = null!;
 		this.moveRoom(room, location, !options.autofocus);
 		if (options.backlog) {
-			for (const args of options.backlog) {
-				room.receiveLine(args);
-			}
+			room.backlog = null;
+			room.receiveBatch(options.backlog);
 		}
-		if (options.autofocus) room.focusNextUpdate = true;
 		return room;
 	}
 	hideRightRoom() {
@@ -2868,11 +2930,12 @@ export const PS = new class extends PSModel {
 			if (location === 'right') this.rightPanel = this.panel = room;
 			if (location === 'mini-window') this.leftPanel = this.panel = this.mainmenu;
 			this.room = room;
-			room.focusNextUpdate = true;
+			this.queueFocus(room);
 		}
 	}
-	removeRoom(room: PSRoom) {
+	detachRoom(room: PSRoom) {
 		const wasFocused = this.room === room;
+		if (this.pendingFocus?.room === room) this.pendingFocus = null;
 		delete PS.rooms[room.id];
 
 		const leftRoomIndex = PS.leftRoomList.indexOf(room.id);
@@ -2924,8 +2987,11 @@ export const PS = new class extends PSModel {
 		}
 
 		if (wasFocused) {
-			this.room.focusNextUpdate = { preventScroll: true };
+			this.queueFocus(this.room, { preventScroll: true });
 		}
+	}
+	removeRoom(room: PSRoom) {
+		this.detachRoom(room);
 		room.destroy();
 	}
 	/** do NOT use this in a while loop: see `closePopupsUntil */
@@ -2952,7 +3018,6 @@ export const PS = new class extends PSModel {
 	join(roomid: RoomID, options?: Partial<RoomOptions> | null) {
 		// popups are always reopened rather than focused
 		if (PS.rooms[roomid] && !PS.isPopup(PS.rooms[roomid])) {
-			if (this.room.id === roomid) return;
 			this.focusRoom(roomid);
 			return;
 		}
@@ -2963,10 +3028,32 @@ export const PS = new class extends PSModel {
 		if (!roomid || roomid === 'rooms') return;
 		const room = PS.rooms[roomid];
 		if (room) {
-			this.removeRoom(room);
+			if (room.id.startsWith('dm-')) {
+				room.dismissAllNotifications();
+				this.detachedRooms[room.id] = room;
+				this.detachRoom(room);
+			} else {
+				this.removeRoom(room);
+			}
 			if (room.type === 'chat') this.updateAutojoin();
 			this.update();
 		}
+	}
+	clearDMs() {
+		let cleared = false;
+		for (const roomid in this.rooms) {
+			if (!roomid.startsWith('dm-')) continue;
+			this.removeRoom(this.rooms[roomid]!);
+			cleared = true;
+		}
+		for (const roomid in this.detachedRooms) {
+			if (!roomid.startsWith('dm-')) continue;
+			this.detachedRooms[roomid]!.destroy();
+			delete this.detachedRooms[roomid];
+			cleared = true;
+		}
+		if (cleared) this.update();
+		return cleared;
 	}
 
 	updateAutojoin() {

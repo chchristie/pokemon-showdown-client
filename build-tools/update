@@ -6,14 +6,12 @@
  * It also updates news and the learnsets-g6.js file.
  */
 
-"use strict";
+import fs from 'node:fs';
+import crypto from 'node:crypto';
+import child_process from 'node:child_process';
+import * as compiler from './compiler.mjs';
 
-const fs = require('node:fs');
-const crypto = require('node:crypto');
-const child_process = require('node:child_process');
-const compiler = require('./compiler.mjs');
-
-process.chdir(__dirname + '/..');
+process.chdir(import.meta.dirname + '/..');
 
 const AUTOCONFIG_START = '/*** Begin automatically generated configuration ***/';
 const AUTOCONFIG_END = '/*** End automatically generated configuration ***/';
@@ -38,7 +36,7 @@ function readOptionalFile(filename) {
 
 process.stdout.write("Updating version... ");
 
-let version = require('../package.json').version;
+let version = JSON.parse(fs.readFileSync('package.json', UTF8)).version;
 try {
 	let commit = child_process.execSync('git rev-parse HEAD', {
 		stdio: ['ignore', 'pipe', 'ignore'],
@@ -52,9 +50,23 @@ try {
 } catch {}
 
 const routes = JSON.parse(fs.readFileSync('config/routes.json'));
+const translationCachebuster = (() => {
+	try {
+		const textDir = 'play.pokemonshowdown.com/data/text/';
+		const hash = crypto.createHash('md5');
+		for (const textFile of fs.readdirSync(textDir).filter(file => file.endsWith('.js')).sort()) {
+			hash.update(textFile);
+			hash.update(fs.readFileSync(textDir + textFile));
+		}
+		return hash.digest('hex').slice(0, 8);
+	} catch {
+		return '';
+	}
+})();
 const autoconfigRegex = new RegExp(`${escapeRegex(AUTOCONFIG_START)}[^]+${escapeRegex(AUTOCONFIG_END)}`);
 const autoconfig = `${AUTOCONFIG_START}
 Config.version = ${JSON.stringify(version)};
+Config.translationCachebuster = ${JSON.stringify(translationCachebuster)};
 
 Config.routes = {
 	root: '${routes.root}',
@@ -118,7 +130,7 @@ compiledFiles += compiler.compileToDir(`teams.pokemonshowdown.com/src`, `teams.p
 try {
 	fs.statSync('play.pokemonshowdown.com/data/text/en.js');
 	// English text exists, we can compile battledata
-	compiledFiles += compiler.compileToFile(
+	compiledFiles += await compiler.compileToFile(
 		[
 			'play.pokemonshowdown.com/src/battle-dex.ts',
 			'play.pokemonshowdown.com/src/battle-teams.ts',
@@ -135,7 +147,7 @@ try {
 } catch {}
 
 if (!compileOpts.ignore) {
-	compiledFiles += compiler.compileToFile(
+	compiledFiles += await compiler.compileToFile(
 		['play.pokemonshowdown.com/src/battle-animations.ts', 'play.pokemonshowdown.com/src/battle-animations-moves.ts'],
 		'play.pokemonshowdown.com/data/graphics.js',
 		compileOpts

@@ -14,6 +14,7 @@ export type Args = [string, ...string[]];
 export type KWArgs = { [kw: string]: string };
 export type SideID = 'p1' | 'p2' | 'p3' | 'p4';
 export type InflectionCategories = { [placeholder: string]: string };
+type BattleTextTableName = 'Default' | 'Moves' | 'Abilities' | 'Items';
 type RenderValue = string | {
 	value: string,
 	table?: 'Items' | 'Default',
@@ -250,7 +251,7 @@ export class BattleTextParser {
 		return out;
 	}
 
-	private textField(table: keyof BattleTextData, id: string, field: string) {
+	private textField(table: BattleTextTableName, id: string, field: string) {
 		const english = BattleText.en?.[table]?.[id];
 		const localized = BattleText[this.language]?.[table]?.[id];
 		let value = localized?.[field] || english?.[field];
@@ -258,8 +259,8 @@ export class BattleTextParser {
 			const genName = `gen${i}`;
 			const englishGen = english?.[genName];
 			const localizedGen = localized?.[genName];
-			if (typeof localizedGen === 'object' && localizedGen[field]) value = localizedGen[field];
-			else if (typeof englishGen === 'object' && englishGen[field]) value = englishGen[field];
+			if (localizedGen && typeof localizedGen === 'object' && localizedGen[field]) value = localizedGen[field];
+			else if (englishGen && typeof englishGen === 'object' && englishGen[field]) value = englishGen[field];
 		}
 		return typeof value === 'string' ? value : '';
 	}
@@ -268,27 +269,41 @@ export class BattleTextParser {
 		return this.textField('Default', 'default', field);
 	}
 
+	uiText(field: string, values?: { [placeholder: string]: RenderValue | undefined }) {
+		const template = this.textField('Default', 'ui', field);
+		if (!template) return '';
+		return this.render(template, values);
+	}
+
+	private static uiParser: BattleTextParser | null = null;
+	/** Render a `Default.default` template, like `fullName`, in the current language */
+	static defaultText(field: string, values?: { [placeholder: string]: RenderValue | undefined }) {
+		const parser = (BattleTextParser.uiParser ||= new BattleTextParser());
+		parser.language = Dex.text.getLanguage();
+		return parser.render(parser.defaultText(field), values);
+	}
+	static ui(field: string, values?: { [placeholder: string]: RenderValue | undefined }) {
+		const parser = (BattleTextParser.uiParser ||= new BattleTextParser());
+		parser.language = Dex.text.getLanguage();
+		return parser.uiText(field, values);
+	}
+	static weatherName(weather: string, language = Dex.text.getLanguage()) {
+		const parser = (BattleTextParser.uiParser ||= new BattleTextParser());
+		parser.language = language;
+		return parser.textField('Default', BattleTextParser.effectId(weather), 'weatherName') || weather;
+	}
+
 	/**
-	 * Render template, resolving placeholders. Array means a different value for each placeholder.
+	 * Render template, resolving placeholders.
 	 */
 	private render(
-		template: string, values: { [placeholder: string]: RenderValue | RenderValue[] | undefined } = {}
+		template: string, values: { [placeholder: string]: RenderValue | undefined } = {}
 	) {
 		const categories: InflectionCategories = {};
-		const indexes: { [placeholder: string]: number } = {};
 		const text = template.replace(
-			/\[([A-Z][A-Z0-9]*)(?::([a-z]+(?::[a-z]+)*))?\]/g,
+			/\{([A-Z][A-Z0-9]*)(?::([a-z]+(?::[a-z]+)*))?\}/g,
 			(match, placeholder: string, modifierText: string | undefined) => {
-				const source = values[placeholder];
-				if (source === undefined) return match;
-				let value: RenderValue | undefined;
-				if (Array.isArray(source)) {
-					const index = indexes[placeholder] || 0;
-					value = source[index];
-					indexes[placeholder] = index + 1;
-				} else {
-					value = source;
-				}
+				const value = values[placeholder];
 				if (value === undefined) return match;
 				return this.resolveRenderValue(
 					placeholder, value, modifierText ? modifierText.split(':') : [], categories
@@ -306,9 +321,11 @@ export class BattleTextParser {
 		let articleRule = '';
 		if (typeof source !== 'string' && source.table && source.id) {
 			const entry = BattleText[this.language]?.[source.table]?.[source.id] ||
-				BattleText.en?.[source.table]?.[source.id];
+				BattleText.en?.[source.table]?.[source.id] || undefined;
 			let form = entry;
-			if (modifiers.includes('classified') && typeof entry?.classified === 'object') form = entry.classified;
+			if (modifiers.includes('classified') && entry?.classified && typeof entry.classified === 'object') {
+				form = entry.classified;
+			}
 			value = typeof form?.name === 'string' ? form.name : value;
 			category = typeof form?.grammar === 'string' ? form.grammar : category;
 			articleRule = typeof form?.articleRule === 'string' ? form.articleRule : '';
@@ -322,12 +339,12 @@ export class BattleTextParser {
 			const prefixes = ['pokemon', 'opposingPokemon', 'team', 'opposingTeam', 'party', 'opposingParty'].map(templateId => {
 				const template = this.defaultText(templateId);
 				if (template.startsWith(template.charAt(0).toUpperCase())) return '';
-				const bracketIndex = template.indexOf('[');
-				if (bracketIndex >= 0) return template.slice(0, bracketIndex);
+				const braceIndex = template.indexOf('{');
+				if (braceIndex >= 0) return template.slice(0, braceIndex);
 				return template;
 			}).filter(prefix => prefix);
 			if (prefixes.length) {
-				let buf = `((?:^|\n)(?:  |  \\(|\\[)?)(` +
+				let buf = `((?:^|\n)(?:  |  \\(|\\[|\\{)?)(` +
 					prefixes.map(BattleTextParser.escapeRegExp).join('|') +
 					`)`;
 				this.lowercaseRegExp = new RegExp(buf, 'g');
@@ -350,7 +367,7 @@ export class BattleTextParser {
 
 	static inflect(template: string, categories: InflectionCategories) {
 		return template.replace(
-			/\[INFLECT:([A-Z][A-Z0-9]*):((?:\\.|[^\]\\])*)\]/g,
+			/\{INFLECT:([A-Z][A-Z0-9]*):((?:\\.|[^}\\])*)\}/g,
 			(match, placeholder: string, source: string) => {
 				const category = categories[placeholder];
 				if (!category) return match;
@@ -415,7 +432,13 @@ export class BattleTextParser {
 
 		if (language === 'fr') {
 			let article = '';
-			if (has('definite')) {
+			const lead = (has('a') || has('de')) && !has('definite') && !has('indefinite') &&
+				/^(\*\*)?(le |la |les |l’)/i.exec(value);
+			if (lead) {
+				// detect article for "de les" -> "des" etc
+				article = lead[2].toLowerCase();
+				value = (lead[1] || '') + value.slice(lead[0].length);
+			} else if (has('definite')) {
 				article = plural ? 'les ' : vowel ? 'l’' : feminine ? 'la ' : 'le ';
 			} else if (has('indefinite')) {
 				article = uncountable ? '' : plural ? 'des ' : feminine ? 'une ' : 'un ';
@@ -435,7 +458,13 @@ export class BattleTextParser {
 		} else if (language === 'es') {
 			const articleFeminine = feminine && articleRule !== 'stressed-a';
 			let article = '';
-			if (has('definite')) article = plural ? (feminine ? 'las ' : 'los ') : (articleFeminine ? 'la ' : 'el ');
+			const lead = (has('a') || has('de')) && !has('definite') && !has('indefinite') &&
+				/^(\*\*)?(el |la |los |las )/i.exec(value);
+			if (lead) {
+				// detect article for "de el" -> "del" etc
+				article = lead[2].toLowerCase();
+				value = (lead[1] || '') + value.slice(lead[0].length);
+			} else if (has('definite')) article = plural ? (feminine ? 'las ' : 'los ') : (articleFeminine ? 'la ' : 'el ');
 			else if (has('indefinite')) {
 				article = uncountable ? '' : plural ? (feminine ? 'unas ' : 'unos ') : (articleFeminine ? 'una ' : 'un ');
 			}
@@ -446,7 +475,15 @@ export class BattleTextParser {
 		} else if (language === 'it') {
 			const special = /^(?:s[^aeiouàèéìòù]|z|gn|ps|pn|x|y)/i.test(initial);
 			let article = '';
-			if (has('definite')) {
+			let hasDefinite = has('definite');
+			const lead = (has('a') || has('di') || has('su')) && !has('definite') && !has('indefinite') &&
+				/^(\*\*)?(il |lo |la |i |gli |le |l’)/i.exec(value);
+			if (lead) {
+				// detect article for "su la" -> "sulla" etc
+				article = lead[2].toLowerCase();
+				value = (lead[1] || '') + value.slice(lead[0].length);
+				hasDefinite = true;
+			} else if (has('definite')) {
 				if (plural) article = feminine ? 'le ' : (vowel || special ? 'gli ' : 'i ');
 				else if (vowel) article = 'l’';
 				else article = feminine ? 'la ' : (special ? 'lo ' : 'il ');
@@ -455,11 +492,11 @@ export class BattleTextParser {
 				else if (feminine) article = vowel ? 'un’' : 'una ';
 				else article = special ? 'uno ' : 'un ';
 			}
-			if (has('a') && has('definite')) {
+			if (has('a') && hasDefinite) {
 				prefix = this.italianContraction(article, ['al ', 'allo ', 'all’', 'alla ', 'ai ', 'agli ', 'alle ']);
-			} else if (has('di') && has('definite')) {
+			} else if (has('di') && hasDefinite) {
 				prefix = this.italianContraction(article, ['del ', 'dello ', 'dell’', 'della ', 'dei ', 'degli ', 'delle ']);
-			} else if (has('su') && has('definite')) {
+			} else if (has('su') && hasDefinite) {
 				prefix = this.italianContraction(article, ['sul ', 'sullo ', 'sull’', 'sulla ', 'sui ', 'sugli ', 'sulle ']);
 			} else if (has('a')) {
 				prefix = vowel ? 'ad ' : 'a ';
@@ -515,7 +552,7 @@ export class BattleTextParser {
 		if (!text) return 0;
 		const code = text.charCodeAt(text.length - 1);
 		if (code >= 0xAC00 && code <= 0xD7A3) return (code - 0xAC00) % 28;
-		if (code >= 0x30 && code <= 0x39) return [1, 0, 0, 8, 0, 0, 1, 8, 8, 0][code - 0x30];
+		if (code >= 0x30 && code <= 0x39) return [1, 8, 0, 1, 0, 0, 1, 8, 8, 0][code - 0x30];
 		return /[lmnr]$/i.test(text) ? 8 : 0;
 	}
 
@@ -543,7 +580,11 @@ export class BattleTextParser {
 		const species = details.split(',')[0];
 		const localizedSpecies = this.speciesName(species);
 		if (nickname === localizedSpecies) return [pokemon.slice(0, 2), `**${localizedSpecies}**`];
-		return [pokemon.slice(0, 2), `${nickname} (**${localizedSpecies}**)`];
+		const template = this.defaultText('fullName') || '{NICKNAME} ({SPECIES})';
+		return [pokemon.slice(0, 2), this.render(template, {
+			NICKNAME: nickname,
+			SPECIES: `**${localizedSpecies}**`,
+		})];
 	}
 
 	trainer(side: string) {
@@ -605,8 +646,7 @@ export class BattleTextParser {
 		return effect.trim();
 	}
 
-	textName(table: keyof BattleTextData, name?: string) {
-		// DigiPen fork: same guard as upstream 951cc158 (e.g. `|cant|POKEMON|flinch` has no move); take upstream's version on merge
+	textName(table: 'Moves' | 'Items' | 'Abilities', name?: string) {
 		if (!name) return '';
 		name = name.trim();
 		const id = toID(name);
@@ -616,20 +656,22 @@ export class BattleTextParser {
 		return typeof translated === 'string' ? translated : name;
 	}
 
-	moveName(name: string) {
+	moveName(name?: string) {
 		return this.textName('Moves', name);
 	}
-	itemName(name: string) {
+	itemName(name?: string) {
 		return this.textName('Items', name);
 	}
 	private itemValue(name: string): RenderValue {
 		return { value: this.itemName(name), table: 'Items', id: toID(name) };
 	}
-	abilityName(name: string) {
+	abilityName(name?: string) {
 		return this.textName('Abilities', name);
 	}
-	speciesName(name: string) {
-		return this.textName('Pokedex', name);
+	speciesName(name?: string) {
+		if (!name) return '';
+		name = name.trim();
+		return Dex.text.get(Dex.species.get(name), this.language).name || name;
 	}
 
 	template(type: string, ...namespaces: (string | undefined)[]) {
@@ -642,10 +684,10 @@ export class BattleTextParser {
 				return '';
 			}
 			let id = BattleTextParser.effectId(namespace);
-			let tables: (keyof BattleTextData)[];
-			if (namespace.startsWith('item:')) tables = ['Items'];
-			else if (namespace.startsWith('ability:')) tables = ['Abilities'];
-			else if (namespace.startsWith('move:')) tables = ['Moves'];
+			let tables: BattleTextTableName[];
+			if (namespace.startsWith('item:')) tables = ['Items', 'Default'];
+			else if (namespace.startsWith('ability:')) tables = ['Abilities', 'Default'];
+			else if (namespace.startsWith('move:')) tables = ['Moves', 'Default'];
 			else tables = ['Items', 'Abilities', 'Moves', 'Default'];
 			for (const table of tables) {
 				let template = this.textField(table, id, type);
@@ -682,18 +724,24 @@ export class BattleTextParser {
 
 	static stat(stat: string, language = Dex.text.getLanguage()) {
 		const id = stat || 'stats';
-		const name = BattleText[language]?.Default[id]?.statName || BattleText.en?.Default[id]?.statName;
+		const name = BattleText[language]?.StatNames?.[id] || BattleText.en?.StatNames?.[id];
+		return typeof name === 'string' ? name : `???stat:${stat}???`;
+	}
+	static statMediumName(stat: string, language = Dex.text.getLanguage()) {
+		const name = BattleText[language]?.StatMediumNames?.[stat] || BattleText.en?.StatMediumNames?.[stat];
 		return typeof name === 'string' ? name : `???stat:${stat}???`;
 	}
 	static statShortName(stat: string, language = Dex.text.getLanguage()) {
-		const name = BattleText[language]?.Default[stat]?.statShortName || BattleText.en?.Default[stat]?.statShortName;
+		const name = BattleText[language]?.StatShortNames?.[stat] || BattleText.en?.StatShortNames?.[stat];
 		return typeof name === 'string' ? name : `???stat:${stat}???`;
 	}
 	private statValue(stat: string): RenderValue {
 		const id = stat || 'stats';
+		const grammar = BattleText[this.language]?.StatNames?.[`${id}:grammar`] ||
+			BattleText.en?.StatNames?.[`${id}:grammar`];
 		return {
-			value: BattleTextParser.stat(stat, this.language), table: 'Default', id,
-			category: stat ? 's' : 'p',
+			value: BattleTextParser.stat(stat, this.language),
+			category: grammar || (stat ? 's' : 'p'),
 		};
 	}
 
@@ -730,7 +778,7 @@ export class BattleTextParser {
 		}
 		case '-activate': {
 			const id = BattleTextParser.effectId(args[2]);
-			if (id === 'confusion' || id === 'attract') return 'preMajor';
+			if (id === 'confusion' || id === 'attract' || id === 'pursuit') return 'preMajor';
 			return 'postMajor';
 		}
 		}
@@ -790,13 +838,13 @@ export class BattleTextParser {
 		}
 
 		case 'start': {
-			return this.render(this.template('startBattle'), { TRAINER: [this.p1, this.p2] });
+			return this.render(this.template('startBattle'), { TRAINER1: this.p1, TRAINER2: this.p2 });
 		}
 
 		case 'win': case 'tie': {
 			const [, name] = args;
 			if (cmd === 'tie' || !name) {
-				return this.render(this.template('tieBattle'), { TRAINER: [this.p1, this.p2] });
+				return this.render(this.template('tieBattle'), { TRAINER1: this.p1, TRAINER2: this.p2 });
 			}
 			return this.render(this.template('winBattle'), { TRAINER: name });
 		}
@@ -1351,10 +1399,12 @@ export class BattleTextParser {
 
 			if (!kwArgs.from) {
 				template = this.template(percentage ? 'damagePercentage' : 'damage');
-				percentage = percentage ? percentage.replace(/%$/, '') : '';
-				return line1 + this.render(template, {
+				percentage = percentage ? percentage.replace(/%(\|\|)?$/, '$1') : '';
+				const message = this.render(template, {
 					POKEMON: this.pokemon(pokemon), PERCENTAGE: percentage,
 				});
+				// move % sign inside <abbr>
+				return line1 + message.replace(/\|\|([%％])/, '$1||');
 			}
 			if (kwArgs.from.startsWith('item:')) {
 				template = this.template(kwArgs.of ? 'damageFromPokemon' : 'damageFromItem');

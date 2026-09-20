@@ -76,6 +76,7 @@ export default configure([
 			'build-tools/*.js',
 			'build-tools/update',
 			'build-tools/build-*',
+			'test/run',
 		],
 		extends: [configs.js],
 		languageOptions: {
@@ -135,6 +136,28 @@ export default configure([
 			"no-restricted-syntax": "off",
 			"no-restricted-globals": "off",
 			"require-atomic-updates": "off",
+		},
+	},
+	{
+		name: "TypeScript for Node",
+		files: ['build-tools/*.{ts,mts}'],
+		extends: [configs.ts],
+		languageOptions: {
+			parserOptions: {
+				projectService: true,
+				tsconfigRootDir: import.meta.dirname,
+			},
+			globals: {
+				...globals.builtin,
+				...globals.node,
+			},
+		},
+		rules: {
+			// Translation files are trusted code, and evaluating them keeps this tool independent of Babel.
+			"@typescript-eslint/no-implied-eval": "off",
+			// These regexes describe the catalog's source syntax more clearly than string primitives.
+			"@typescript-eslint/prefer-regexp-exec": "off",
+			"@typescript-eslint/prefer-string-starts-ends-with": "off",
 		},
 	},
 ]);
