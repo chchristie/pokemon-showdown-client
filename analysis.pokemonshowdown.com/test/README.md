@@ -31,7 +31,7 @@ npm run pokemon-edits    # Pokémon state edit form (pokemon-edits.js)
 npm run teambuilder      # embedded teambuilder (teambuilder.js)
 npm run setup            # Set Up Position (setup.js)
 npm run replay           # Import Replay (replay.js)
-npm run export           # Export Analysis (export.js)
+npm run export           # Export and Import Analysis (export.js)
 ```
 
 Server-side edit logic (what gets written to the sim and which protocol lines are emitted) has its own mocha test in the server repo: `npx mocha --no-config --exit test/main.js test/tools/analysis/edits.js`.

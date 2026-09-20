@@ -2203,7 +2203,7 @@ class AnalysisApp extends preact.Component {
 			const stale = this.analysisFile ? stalenessWarning(this.analysisFile, this.serverCommit) : '';
 			return <form class="analysis-form" onSubmit={onSubmit}>
 				<h2>Import Analysis</h2>
-				<p>Opens an analysis exported with <strong>Export Analysis</strong>, at the turn it was saved on.</p>
+				<p>Opens an analysis saved with <strong>Export</strong>, at the turn it was saved on.</p>
 				<label>Analysis file<input
 					type="file" accept=".json,application/json"
 					onChange={event => void this.readAnalysisFile(event.target as HTMLInputElement)}
@@ -2846,7 +2846,7 @@ class AnalysisApp extends preact.Component {
 				analysis, not on this turn. The end-of-game node renders `turnControls` too, so an imported
 				replay can be exported from its last node as well. */}
 			<button class="button" onClick={() => downloadAnalysisExport(tab, this.serverCommit)}>
-				<i class="fa fa-download" aria-hidden></i><br />Export Analysis
+				<i class="fa fa-download" aria-hidden></i><br />Export
 			</button>
 		</div>;
 		/*

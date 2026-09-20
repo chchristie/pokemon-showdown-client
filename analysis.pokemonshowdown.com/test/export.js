@@ -1,11 +1,11 @@
 'use strict';
 /**
- * Export Analysis (docs/analysis/plan.md, Phase 6): the download button in the default controls, and the
+ * Export and Import (docs/analysis/plan.md, Phase 6): the download button in the default controls, and the
  * shape of the file it writes.
  * - the button sits after Next Turn, and carries the same download icon as the client's replay download
  * - the file is a *recipe*: teams, root seed, and per node the seed, edits and choices
  * - everything `/analysis/start` returns is left out (log, snapshot, requests, editOptions, ...), as are
- *   simulation results and a node's derived display fields
+ *   simulation results; nodes are kept whole, summaries included, because nothing recomputes those
  * - an imported replay's own log **is** kept, because no rebuild can reproduce it
  * - the filename is format + date, plus both trainers when a replay named them
  *
@@ -83,9 +83,9 @@ function captureDownloads(page) {
 	});
 }
 
-/** Clicks Export Analysis and returns `{ filename, file }` with the parsed JSON. */
+/** Clicks Export and returns `{ filename, file }` with the parsed JSON. */
 async function exportAnalysis(page) {
-	await clickButton(page, 'Export Analysis');
+	await clickButton(page, 'Export');
 	await waitFor(page, () => !!window.__captured, 'the exported file');
 	const captured = await page.evaluate(() => window.__captured);
 	let file;
@@ -201,19 +201,19 @@ async function fromTeams() {
 		const placement = await page.evaluate(() => {
 			const buttons = [...document.querySelectorAll('.battle-controls button')];
 			const next = buttons.findIndex(button => /Next Turn/.test(button.textContent));
-			const exportIndex = buttons.findIndex(button => /Export Analysis/.test(button.textContent));
+			const exportIndex = buttons.findIndex(button => /Export/.test(button.textContent));
 			return {
 				next, exportIndex,
 				icon: !!buttons[exportIndex]?.querySelector('i.fa.fa-download'),
 				enabled: exportIndex >= 0 && !buttons[exportIndex].disabled,
 			};
 		});
-		expect(placement.exportIndex >= 0, 'expected an Export Analysis button in the default controls');
+		expect(placement.exportIndex >= 0, 'expected an Export button in the default controls');
 		expect(placement.exportIndex === placement.next + 1,
-			`Export Analysis should follow Next Turn, got indexes ${JSON.stringify(placement)}`);
-		expect(placement.icon, 'expected the fa-download icon on Export Analysis');
-		expect(placement.enabled, 'Export Analysis should be clickable');
-		step('Export Analysis sits after Next Turn with a download icon');
+			`Export should follow Next Turn, got indexes ${JSON.stringify(placement)}`);
+		expect(placement.icon, 'expected the fa-download icon on Export');
+		expect(placement.enabled, 'Export should be clickable');
+		step('Export sits after Next Turn with a download icon');
 
 		const { filename, file } = await exportAnalysis(page);
 		expect(filename === `Gen9OU-${today()}-analysis.json`,
