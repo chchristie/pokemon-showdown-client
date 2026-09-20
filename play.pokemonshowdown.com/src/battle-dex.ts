@@ -1158,17 +1158,22 @@ export const Dex = new class implements ModdedDex {
 		let fainted = ((pokemon as Pokemon | ServerPokemon)?.fainted ?
 		`;opacity:.3;filter:grayscale(100%) brightness(.5)` : ``);
 
-		// Handle DigiPen icons separately
+		let top = Math.floor(num / 12) * 30;
+		let left = (num % 12) * 40;
+		const sheet = `url(${Dex.resourcePrefix}sprites/pokemonicons-sheet.png?v21) no-repeat scroll -${left}px -${top}px`;
+
+		// DigiPen fork: a custom mod's icon, drawn over the standard sheet position. Two background
+		// layers rather than one, so an icon whose file has not been added to the resources repo yet
+		// paints nothing and the sheet shows through, instead of leaving a blank space. The colour
+		// belongs to the last layer.
 		const pokedexEntry = window.BattlePokedex?.[id] as { customIcon?: boolean } | undefined;
 		const species = Dex.species.get(id);
 		if (pokedexEntry?.customIcon) {
 			const url = Dex.resourcePrefixCustom + 'sprites/pokemonicons/' + species.spriteid + '.png';
-			return `background:transparent url(${url}) no-repeat scroll 0px 0px${fainted}`;
+			return `background:url(${url}) no-repeat scroll 0px 0px,transparent ${sheet}${fainted}`;
 		}
 
-		let top = Math.floor(num / 12) * 30;
-		let left = (num % 12) * 40;
-		return `background:transparent url(${Dex.resourcePrefix}sprites/pokemonicons-sheet.png?v21) no-repeat scroll -${left}px -${top}px${fainted}`;
+		return `background:transparent ${sheet}${fainted}`;
 	}
 
 	getTeambuilderSpriteData(pokemon: any, dex: ModdedDex = Dex): TeambuilderSpriteData {
@@ -1263,7 +1268,10 @@ export const Dex = new class implements ModdedDex {
 		const prefix = data.digipen ? Dex.resourcePrefixCustom : Dex.resourcePrefix;
 		const shiny = (data.shiny ? '-shiny' : '');
 		const resize = (data.h ? `background-size:${data.h}px` : '');
-		return `background-image:url(${prefix}${data.spriteDir}${shiny}/${data.spriteid}.png);background-position:${data.x + xOffset}px ${data.y + yOffset}px;background-repeat:no-repeat;${resize}`;
+		// DigiPen fork: a custom sprite gets the unknown-species sprite as a second layer, so one
+		// whose art has not landed yet shows a placeholder rather than nothing.
+		const fallback = data.digipen ? `,url(${Dex.resourcePrefix}sprites/gen5/0.png)` : '';
+		return `background-image:url(${prefix}${data.spriteDir}${shiny}/${data.spriteid}.png)${fallback};background-position:${data.x + xOffset}px ${data.y + yOffset}px;background-repeat:no-repeat;${resize}`;
 	}
 
 	getItemIcon(item: any) {
@@ -1271,15 +1279,21 @@ export const Dex = new class implements ModdedDex {
 		if (typeof item === 'string' && window.BattleItems) item = window.BattleItems[toID(item)];
 		if (item?.spritenum) num = item.spritenum;
 
-		// Handle DigiPen icons separately
-		if (item?.isNonstandard?.startsWith('DigiPen')) {
-			const url = Dex.resourcePrefixCustom + 'sprites/itemicons/' + item.id + '.png';
-			return `background:transparent url(${url}) no-repeat scroll 0px 0px`;
-		}
-
 		let top = Math.floor(num / 16) * 24;
 		let left = (num % 16) * 24;
-		return `background:transparent url(${Dex.resourcePrefix}sprites/itemicons-sheet.png?v1) no-repeat scroll -${left}px -${top}px`;
+		const sheet = `url(${Dex.resourcePrefix}sprites/itemicons-sheet.png?v1) no-repeat scroll -${left}px -${top}px`;
+
+		// DigiPen fork: any custom mod's items, layered over the sheet so a missing icon falls back
+		// to the sheet position rather than rendering as nothing.
+		if (BattleCustomMods.byLabel(item?.isNonstandard)) {
+			// `BattleItems` rows carry a name but no id, so a caller passing an item name would
+			// otherwise ask the resources host for `undefined.png`.
+			const itemid = toID(item.id || item.name);
+			const url = `${Dex.resourcePrefixCustom}sprites/itemicons/${itemid}.png`;
+			return `background:url(${url}) no-repeat scroll 0px 0px,transparent ${sheet}`;
+		}
+
+		return `background:transparent ${sheet}`;
 	}
 
 	getTypeIcon(type: string | null, b?: boolean) { // b is just for utilichart.js
