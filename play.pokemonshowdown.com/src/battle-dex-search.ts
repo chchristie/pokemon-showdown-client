@@ -1299,7 +1299,7 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 				} else if (!format.includes('ubers')) {
 					// National Dex bans restricted legendaries and Arceus; Ubers allows them.
 					tierSet = tierSet.filter(row => (
-						row[0] !== 'pokemon' || !BattleCustomMods.nationalDexBanned(dex.species.get(row[1]))
+						row[0] !== 'pokemon' || !BattleCustomMods.nationalDexBanned(dex.species.get(row[1]), dex)
 					));
 				}
 			}

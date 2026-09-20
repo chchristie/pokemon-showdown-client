@@ -27,6 +27,20 @@ interface CustomModInfo {
  */
 type CustomModFlavor = 'singles' | 'natdex' | 'vgc';
 
+/**
+ * Just enough of a species and a dex for the checks below. This file is a script rather than a
+ * module — its declarations have to be globals for the other client sources to see them — so it
+ * cannot import `Dex.Species` or `ModdedDex` and describes what it needs structurally instead.
+ */
+interface CustomModSpeciesLike {
+	name: string;
+	baseSpecies?: string;
+	tags?: readonly string[];
+}
+interface CustomModDexLike {
+	species: { get: (name: string) => CustomModSpeciesLike };
+}
+
 interface CustomModFormat {
 	mod: CustomModInfo;
 	flavor: CustomModFlavor;
@@ -93,9 +107,15 @@ const BattleCustomMods = new class {
 	 * rather than Restricted Legendary, so it has to be named; banning it there covers every forme,
 	 * hence the check against the base species here.
 	 */
-	nationalDexBanned(species: { tags?: readonly string[], baseSpecies?: string, name?: string }): boolean {
+	nationalDexBanned(species: CustomModSpeciesLike, dex: CustomModDexLike): boolean {
+		const baseName = species.baseSpecies || species.name;
+		if (baseName === 'Arceus') return true;
 		if (species.tags?.includes('Restricted Legendary')) return true;
-		return (species.baseSpecies || species.name) === 'Arceus';
+		// Unlike the server's dex, the client's does not copy a base species' tags onto its formes,
+		// so Calyrex-Shadow and Rayquaza-Mega carry no tags of their own. Look the base species up,
+		// the same way the VGC restricted check in battle-dex-search.ts does.
+		const base = dex.species.get(baseName);
+		return !!base.tags?.includes('Restricted Legendary');
 	}
 
 	/** True when this entry is one mod's exclusive content. */
