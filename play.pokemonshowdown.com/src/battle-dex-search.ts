@@ -672,10 +672,9 @@ abstract class BattleTypedSearch<T extends SearchType> {
 	 */
 	set: Dex.PokemonSet | null = null;
 
-	protected formatType: 'doubles' | 'bdsp' | 'bdspdoubles' | 'rs' | 'frlg' | 'bw1' | 'letsgo' | 'metronome' | 'natdex' |
-	'nfe' | 'ssdlc1' | 'ssdlc1doubles' | 'predlc' | 'predlcdoubles' | 'svdlc1' | 'svdlc1doubles' | 'stadium' | 'lc' |
-	'champions' | 'natdexchampions' |
-	null = null;
+	protected formatType: 'doubles' | 'bdsp' | 'bdspdoubles' | 'rs' | 'frlg' | 'bw1' | 'letsgo' | 'metronome' |
+		'natdex' | 'nfe' | 'ssdlc1' | 'ssdlc1doubles' | 'predlc' | 'predlcdoubles' | 'svdlc1' | 'svdlc1doubles' |
+		'stadium' | 'lc' | 'champions' | 'natdexchampions' | null = null;
 	/**
 	 * DigiPen fork: the custom content mod this format belongs to, if any. Held separately from
 	 * `formatType` so that a mod needs no members of its own in that union.
@@ -719,8 +718,7 @@ abstract class BattleTypedSearch<T extends SearchType> {
 			this.dex = Dex.mod(customMod.mod.id as ID);
 			this.isDoubles = customMod.flavor === 'vgc';
 			format = customMod.rest as ID;
-		}
-		else {
+		} else {
 			if (format.startsWith('dlc1') && this.dex.gen === 8) {
 				if (format.includes('doubles')) {
 					this.formatType = 'ssdlc1doubles';
@@ -1138,15 +1136,15 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 		const { fe, nfe, lc } = BattleCustomMods.tiers(mod);
 		const isModified = (id: ID) => dex.species.get(id).modified === mod.label;
 
-		const listed = new Set<ID>();
+		const listed: { [id: string]: true } = {};
 		const collect = (from: number, to: number, ownOnly: boolean) => {
 			const ids: ID[] = [];
 			for (const row of tierSet.slice(from, to)) {
 				if (row[0] !== 'pokemon') continue;
 				const id = row[1];
-				if (listed.has(id) || isModified(id)) continue;
+				if (listed[id] || isModified(id)) continue;
 				if (ownOnly && dex.species.get(id).isNonstandard !== mod.label) continue;
-				listed.add(id);
+				listed[id] = true;
 				ids.push(id);
 			}
 			return ids;
@@ -1162,14 +1160,14 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 		const modified: ID[] = [];
 		for (const id in BattlePokedex) {
 			const pid = id as ID;
-			if (isModified(pid) && !listed.has(pid)) {
-				listed.add(pid);
+			if (isModified(pid) && !listed[pid]) {
+				listed[pid] = true;
 				modified.push(pid);
 			}
 		}
 		modified.sort(byName);
 
-		const rest = tierSet.filter(row => row[0] !== 'pokemon' || !listed.has(row[1]));
+		const rest = tierSet.filter(row => row[0] !== 'pokemon' || !listed[row[1]]);
 		return [
 			...(own.length ? [['header', mod.label] as SearchRow, ...own.map(id => ['pokemon', id] as SearchRow)] : []),
 			...(modified.length ?
@@ -1283,7 +1281,6 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 				}
 				return rows;
 			};
-			const isRestricted = (id: ID) => !!dex.species.get(id).tags?.includes('Restricted Legendary');
 
 			if (this.customMod.flavor === 'vgc') {
 				if (format.endsWith('mythical')) {
@@ -1300,8 +1297,10 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 				if (format === 'dexnatdex') {
 					tierSet = this.customModDexList(tierSet, slices, dex);
 				} else if (!format.includes('ubers')) {
-					// National Dex bans restricted legendaries; National Dex Ubers does not.
-					tierSet = tierSet.filter(row => row[0] !== 'pokemon' || !isRestricted(row[1]));
+					// National Dex bans restricted legendaries and Arceus; Ubers allows them.
+					tierSet = tierSet.filter(row => (
+						row[0] !== 'pokemon' || !BattleCustomMods.nationalDexBanned(dex.species.get(row[1]))
+					));
 				}
 			}
 			// The singles table holds only the mod's own Pokemon, so it needs no slicing at all.
@@ -1527,6 +1526,8 @@ function customModDexEntries(
 			other.push([kind, id as ID]);
 		}
 	}
+	// A SearchRow's second element is an ID for entry rows and a string for header rows; only entry
+	// rows reach here.
 	const byName = (rows: SearchRow[]) => rows.sort(
 		(a, b) => get(a[1] as ID).name.localeCompare(get(b[1] as ID).name)
 	);
@@ -2150,7 +2151,7 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 		// mod's learnset table holds only the additions, so it is walked separately rather than
 		// replacing the base learnset.
 		if (this.customMod) {
-			const modTable = (BattleTeambuilderTable as any)[this.customMod.table]?.learnsets;
+			const modTable = BattleTeambuilderTable[this.customMod.table]?.learnsets;
 			let modLearnsetid = this.firstLearnsetid(species.id);
 			while (modLearnsetid) {
 				const modLearnset = modTable?.[modLearnsetid];
@@ -2244,10 +2245,11 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 		for (const id of moves) {
 			const move = dex.moves.get(id as ID);
 			const isUsable = this.moveIsNotUseless(id as ID, species, moves, this.set);
-			if (this.customMod && move.isNonstandard === this.customMod.mod.label) {
-				if (!modMoves.length) modMoves.push(['header', `${this.customMod.mod.label} moves`]);
+			const modLabel = this.customMod?.mod.label;
+			if (modLabel && move.isNonstandard === modLabel) {
+				if (!modMoves.length) modMoves.push(['header', `${modLabel} moves`]);
 				modMoves.push(['move', id as ID]);
-			} else if (this.customMod && move.modified === this.customMod.mod.label) {
+			} else if (modLabel && move.modified === modLabel) {
 				if (!modifiedMoves.length) modifiedMoves.push(['header', "Modified moves"]);
 				modifiedMoves.push(['move', id as ID]);
 			} else if (isUsable) {

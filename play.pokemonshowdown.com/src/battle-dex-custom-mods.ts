@@ -85,6 +85,19 @@ const BattleCustomMods = new class {
 		return { fe: mod.label, nfe: `${mod.label} NFE`, lc: `${mod.label} LC` };
 	}
 
+	/**
+	 * Pokemon a mod's National Dex format bans but its National Dex Ubers allows, so the
+	 * teambuilder list matches what the validator accepts.
+	 *
+	 * Mirrors the banlist in the server's `config/custom-formats.ts`. Arceus is tagged Mythical
+	 * rather than Restricted Legendary, so it has to be named; banning it there covers every forme,
+	 * hence the check against the base species here.
+	 */
+	nationalDexBanned(species: { tags?: readonly string[], baseSpecies?: string, name?: string }): boolean {
+		if (species.tags?.includes('Restricted Legendary')) return true;
+		return (species.baseSpecies || species.name) === 'Arceus';
+	}
+
 	/** True when this entry is one mod's exclusive content. */
 	isModContent(entry: { isNonstandard?: string | null } | null | undefined): boolean {
 		return !!entry && !!this.byLabel(entry.isNonstandard);
