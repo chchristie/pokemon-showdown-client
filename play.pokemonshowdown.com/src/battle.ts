@@ -3536,8 +3536,10 @@ export class Battle {
 			if (this.tier.includes(`Let's Go`)) {
 				this.dex = Dex.mod('gen7letsgo' as ID);
 			}
-			if (this.tier.includes('DigiPen')) {
-				this.dex = Dex.mod('gen9digipen' as ID);
+			// DigiPen fork: any custom content mod, by the label in the format name.
+			const customMod = BattleCustomMods.forTier(this.tier);
+			if (customMod) {
+				this.dex = Dex.mod(customMod.id as ID);
 			}
 			if (this.tier.includes('Super Staff Bros')) {
 				this.dex = Dex.mod('gen9ssb' as ID);

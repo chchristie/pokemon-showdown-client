@@ -5,6 +5,8 @@ window = global;
 
 require('../play.pokemonshowdown.com/js/battle-dex-data.js');
 require('../play.pokemonshowdown.com/js/battle-dex.js');
+// DigiPen fork: battle.js reads the custom mod registry to pick a battle's mod.
+require('../play.pokemonshowdown.com/js/battle-dex-custom-mods.js');
 require('../play.pokemonshowdown.com/js/battle-scene-stub.js');
 // global.BattleText = require('../play.pokemonshowdown.com/data/text/en.js').BattleText;
 require('../play.pokemonshowdown.com/js/battle-text-parser.js');

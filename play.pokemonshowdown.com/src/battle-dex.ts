@@ -489,7 +489,7 @@ export const Dex = new class implements ModdedDex {
 		return `${protocol}//${window.Config ? Config.routes.client : 'play.pokemonshowdown.com'}/fx/`;
 	})();
 
-	resourcePrefixDigipen = (() => {
+	resourcePrefixCustom = (() => {
 		return `https://chchristie.github.io/pokemon-showdown-client-resources/`;
 	})();
 
@@ -537,12 +537,10 @@ export const Dex = new class implements ModdedDex {
 		if (dex.gen === 9 && formatid.includes('champions')) {
 			dex = Dex.mod('champions' as ID);
 		}
-		if (dex.gen === 9 && formatid.includes('digipen')) {
-			dex = Dex.mod('gen9digipen' as ID);
-		}
-		// fork: FNAF formats, so the teambuilder's dex matches what DexSearch already returns
-		if (dex.gen === 9 && formatid.includes('fnaf')) {
-			dex = Dex.mod('gen9fnaf' as ID);
+		// DigiPen fork: custom content mods, so the teambuilder's dex matches what DexSearch returns.
+		const customMod = dex.gen === 9 ? BattleCustomMods.forFormat(formatid) : null;
+		if (customMod) {
+			dex = Dex.mod(customMod.mod.id as ID);
 		}
 		return dex;
 	}
@@ -552,10 +550,10 @@ export const Dex = new class implements ModdedDex {
 			avatar = BattleAvatarNumbers[avatar];
 		}
 		if (avatar.startsWith('#')) {
-			return Dex.resourcePrefixDigipen + 'sprites/trainers-custom/' + toID(avatar.slice(1)) + '.png';
+			return Dex.resourcePrefixCustom + 'sprites/trainers-custom/' + toID(avatar.slice(1)) + '.png';
 		}
 		if (avatar.startsWith('$')) {
-			return Dex.resourcePrefixDigipen + 'sprites/trainers/' + toID(avatar.slice(1)) + '.png';
+			return Dex.resourcePrefixCustom + 'sprites/trainers/' + toID(avatar.slice(1)) + '.png';
 		}
 		if (avatar.includes('.')) {
 			if (!window.Config?.server) {
@@ -1024,7 +1022,7 @@ export const Dex = new class implements ModdedDex {
 		}
 
 		// Mod Cries
-		if (options.mod && !species.digipenSprite) {
+		if (options.mod && !species.customSprite) {
 			spriteData.cryurl = `sprites/${options.mod}/audio/${toID(species.baseSpecies)}`;
 			spriteData.cryurl += '.mp3';
 		}
@@ -1068,8 +1066,8 @@ export const Dex = new class implements ModdedDex {
 		}
 
 		// DigiPen sprite path uses the DigiPen sprite host when flagged in dex data
-		if (species.digipenSprite) {
-			spriteData.url = Dex.resourcePrefixDigipen + 'sprites/gen5'
+		if (species.customSprite) {
+			spriteData.url = Dex.resourcePrefixCustom + 'sprites/gen5'
 			if (!isFront) spriteData.url += '-back';
 			spriteData.url += '/' + name + '.png';
 		}
@@ -1103,9 +1101,9 @@ export const Dex = new class implements ModdedDex {
 	}
 
 	getPokemonIconNum(id: ID, isFemale?: boolean, facingLeft?: boolean) {
-		/*const pokedexEntry = window.BattlePokedex?.[id] as { digipenIconnum?: number; iconnum?: number } | undefined;
-		if (pokedexEntry && typeof pokedexEntry.digipenIconnum === 'number') {
-			return pokedexEntry.digipenIconnum;
+		/*const pokedexEntry = window.BattlePokedex?.[id] as { customIconnum?: number; iconnum?: number } | undefined;
+		if (pokedexEntry && typeof pokedexEntry.customIconnum === 'number') {
+			return pokedexEntry.customIconnum;
 		}*/
 		let num = 0;
 		if (window.BattlePokemonSprites?.[id]?.num) {
@@ -1160,17 +1158,22 @@ export const Dex = new class implements ModdedDex {
 		let fainted = ((pokemon as Pokemon | ServerPokemon)?.fainted ?
 		`;opacity:.3;filter:grayscale(100%) brightness(.5)` : ``);
 
-		// Handle DigiPen icons separately
-		const pokedexEntry = window.BattlePokedex?.[id] as { digipenIcon?: boolean } | undefined;
-		const species = Dex.species.get(id);
-		if (pokedexEntry?.digipenIcon) {
-			const url = Dex.resourcePrefixDigipen + 'sprites/pokemonicons/' + species.spriteid + '.png';
-			return `background:transparent url(${url}) no-repeat scroll 0px 0px${fainted}`;
-		}
-
 		let top = Math.floor(num / 12) * 30;
 		let left = (num % 12) * 40;
-		return `background:transparent url(${Dex.resourcePrefix}sprites/pokemonicons-sheet.png?v21) no-repeat scroll -${left}px -${top}px${fainted}`;
+		const sheet = `url(${Dex.resourcePrefix}sprites/pokemonicons-sheet.png?v21) no-repeat scroll -${left}px -${top}px`;
+
+		// DigiPen fork: a custom mod's icon, drawn over the standard sheet position. Two background
+		// layers rather than one, so an icon whose file has not been added to the resources repo yet
+		// paints nothing and the sheet shows through, instead of leaving a blank space. The colour
+		// belongs to the last layer.
+		const pokedexEntry = window.BattlePokedex?.[id] as { customIcon?: boolean } | undefined;
+		const species = Dex.species.get(id);
+		if (pokedexEntry?.customIcon) {
+			const url = Dex.resourcePrefixCustom + 'sprites/pokemonicons/' + species.spriteid + '.png';
+			return `background:url(${url}) no-repeat scroll 0px 0px,transparent ${sheet}${fainted}`;
+		}
+
+		return `background:transparent ${sheet}${fainted}`;
 	}
 
 	getTeambuilderSpriteData(pokemon: any, dex: ModdedDex = Dex): TeambuilderSpriteData {
@@ -1187,7 +1190,7 @@ export const Dex = new class implements ModdedDex {
 			}
 		}
 		if (species.exists === false) return { spriteDir: 'sprites/gen5', spriteid: '0', x: 10, y: 5, pixelated: true };
-		if (species.digipenSprite) {
+		if (species.customSprite) {
 			return {
 				spriteid,
 				spriteDir: 'sprites/gen5',
@@ -1262,10 +1265,13 @@ export const Dex = new class implements ModdedDex {
 	getTeambuilderSprite(pokemon: any, dex?: ModdedDex, xOffset = 0, yOffset = 0) {
 		if (!pokemon) return '';
 		const data = this.getTeambuilderSpriteData(pokemon, dex);
-		const prefix = data.digipen ? Dex.resourcePrefixDigipen : Dex.resourcePrefix;
+		const prefix = data.digipen ? Dex.resourcePrefixCustom : Dex.resourcePrefix;
 		const shiny = (data.shiny ? '-shiny' : '');
 		const resize = (data.h ? `background-size:${data.h}px` : '');
-		return `background-image:url(${prefix}${data.spriteDir}${shiny}/${data.spriteid}.png);background-position:${data.x + xOffset}px ${data.y + yOffset}px;background-repeat:no-repeat;${resize}`;
+		// DigiPen fork: a custom sprite gets the unknown-species sprite as a second layer, so one
+		// whose art has not landed yet shows a placeholder rather than nothing.
+		const fallback = data.digipen ? `,url(${Dex.resourcePrefix}sprites/gen5/0.png)` : '';
+		return `background-image:url(${prefix}${data.spriteDir}${shiny}/${data.spriteid}.png)${fallback};background-position:${data.x + xOffset}px ${data.y + yOffset}px;background-repeat:no-repeat;${resize}`;
 	}
 
 	getItemIcon(item: any) {
@@ -1273,15 +1279,21 @@ export const Dex = new class implements ModdedDex {
 		if (typeof item === 'string' && window.BattleItems) item = window.BattleItems[toID(item)];
 		if (item?.spritenum) num = item.spritenum;
 
-		// Handle DigiPen icons separately
-		if (item?.isNonstandard?.startsWith('DigiPen')) {
-			const url = Dex.resourcePrefixDigipen + 'sprites/itemicons/' + item.id + '.png';
-			return `background:transparent url(${url}) no-repeat scroll 0px 0px`;
-		}
-
 		let top = Math.floor(num / 16) * 24;
 		let left = (num % 16) * 24;
-		return `background:transparent url(${Dex.resourcePrefix}sprites/itemicons-sheet.png?v1) no-repeat scroll -${left}px -${top}px`;
+		const sheet = `url(${Dex.resourcePrefix}sprites/itemicons-sheet.png?v1) no-repeat scroll -${left}px -${top}px`;
+
+		// DigiPen fork: any custom mod's items, layered over the sheet so a missing icon falls back
+		// to the sheet position rather than rendering as nothing.
+		if (BattleCustomMods.byLabel(item?.isNonstandard)) {
+			// `BattleItems` rows carry a name but no id, so a caller passing an item name would
+			// otherwise ask the resources host for `undefined.png`.
+			const itemid = toID(item.id || item.name);
+			const url = `${Dex.resourcePrefixCustom}sprites/itemicons/${itemid}.png`;
+			return `background:url(${url}) no-repeat scroll 0px 0px,transparent ${sheet}`;
+		}
+
+		return `background:transparent ${sheet}`;
 	}
 
 	getTypeIcon(type: string | null, b?: boolean) { // b is just for utilichart.js

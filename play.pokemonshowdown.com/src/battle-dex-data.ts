@@ -1572,8 +1572,8 @@ export class Species implements Effect {
 	readonly forme: string;
 	readonly formeid: string;
 	readonly spriteid: string;
-	readonly digipenSprite?: boolean;
-	readonly digipenIcon?: boolean;
+	readonly customSprite?: boolean;
+	readonly customIcon?: boolean;
 	readonly modified?: string;
 	readonly title?: string;
 	readonly dexEntry?: string;
@@ -1643,8 +1643,8 @@ export class Species implements Effect {
 		if (this.spriteid === 'greninja-bond') this.spriteid = 'greninja';
 		if (this.spriteid === 'rockruff-dusk') this.spriteid = 'rockruff';
 		if (this.spriteid.endsWith('-')) this.spriteid = this.spriteid.slice(0, -1);
-		this.digipenSprite = data.digipenSprite;
-		this.digipenIcon = data.digipenIcon || false;
+		this.customSprite = data.customSprite;
+		this.customIcon = data.customIcon || false;
 		this.modified = data.modified || undefined;
 		this.title = data.title || undefined;
 		this.dexEntry = data.dexEntry || undefined;

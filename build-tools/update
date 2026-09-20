@@ -133,6 +133,8 @@ try {
 	compiledFiles += await compiler.compileToFile(
 		[
 			'play.pokemonshowdown.com/src/battle-dex.ts',
+			// DigiPen fork: the custom mod registry, used by battle.ts and battle-dex-search.ts.
+			'play.pokemonshowdown.com/src/battle-dex-custom-mods.ts',
 			'play.pokemonshowdown.com/src/battle-teams.ts',
 			'play.pokemonshowdown.com/src/battle-dex-data.ts',
 			'play.pokemonshowdown.com/src/battle-log.ts',
