@@ -1167,7 +1167,15 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 		}
 		modified.sort(byName);
 
-		const rest = tierSet.filter(row => row[0] !== 'pokemon' || !listed[row[1]]);
+		// Moving a mod's Pokemon into the block above empties the sections they came from, so their
+		// headers have to go with them or the list shows a bare "DigiPen" heading with nothing under it.
+		const rest: SearchRow[] = [];
+		for (const row of tierSet) {
+			if (row[0] === 'pokemon' && listed[row[1]]) continue;
+			if (row[0] === 'header' && rest.length && rest[rest.length - 1][0] === 'header') rest.pop();
+			rest.push(row);
+		}
+		if (rest.length && rest[rest.length - 1][0] === 'header') rest.pop();
 		return [
 			...(own.length ? [['header', mod.label] as SearchRow, ...own.map(id => ['pokemon', id] as SearchRow)] : []),
 			...(modified.length ?
