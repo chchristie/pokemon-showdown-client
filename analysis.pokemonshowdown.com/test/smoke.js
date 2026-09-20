@@ -6,7 +6,7 @@
 const fs = require('fs');
 const path = require('path');
 const {
-	SMOKE_TEAM, OUTPUT_DIR, step, checkServers, openAnalysisPage, clickButton, waitFor, linesText,
+	SMOKE_TEAM, OUTPUT_DIR, sleep, step, checkServers, openAnalysisPage, clickButton, waitFor, linesText,
 	waitForDecision, startAnalysisFromTeams, selectLeads, openActionMenu, chooseMove, dumpFailure,
 } = require('./lib');
 
@@ -91,6 +91,27 @@ async function main() {
 		await clickButton(page, 'Cancel');
 		await waitFor(page, () => !document.querySelector('.movemenu'), 'selection to cancel');
 		step('summary cell opens action selection; cancel works');
+
+		/*
+		 * The scene lays out a fixed three hotspots a side whatever the game type
+		 * (`battle-animations.ts`), so in singles two of them sit over empty field — and they are the only
+		 * `activepokemon` markers in the DOM, because an occupied slot is tagged `analysispokemon`.
+		 * Clicking one opened an action menu headed "What will Pokemon 2 (1) do?" with no buttons under it.
+		 */
+		const hotspots = await page.evaluate(() =>
+			[...document.querySelectorAll('[data-tooltip^="activepokemon|"]')].map(el => el.dataset.tooltip));
+		expect(hotspots.includes('activepokemon|0|1'),
+			`expected an empty active-slot hotspot in singles, got ${JSON.stringify(hotspots)}`);
+		await page.evaluate(() => document.querySelector('[data-tooltip="activepokemon|0|1"]').click());
+		await sleep(300);
+		const afterEmpty = await page.evaluate(() => ({
+			menu: !!document.querySelector('.movemenu'),
+			heading: document.querySelector('.analysis-selection-heading')?.textContent || '',
+		}));
+		expect(!afterEmpty.menu, 'clicking empty field should not open a move menu');
+		expect(!/What will/.test(afterEmpty.heading),
+			`clicking empty field opened an action menu: ${afterEmpty.heading}`);
+		step('an empty active slot is not clickable');
 
 		await chooseMove(page, 0, 0); // Hydro Pump
 		await chooseMove(page, 1, 0); // Kowtow Cleave

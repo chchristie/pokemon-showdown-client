@@ -85,6 +85,8 @@ class AnalysisApp extends preact.Component {
 	/** a replay log read from an uploaded file, which takes precedence over the URL box */
 	replayFileLog: string[] | null = null;
 	replayFileName = '';
+	/** Kept so `clearReplayFile` can reset the input itself, not just what was read out of it. */
+	replayFileInput: HTMLInputElement | null = null;
 	/** an analysis file chosen on the Import Analysis form, validated as soon as it is read */
 	analysisFile: AnalysisExport | null = null;
 	analysisFileName = '';
@@ -1498,6 +1500,14 @@ class AnalysisApp extends preact.Component {
 			// the actives sit at the front of the snapshot's roster, so the slot is its index there too
 			const slot = Number(args[2]) || 0;
 			if (this.openPlaceholderInTeambuilder(tab, sideNumber === 0 ? 'p1' : 'p2', slot)) return;
+			/*
+			 * The scene lays out a fixed three hotspots a side whatever the game type
+			 * (`battle-animations.ts`), so singles leaves two of them over empty field and doubles one.
+			 * Clicking one opened an action menu headed "What will Pokemon 3 (1) do?" with nothing under
+			 * it, because there is no Pokémon to build a choice for. The `analysispokemon` branch above
+			 * already refuses the same way.
+			 */
+			if (!(this.battle as any)?.sides?.[sideNumber]?.active?.[slot]) return;
 			this.selectMovePokemon(sideNumber === 0 ? 'p1' : 'p2', slot);
 		} else {
 			return;
@@ -1936,6 +1946,9 @@ class AnalysisApp extends preact.Component {
 
 	openMode = (mode: StartMode) => {
 		this.mode = mode;
+		// The error is about the panel that raised it, so it must not outlive the move to another one:
+		// "That replay has no turns to analyse." followed the user into Import Analysis and sat there.
+		this.startError = '';
 		if (mode === 'teams') this.updateTeamChoices();
 		this.forceUpdate();
 	};
@@ -2193,6 +2206,22 @@ class AnalysisApp extends preact.Component {
 		}
 		this.forceUpdate();
 	}
+
+	/**
+	 * Drops a chosen replay file, so the URL field can be used instead.
+	 *
+	 * The file wins wherever both are given (`startReplayAnalysis`), so without this a file chosen by
+	 * mistake leaves the URL field dead with no way back short of reloading the page. The input's own
+	 * `value` is cleared too: `change` does not fire for an unchanged value, so otherwise the same file
+	 * could not be chosen again afterwards.
+	 */
+	clearReplayFile = () => {
+		this.replayFileLog = null;
+		this.replayFileName = '';
+		this.startError = '';
+		if (this.replayFileInput) this.replayFileInput.value = '';
+		this.forceUpdate();
+	};
 
 	/** Reads and validates a chosen analysis file up front, so a bad one is reported before Open is pressed. */
 	async readAnalysisFile(input: HTMLInputElement) {
@@ -2499,12 +2528,17 @@ class AnalysisApp extends preact.Component {
 					<span class="analysis-field-label">Replay file</span>
 					<input
 						type="file" accept=".html,.log,.json"
+						ref={element => { this.replayFileInput = element as HTMLInputElement | null; }}
 						onChange={event => void this.readReplayFile(event.target as HTMLInputElement)}
 					/>
 				</label>
 				{/* reading the file is async, so say when it's ready rather than failing on an early click */}
 				{this.replayFileLog && <p class="analysis-field-note">
 					Loaded <strong>{this.replayFileName}</strong> ({this.replayFileLog.length} lines).
+					<button
+						class="button analysis-note-remove" type="button"
+						onClick={this.clearReplayFile}
+					>Remove</button>
 				</p>}
 				{this.startError && <p class="message-error">{this.startError}</p>}
 				<div class="analysis-form-actions">

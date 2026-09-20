@@ -6,6 +6,8 @@
  * - onboarding shows each side's reconstructed team, and Skip accepts the inferences as they stand
  * - the replay becomes the main line in Lines, one node per turn
  * - a format this server doesn't have is refused rather than silently substituted
+ * - a chosen file can be removed again, so the URL field is usable after one is picked by mistake
+ * - an error raised in one start panel does not follow the user into another
  * - a bring-four VGC replay asks which Pokémon were brought, locking in the ones it showed
  * - a node plays the replay's own history in front of the reconstruction, and a turn played on from one
  *   continues the replay's numbering instead of restarting at turn 1
@@ -100,6 +102,57 @@ async function importReplay(page, log) {
 	} finally {
 		fs.rmSync(file, { force: true });
 	}
+}
+
+/**
+ * The file input is an alternative to the URL field, and the file wins wherever both are given — so a file
+ * chosen by mistake used to leave the URL field dead with no way back short of reloading the page. This
+ * also covers the error not outliving the panel that raised it.
+ */
+async function removableFileSteps(page) {
+	const file = path.join(os.tmpdir(), `analysis-replay-removable-${Date.now()}.log`);
+	// a log with no turns, so Open raises a real error to check the clearing against
+	fs.writeFileSync(file, ['|player|p1|Alice|1|', '|player|p2|Bob|2|', '|gametype|singles', '|gen|9'].join('\n'));
+	try {
+		await clickButton(page, 'Import Replay');
+		const input = await page.waitForSelector('.analysis-form input[type="file"]', { timeout: 20000 });
+		await input.uploadFile(file);
+		await waitFor(page, () => /Loaded /.test(
+			document.querySelector('.analysis-form')?.textContent || ''
+		), 'the replay file to load');
+
+		await clickButton(page, 'Open Replay Analysis');
+		await waitFor(page, () => /no turns to analyse/.test(
+			document.querySelector('.analysis-form .message-error')?.textContent || ''
+		), 'the no-turns error');
+		step('a replay with no turns is refused with an error');
+
+		// Leaving for another panel and coming back must not carry the error along
+		await clickButton(page, 'Import Analysis');
+		const carried = await page.evaluate(() =>
+			document.querySelector('.analysis-form .message-error')?.textContent || '');
+		expect(!/no turns to analyse/.test(carried),
+			`the replay error followed the user into Import Analysis: ${carried}`);
+		step('an error does not outlive the panel that raised it');
+
+		await clickButton(page, 'Import Replay');
+		await waitFor(page, () => /Loaded /.test(
+			document.querySelector('.analysis-form')?.textContent || ''
+		), 'the chosen file to still be there');
+		await clickButton(page, 'Remove');
+		const cleared = await page.evaluate(() => ({
+			note: document.querySelector('.analysis-form')?.textContent || '',
+			// the input itself must be cleared too, or the same file could never be chosen again
+			value: document.querySelector('.analysis-form input[type="file"]')?.value || '',
+		}));
+		expect(!/Loaded /.test(cleared.note), `Remove left the file loaded: ${cleared.note.slice(0, 120)}`);
+		expect(!cleared.value, `Remove left the input populated: ${cleared.value}`);
+		step('a chosen replay file can be removed, freeing the URL field');
+	} finally {
+		fs.rmSync(file, { force: true });
+	}
+	// back to a clean form for the suite proper
+	await clickButton(page, 'Cancel');
 }
 
 function teambuilderText(page) {
@@ -231,6 +284,7 @@ async function main() {
 	await checkServers();
 	const { browser, page, errors } = await openAnalysisPage([]);
 	try {
+		await removableFileSteps(page);
 		await importReplay(page, REPLAY_LOG);
 
 		// Onboarding first: the reconstruction is shown for team 1 before any battle is.
