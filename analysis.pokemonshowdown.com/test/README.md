@@ -30,6 +30,8 @@ npm run edits            # field state edit form (edits.js)
 npm run pokemon-edits    # Pokémon state edit form (pokemon-edits.js)
 npm run teambuilder      # embedded teambuilder (teambuilder.js)
 npm run setup            # Set Up Position (setup.js)
+npm run replay           # Import Replay (replay.js)
+npm run export           # Export Analysis (export.js)
 ```
 
 Server-side edit logic (what gets written to the sim and which protocol lines are emitted) has its own mocha test in the server repo: `npx mocha --no-config --exit test/main.js test/tools/analysis/edits.js`.
@@ -137,6 +139,44 @@ Set Up Position (docs/analysis/plan.md, Phase 4). It is the one suite that start
 
 It picks its moves out of the dropdown's own options rather than naming them: the legal moves depend on the
 placeholder species, and setting a `<select>` to a value it doesn't offer silently leaves it empty.
+
+## What `export.js` covers
+
+Export and Import Analysis (docs/analysis/plan.md, Phase 6). Three runs: one tab built from teams, one
+imported from a replay (the file differs between them), and one bad file.
+
+**The round trips are the assertions that matter** — a file is only worth writing if reopening it gives back
+the same analysis:
+
+- a played line exports, reopens to the **same Lines**, and re-exports to the **same nodes and root seed**;
+- a reopened replay import still **plays the real history**, checked by the replay's own trainers appearing
+  in the log (a rebuild without `source.log` opens on a fresh battle, whose players the server names
+  "Analysis 1" and "Analysis 2") and by turn 1's move showing up after stepping to Turn 2;
+- a file whose `currentNodeId` is missing from its nodes is **refused with a reason and opens no tab**.
+
+**Compare icons, not just text, and play more than one turn.** A node whose summary is missing still renders
+its `Turn N` heading and empty summary cells, so the panel's `textContent` is unchanged and only the Pokémon
+icons disappear — a text-only comparison reports a match. And with a single played turn the only node besides
+Team Preview *is* the current one, whose summary the rebuild refreshes anyway, so the bug cannot appear. A
+first version of this suite got both wrong and passed against an export that dropped every node summary.
+
+The rest:
+
+1. **The button** follows Next Turn in the default controls and carries the `fa-download` icon. Checked by
+   **position among the controls' buttons**, not by presence: the request was for it to sit after Next Turn,
+   and a button rendered anywhere would pass a text-only assertion.
+2. **Filenames:** `Gen9OU-<today>-analysis.json` from teams, and `Gen9OU-<today>-alice-bob-analysis.json`
+   from a replay whose `|player|` lines named Alice and Bob.
+3. **What the file keeps:** schema, an ISO `exportedAt`, `createdWith.serverCommit`, both packed teams, the
+   root seed, and a `currentNodeId` that is actually among the nodes.
+4. **What it leaves out:** everything `/analysis/start` returns, the simulation fields, the onboarding
+   leftovers, and each node's derived display fields.
+5. **The replay source block:** an imported tab carries its real log under `source`, and every replay node
+   keeps its `importedEdits` and `replayActions`.
+
+**The download is captured in the page**, not written to disk: `HTMLAnchorElement.click` is stubbed so the
+blob is read back through `fetch`. That keeps headless Chrome's download directory out of the picture. The
+stub fetches inside the click, because the export revokes the object URL on a timer.
 
 ## Writing or extending tests
 

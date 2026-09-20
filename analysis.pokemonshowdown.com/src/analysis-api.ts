@@ -127,6 +127,27 @@ export async function runAnalysisSetup(format: string): Promise<AnalysisSetupRes
 	return postAnalysis('/analysis/setup', { format } as AnalysisRequest);
 }
 
+/**
+ * The commit the analysis API is running, for an export's `createdWith`. Empty when the server has no git
+ * checkout to read, in which case an import has nothing to compare and stays quiet.
+ *
+ * Failure is not worth surfacing: this only feeds a staleness warning, so an export should still produce a
+ * file if the route is missing (an older server) or the call fails.
+ */
+export async function getAnalysisVersion(): Promise<string> {
+	try {
+		const response = await fetch(`${ANALYSIS_API}/analysis/version`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: '{}',
+		});
+		if (!response.ok) return '';
+		return (await response.json()).serverCommit || '';
+	} catch {
+		return '';
+	}
+}
+
 export async function runAnalysisBatch(
 	request: AnalysisBatchRequest, signal?: AbortSignal
 ): Promise<AnalysisBatchResponse> {

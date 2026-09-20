@@ -10,7 +10,8 @@
 		"pokemon-edits": "node pokemon-edits.js",
 		"teambuilder": "node teambuilder.js",
 		"setup": "node setup.js",
-		"replay": "node replay.js"
+		"replay": "node replay.js",
+		"export": "node export.js"
 	},
 	"dependencies": {
 		"puppeteer-core": "^25.0.0"

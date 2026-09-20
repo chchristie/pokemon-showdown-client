@@ -1,6 +1,6 @@
 import type { Dex } from '../../play.pokemonshowdown.com/src/battle-dex';
 
-export type StartMode = 'setup' | 'teams' | 'replay';
+export type StartMode = 'setup' | 'teams' | 'replay' | 'analysis';
 
 export interface AnalysisChoiceSummary {
 	side: 'p1' | 'p2';
@@ -441,6 +441,24 @@ export interface AnalysisTab {
 	 * exactly as it was fetched or read from the file, and is never sent anywhere.
 	 */
 	replayLog?: string[];
+	/**
+	 * The two trainers, when the imported replay named them both. Only an export reads them, to put the
+	 * trainers in its filename (see analysis-export.ts); the tab title is built once at import.
+	 */
+	players?: { p1: string, p2: string };
+	/**
+	 * The imported replay's own tier, as its display name ("[Gen 9] OU"). Kept because a replay's format
+	 * need not be one of `FORMATS` — that list is the four the pickers offer — so an export has nowhere
+	 * else to read a pretty name for its filename. Unset on a tab started from the pickers, where a
+	 * `FORMATS` lookup answers.
+	 */
+	formatName?: string;
+	/**
+	 * Set on an imported analysis whose file was saved under a different server build. Shown once above the
+	 * turn controls and dismissible, rather than only at the moment of import: a file opened weeks later
+	 * should still say where it came from. See `stalenessWarning`.
+	 */
+	staleWarning?: string;
 	/**
 	 * Whether the teambuilder has been opened on this sandbox tab yet. Until it has, the controls are just
 	 * the line telling you how to start (see renderBattleControls): there is nothing useful to do with a

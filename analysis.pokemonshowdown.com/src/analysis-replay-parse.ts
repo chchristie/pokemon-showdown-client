@@ -53,9 +53,17 @@ interface ReplayTurnActive {
 
 export interface AnalysisReplayImport {
 	formatId: string;
+	/** the tier as the replay wrote it ("[Gen 9] OU"), which `formatId` is the id of */
+	formatName: string;
 	gameType: string;
 	gen: number;
 	players: { p1: string, p2: string };
+	/**
+	 * Whether the replay actually named both players, rather than either falling back to `Player N` above.
+	 * An exported analysis puts the trainers in its filename only when it did, so the flag is tracked here
+	 * instead of comparing against the fallback strings — a player really can be called "Player 1".
+	 */
+	namedPlayers: boolean;
 	/** One set per roster entry, in the order the client revealed them; the index is the team slot. */
 	teams: { p1: any[], p2: any[] };
 	/** Team Preview bring-count, or null when the format brings everyone. */
@@ -172,9 +180,11 @@ export function parseAnalysisReplay(log: string[]): AnalysisReplayImport {
 	const teams = { p1: inferTeam(battle, 'p1', warnings), p2: inferTeam(battle, 'p2', warnings) };
 	return {
 		formatId: toID(battle.tier),
+		formatName: battle.tier || '',
 		gameType: battle.gameType,
 		gen: battle.gen,
 		players: { p1: battle.sides[0]?.name || 'Player 1', p2: battle.sides[1]?.name || 'Player 2' },
+		namedPlayers: !!battle.sides[0]?.name && !!battle.sides[1]?.name,
 		teams,
 		teamSize: readTeamSize(battle, teams),
 		revealed: { p1: sortedSlots(revealed.p1), p2: sortedSlots(revealed.p2) },

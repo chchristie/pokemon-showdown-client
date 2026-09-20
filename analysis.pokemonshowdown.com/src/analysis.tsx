@@ -14,9 +14,13 @@ import {
 	type AnalysisTeamEdit, type LocalTeam, type PlaybackStage, type StartMode,
 } from './analysis-model';
 import {
-	AnalysisTeamValidationError, runAnalysis, runAnalysisBatch, runAnalysisCalc, runAnalysisSetup,
-	type AnalysisStartResponse,
+	AnalysisTeamValidationError, getAnalysisVersion, runAnalysis, runAnalysisBatch, runAnalysisCalc,
+	runAnalysisSetup, type AnalysisStartResponse,
 } from './analysis-api';
+import {
+	downloadAnalysisExport, parseAnalysisExport, stalenessWarning, tabFromAnalysisExport,
+	type AnalysisExport,
+} from './analysis-export';
 import { AnalysisBattleRenderer } from './analysis-battle';
 import {
 	buildReplayNodes, fetchReplayLog, packReplayTeams, readReplayFileText, replayInputLog,
@@ -75,6 +79,9 @@ class AnalysisApp extends preact.Component {
 	/** a replay log read from an uploaded file, which takes precedence over the URL box */
 	replayFileLog: string[] | null = null;
 	replayFileName = '';
+	/** an analysis file chosen on the Import Analysis form, validated as soon as it is read */
+	analysisFile: AnalysisExport | null = null;
+	analysisFileName = '';
 	teams: LocalTeam[] = [];
 	showSyntaxImport = false;
 	teamSyntax1 = '';
@@ -87,6 +94,13 @@ class AnalysisApp extends preact.Component {
 	battleLogFrame: HTMLElement | null = null;
 	battleTooltipObserver: MutationObserver | null = null;
 	analysisTeams: any[] = [];
+	/**
+	 * The commit the analysis API is running, recorded in an exported file so a later import can warn that
+	 * the sim has moved on. Fetched once at startup rather than when Export is clicked, so exporting stays
+	 * synchronous; an empty string (the call failed, or the server has no git checkout) simply means an
+	 * import has nothing to compare.
+	 */
+	serverCommit = '';
 	/** developer panels, behind the header's settings popup; remembered across reloads */
 	debugMode = loadDebugMode();
 	settingsOpen = false;
@@ -127,6 +141,10 @@ class AnalysisApp extends preact.Component {
 	constructor() {
 		super();
 		this.loadTeams();
+		// only an export reads it, and it never blocks one: a failed call leaves it empty
+		void getAnalysisVersion().then(commit => {
+			this.serverCommit = commit;
+		});
 		window.addEventListener('message', this.receiveStorageMessage);
 		window.addEventListener('resize', this.updateLayout);
 		this.updateLayout();
@@ -1705,23 +1723,55 @@ class AnalysisApp extends preact.Component {
 			this.forceUpdate();
 			return;
 		}
+		if (this.mode === 'analysis' && !this.analysisFile) {
+			this.startError = 'Choose an exported analysis file.';
+			this.forceUpdate();
+			return;
+		}
 		this.starting = true;
 		this.startError = '';
 		this.forceUpdate();
 		try {
-			let tab;
-			if (this.mode === 'setup') tab = await this.startSetupAnalysis();
-			else if (this.mode === 'replay') tab = await this.startReplayAnalysis();
-			else tab = await this.startTeamsAnalysis();
-			this.tabs = [...this.tabs, tab];
-			this.activeTab = tab.id;
-			this.setChoiceBuilders(tab.requests, tab.gameType);
-			this.initializeCurrentNodeSummary(tab);
-			// An imported replay opens straight into its onboarding pass rather than into the battle.
-			if (tab.onboarding) {
-				this.teamForm.openPacked(tab.onboarding, tab.team1, tab.format);
+			/*
+			 * An imported analysis is the one start path with no position of its own: the file states the
+			 * line, and `restoreAnalysisNode` builds the position behind its current node exactly as
+			 * selecting that node would. It therefore skips the seeding below, which needs requests the
+			 * rebuild has not fetched yet, and which the rebuild does for itself.
+			 */
+			if (this.mode === 'analysis') {
+				const tab = this.analysisTabFromFile(this.analysisFile!);
+				this.tabs = [...this.tabs, tab];
+				this.activeTab = tab.id;
+				await this.restoreAnalysisNode(tab, tab.currentNodeId);
+				/*
+				 * `restoreAnalysisNode` reports a failed rebuild by setting `startError` rather than
+				 * throwing, so the half-built tab has to be taken back out by hand — otherwise a file the
+				 * server refuses (an unknown format, a team its validator won't take) leaves an empty tab
+				 * open with the error attached to the start form behind it.
+				 */
+				if (this.startError) {
+					this.tabs = this.tabs.filter(entry => entry.id !== tab.id);
+					this.activeTab = this.tabs[this.tabs.length - 1]?.id || null;
+				} else {
+					this.mode = null;
+					this.analysisFile = null;
+					this.analysisFileName = '';
+				}
+			} else {
+				let tab;
+				if (this.mode === 'setup') tab = await this.startSetupAnalysis();
+				else if (this.mode === 'replay') tab = await this.startReplayAnalysis();
+				else tab = await this.startTeamsAnalysis();
+				this.tabs = [...this.tabs, tab];
+				this.activeTab = tab.id;
+				this.setChoiceBuilders(tab.requests, tab.gameType);
+				this.initializeCurrentNodeSummary(tab);
+				// An imported replay opens straight into its onboarding pass rather than into the battle.
+				if (tab.onboarding) {
+					this.teamForm.openPacked(tab.onboarding, tab.team1, tab.format);
+				}
+				this.mode = null;
 			}
-			this.mode = null;
 		} catch (error: any) {
 			this.startError = error.message || 'Unable to start the analysis.';
 		} finally {
@@ -1909,6 +1959,37 @@ class AnalysisApp extends preact.Component {
 		this.forceUpdate();
 	}
 
+	/** Reads and validates a chosen analysis file up front, so a bad one is reported before Open is pressed. */
+	async readAnalysisFile(input: HTMLInputElement) {
+		const file = input.files?.[0];
+		this.startError = '';
+		this.analysisFile = null;
+		this.analysisFileName = '';
+		if (file) {
+			try {
+				this.analysisFile = parseAnalysisExport(await file.text());
+				this.analysisFileName = file.name;
+			} catch (error: any) {
+				this.startError = error.message || "Couldn't read that file.";
+			}
+		}
+		this.forceUpdate();
+	}
+
+	/**
+	 * Import Analysis: rebuild a tab from an exported file (docs/analysis/plan.md, Phase 6).
+	 *
+	 * The file is a recipe, so there is no reconstruction to write here: the tab is built from what the file
+	 * states and the position comes from `restoreAnalysisNode`, the same `/analysis/start` call that
+	 * selecting a node already makes. That is why this returns a tab with no position on it — the caller
+	 * adds it, then restores its current node.
+	 */
+	analysisTabFromFile(file: AnalysisExport): AnalysisTab {
+		const tab = tabFromAnalysisExport(file, `analysis-${Date.now()}`);
+		tab.staleWarning = stalenessWarning(file, this.serverCommit);
+		return tab;
+	}
+
 	/**
 	 * Import Replay: reconstruct both teams and one absolute position per turn, then open the replay as the
 	 * main line. The user completes the inferred teams in stage D's onboarding; for now the inferences go
@@ -1945,6 +2026,11 @@ class AnalysisApp extends preact.Component {
 		return {
 			id: `analysis-${Date.now()}`,
 			title: `${parsed.players.p1} vs. ${parsed.players.p2}`,
+			// only when the replay named them: an export puts the trainers in its filename, and
+			// "player1-player2" says nothing
+			players: parsed.namedPlayers ? { ...parsed.players } : undefined,
+			// a replay's format need not be one of FORMATS, so its own tier is the only pretty name we get
+			formatName: parsed.formatName,
 			format: parsed.formatId,
 			log: data.log || [],
 			snapshot: data.snapshot,
@@ -2086,9 +2172,8 @@ class AnalysisApp extends preact.Component {
 				<button class="button analysis-option" onClick={() => this.openMode('setup')}>
 					<strong>Set Up Position</strong><small>Choose a format and begin from a manual position.</small>
 				</button>
-				<button class="button analysis-option" disabled>
-					<strong>Import Analysis</strong>
-					<small>Analysis file import will be added after the export format is stable.</small>
+				<button class="button analysis-option" onClick={() => this.openMode('analysis')}>
+					<strong>Import Analysis</strong><small>Open an analysis file you exported earlier.</small>
 				</button>
 				<button class="button analysis-option" onClick={() => this.openMode('replay')}>
 					<strong>Import Replay</strong><small>Load a replay URL or prepare an uploaded replay file.</small>
@@ -2103,6 +2188,30 @@ class AnalysisApp extends preact.Component {
 
 	renderStartForm() {
 		const onSubmit = (event: Event) => void this.startAnalysis(event);
+		if (this.mode === 'analysis') {
+			// The file is validated as it is read, so what it says here is already true of it.
+			const stale = this.analysisFile ? stalenessWarning(this.analysisFile, this.serverCommit) : '';
+			return <form class="analysis-form" onSubmit={onSubmit}>
+				<h2>Import Analysis</h2>
+				<p>Opens an analysis exported with <strong>Export Analysis</strong>, at the turn it was saved on.</p>
+				<label>Analysis file<input
+					type="file" accept=".json,application/json"
+					onChange={event => void this.readAnalysisFile(event.target as HTMLInputElement)}
+				/></label>
+				{this.analysisFile && <p class="analysis-field-note">
+					Loaded <strong>{this.analysisFileName}</strong>{' '}
+					({Object.keys(this.analysisFile.tab.nodes).length} nodes
+					{this.analysisFile.source ? ', with its replay' : ''}).
+				</p>}
+				{/* Said here as well as on the tab, so it can be weighed before the analysis is even opened. */}
+				{stale && <p class="message-error">{stale}</p>}
+				{this.startError && <p class="message-error">{this.startError}</p>}
+				<button class="button" type="submit" disabled={this.starting || !this.analysisFile}>
+					{this.starting ? 'Opening…' : 'Open Analysis'}
+				</button>
+				<button class="button" type="button" onClick={this.openHome}>Cancel</button>
+			</form>;
+		}
 		if (this.mode === 'replay') {
 			return <form class="analysis-form" onSubmit={onSubmit}>
 				<h2>Import Replay</h2>
@@ -2690,6 +2799,20 @@ class AnalysisApp extends preact.Component {
 		const atStart = !currentNode?.parentId || (!!tab.sandbox && (currentNode.turn ?? 0) <= 1);
 		const nextNode = Object.values(tab.nodes).find(node => node.parentId === tab.currentNodeId);
 		const ready = this.draft.actionChoicesReady(tab.requests, 'p1') && this.draft.actionChoicesReady(tab.requests, 'p2');
+		/*
+		 * An imported analysis saved under a different server build. It stays until dismissed rather than
+		 * being shown only at import: a seed replays the same way only under the same sim code, so the
+		 * caveat belongs with the positions it applies to, not with the moment the file was opened.
+		 */
+		const staleNote = currentNode && tab.staleWarning ? <p class="message-error">
+			{tab.staleWarning}{' '}
+			<button
+				class="button" onClick={() => {
+					tab.staleWarning = '';
+					this.forceUpdate();
+				}}
+			>Dismiss</button>
+		</p> : null;
 		// icons above the labels, reusing the replay controls' so the same action reads the same way
 		const turnControls = <div>
 			<span
@@ -2708,7 +2831,13 @@ class AnalysisApp extends preact.Component {
 			<button
 				class="button button-last" disabled={!nextNode}
 				onClick={() => nextNode && this.selectAnalysisNode(tab, nextNode.id)}
-			><i class="fa fa-step-forward" aria-hidden></i><br />Next Turn</button>
+			><i class="fa fa-step-forward" aria-hidden></i><br />Next Turn</button>{' '}
+			{/* Export sits after the turn controls rather than with Submit/Simulate: it acts on the whole
+				analysis, not on this turn. The end-of-game node renders `turnControls` too, so an imported
+				replay can be exported from its last node as well. */}
+			<button class="button" onClick={() => downloadAnalysisExport(tab, this.serverCommit)}>
+				<i class="fa fa-download" aria-hidden></i><br />Export Analysis
+			</button>
 		</div>;
 		/*
 		 * The imported replay's final position: the battle is over, so there is no action to choose, nothing
@@ -2717,6 +2846,7 @@ class AnalysisApp extends preact.Component {
 		 */
 		if (currentNode?.gameOver) {
 			return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
+				{staleNote}
 				{turnControls}
 				<p class="analysis-field-note">
 					{currentNode.gameOver.winner ?
@@ -2727,6 +2857,7 @@ class AnalysisApp extends preact.Component {
 			</div>;
 		}
 		return <div class="analysis-choice-controls" ref={this.setChoiceControlsFrame}>
+			{staleNote}
 			{turnControls}
 			{/* boxed like the field editor's Side groups, so it reads as a panel rather than loose rows */}
 			<div class="analysis-info-group analysis-action-summary">
