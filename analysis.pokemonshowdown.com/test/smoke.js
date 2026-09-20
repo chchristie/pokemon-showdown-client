@@ -198,6 +198,67 @@ async function main() {
 		step('turning Debug Mode off hides them again');
 
 		/*
+		 * The header's controls have to be *clickable*, not merely present.
+		 *
+		 * `.nav-wrapper` is full width but only centres its buttons, and it comes after the tab bar in
+		 * document order at the same stacking level, so its empty left and right thirds painted over the
+		 * tab bar and the settings gear and ate their clicks. Everything looked right and nothing
+		 * responded: with a tab open there was no way back to Home, and the gear never opened (user
+		 * report, 2026-09-20).
+		 *
+		 * This is hit-testing, deliberately, not `element.click()`. A synthetic click dispatches straight
+		 * at the node and passes happily through an overlay, which is why the suites that already click
+		 * Home never caught this. `elementFromPoint` is what a real cursor does.
+		 */
+		const headerHits = await page.evaluate(() => {
+			const reach = el => {
+				if (!el) return 'missing';
+				const box = el.getBoundingClientRect();
+				const top = document.elementFromPoint(
+					Math.round(box.left + box.width / 2), Math.round(box.top + box.height / 2));
+				if (el === top || el.contains(top)) return 'ok';
+				return top ? `covered by ${top.tagName.toLowerCase()}.${String(top.className).trim().split(/\s+/).join('.')}` : 'nothing';
+			};
+			const tabs = [...document.querySelectorAll('.tabbar a.roomtab.closable')];
+			const navButtons = [...document.querySelectorAll('.nav a.button')];
+			const hits = (a, b) => {
+				const x = a.getBoundingClientRect(), y = b.getBoundingClientRect();
+				return x.left < y.right && y.left < x.right && x.top < y.bottom && y.top < x.bottom;
+			};
+			// a nav button no tab reaches: it must still take its own clicks
+			const freeButton = navButtons.find(b => !tabs.some(t => hits(t, b)));
+			return {
+				homeTab: reach([...document.querySelectorAll('.tabbar a')].find(a => a.textContent.trim() === 'Home')),
+				analysisTab: reach(document.querySelector('.roomtab.closable')),
+				gear: reach(document.querySelector('.analysis-settings-button')),
+				freeButtonLabel: freeButton ? freeButton.textContent.trim() : null,
+				freeButton: reach(freeButton),
+			};
+		});
+		expect(headerHits.homeTab === 'ok', `the Home tab should be clickable, but it is ${headerHits.homeTab}`);
+		expect(headerHits.analysisTab === 'ok', `the analysis tab should be clickable, but it is ${headerHits.analysisTab}`);
+		expect(headerHits.gear === 'ok', `the settings gear should be clickable, but it is ${headerHits.gear}`);
+		/*
+		 * The tab bar is raised above the nav so open tabs cover the buttons they reach, and its box spans
+		 * the whole header — so it has to stay transparent to clicks everywhere it isn't a tab, or it takes
+		 * every nav button with it.
+		 */
+		expect(headerHits.freeButton === 'ok',
+			`the nav's ${headerHits.freeButtonLabel} button should still be clickable, but it is ${headerHits.freeButton}`);
+
+		// and the click actually lands: a real mouse click on Home, with the analysis still open
+		const homeTab = await page.evaluateHandle(() =>
+			[...document.querySelectorAll('.tabbar a')].find(a => a.textContent.trim() === 'Home'));
+		await homeTab.asElement().click();
+		await waitFor(page, () => !!document.querySelector('.analysis-home'), 'the home screen after clicking the Home tab');
+		expect(await page.evaluate(() => document.querySelectorAll('.roomtab.closable').length) === 1,
+			'going Home should leave the analysis tab open, not close it');
+		// back into the analysis, so the close check below still has one to close
+		await page.evaluate(() => document.querySelector('.roomtab.closable').click());
+		await waitFor(page, () => !!document.querySelector('.ps-room'), 'the analysis again');
+		step('the Home tab, the analysis tab and the gear are clickable, and Home leaves the tab open');
+
+		/*
 		 * Closing the tab has to take the analysis with it. It used to drop the tab from the list and
 		 * nothing else, leaving the battle rendered over the home screen and handing the next tab the closed
 		 * one's draft, forms and calcs (user report, 2026-09-20).

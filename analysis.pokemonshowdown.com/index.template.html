@@ -40,7 +40,40 @@
 	   there, and a float row one pixel too wide wraps, so a nowrap flex row is the only version that cannot
 	   break again when a label changes. Same fix as `.analysis-picker-columns`. */
 	.analysis-shell > .header .nav-wrapper { width: auto; display: flex; justify-content: center; }
-	.analysis-shell > .header .nav { height: 49px; margin: 0; padding-left: 0; display: flex; flex-wrap: nowrap; }
+	/*
+	 * Let clicks through the nav row's dead space.
+	 *
+	 * `.nav-wrapper` is full width but only *centres* its buttons, and it comes after the tab bar in
+	 * document order at the same stacking level, so its empty left and right thirds painted over the tab
+	 * bar and the settings gear and swallowed their clicks. Both looked perfectly normal and did nothing:
+	 * once a tab was open there was no way back to Home, and the gear never opened.
+	 *
+	 * They share one 50px band because the tab bar is absolutely positioned here, which is itself a
+	 * client.css leak — its `.tabbar` is the old client's room tab bar (`position: absolute; bottom: 1px`)
+	 * and client2.css's `.tabbar` never redeclares `position`, so it wins. The same leak is undone for the
+	 * teambuilder further down. It is left alone here because the single-row header is the intended look;
+	 * putting the tab bar back in flow would make the header two rows and move everything below it.
+	 */
+	.analysis-shell > .header .nav-wrapper { pointer-events: none; }
+	.analysis-shell > .header .nav-wrapper .nav a { pointer-events: auto; }
+	/*
+	 * The tab bar wins the overlap, in both directions.
+	 *
+	 * `z-index` puts the tabs *over* the nav buttons rather than under them, so a row of open tabs
+	 * covers the buttons it reaches instead of being painted over by them. `pointer-events` then keeps
+	 * the tab bar's own dead space transparent to clicks — its box runs the full width of the header, so
+	 * without this it would take every button click the moment it sat on top. The result is that whatever
+	 * is visibly on top is what gets clicked.
+	 */
+	.analysis-shell > .header .tabbar.maintabbar { z-index: 1; pointer-events: none; }
+	.analysis-shell > .header .tabbar.maintabbar a, .analysis-shell > .header .tabbar.maintabbar button { pointer-events: auto; }
+	/*
+	 * Centre the buttons in the header band. `global.css` puts `padding-top: 5px` on `.nav`, and the
+	 * button rule below used to add `margin-top: 6px` on top of that, which left them 11px from the top
+	 * of the 50px header and 5px from the bottom — visibly low. Centring is done by the flex row itself
+	 * rather than by another hand-picked margin, so it survives a change of button height.
+	 */
+	.analysis-shell > .header .nav { height: 49px; margin: 0; padding-top: 0; padding-left: 0; display: flex; flex-wrap: nowrap; align-items: center; }
 	/* Below 554px `global.css` lifts the green Play button out of flow and pins it top-right, which assumes
 	   a nav short enough not to reach it. Six buttons do, so keep them clear of it — but only down to
 	   420px, where `global.css` shrinks the buttons again: past that, reserving the space costs a
@@ -49,7 +82,7 @@
 	@media (max-width: 554px) and (min-width: 420px) {
 		.analysis-shell > .header .nav { padding-right: 62px; }
 	}
-	.analysis-shell > .header .nav .button { height: 34px; margin-top: 6px; padding-top: 7px; padding-bottom: 7px; box-sizing: border-box; font-size: 9pt; }
+	.analysis-shell > .header .nav .button { height: 34px; margin-top: 0; padding-top: 7px; padding-bottom: 7px; box-sizing: border-box; font-size: 9pt; }
 	/* Home sits below the header at a fixed distance rather than being centred in the window, so the
 	   title lands in the same place whatever the window height — as the Pokédex's does. */
 	/* client.css sets `body { color: white }` for the real client's dark background image; this page
