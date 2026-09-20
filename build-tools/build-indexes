@@ -9,9 +9,9 @@ process.chdir(__dirname + '/..');
 fs.mkdirSync('play.pokemonshowdown.com/data', { recursive: true });
 
 // DigiPen fork: the client indexes the fork's server, not upstream's.
-// On a feature branch, point this at the matching server branch so the generated data matches the
-// client code being written against it. Back to 'master' before merging.
-const branch = 'mod-standardization';
+// While working on a feature branch, point this at the matching server branch so the generated data
+// matches the client code being written against it — and set it back to 'master' before merging.
+const branch = 'master';
 const noUpdate = process.argv.includes('--no-update');
 if (!fs.existsSync('caches/pokemon-showdown')) {
 	if (noUpdate) {
