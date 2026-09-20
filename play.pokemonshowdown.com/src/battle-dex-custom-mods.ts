@@ -136,26 +136,6 @@ const BattleCustomMods = new class {
 	}
 }();
 
-/**
- * Battle sprites that have no art yet fall back to the unknown-species sprite.
- *
- * Icons and teambuilder sprites are CSS backgrounds, so they can stack a fallback layer and need no
- * script. Battle sprites are `<img>` elements built in five different places in
- * `battle-animations.ts`, so rather than edit each one, a single capture-phase listener catches the
- * load failure. `error` does not bubble from an image, but it can still be caught on the way down.
- */
-if (typeof document !== 'undefined' && document.addEventListener) {
-	document.addEventListener('error', e => {
-		const img = e.target as HTMLImageElement | null;
-		if (img?.tagName !== 'IMG' || img.dataset.customArtFallback) return;
-		const dex = (window as any).Dex;
-		if (!dex?.resourcePrefixCustom || !img.src.startsWith(dex.resourcePrefixCustom)) return;
-		// Marked so a missing fallback cannot loop.
-		img.dataset.customArtFallback = '1';
-		img.src = `${dex.resourcePrefix}sprites/gen5/0.png`;
-	}, true);
-}
-
 declare const require: any;
 declare const global: any;
 
