@@ -111,6 +111,8 @@ compiledFiles += compiler.compileToDir(`play.pokemonshowdown.com/src`, `play.pok
 
 compiledFiles += compiler.compileToDir(`replay.pokemonshowdown.com/src`, `replay.pokemonshowdown.com/js`, compileOpts);
 
+compiledFiles += compiler.compileToDir(`analysis.pokemonshowdown.com/src`, `analysis.pokemonshowdown.com/js`, compileOpts);
+
 compiledFiles += compiler.compileToDir(`teams.pokemonshowdown.com/src`, `teams.pokemonshowdown.com/js`, compileOpts);
 
 try {
@@ -279,5 +281,10 @@ let teamsContents = fs.readFileSync('teams.pokemonshowdown.com/index.html', UTF8
 teamsContents = cachebust(teamsContents, 'teams.pokemonshowdown.com');
 fs.mkdirSync('teams.pokemonshowdown.com/caches', { recursive: true });
 fs.writeFileSync('teams.pokemonshowdown.com/caches/index.html', teamsContents);
+
+// the analysis page is served directly (not through caches/), so write index.html next to its template
+let analysisContents = fs.readFileSync('analysis.pokemonshowdown.com/index.template.html', UTF8);
+analysisContents = cachebust(analysisContents, 'analysis.pokemonshowdown.com');
+fs.writeFileSync('analysis.pokemonshowdown.com/index.html', analysisContents);
 
 console.log("DONE");

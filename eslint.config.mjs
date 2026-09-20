@@ -96,6 +96,8 @@ export default configure([
 			'replay.pokemonshowdown.com/src/*.tsx',
 			'teams.pokemonshowdown.com/src/*.ts',
 			'teams.pokemonshowdown.com/src/*.tsx',
+			'analysis.pokemonshowdown.com/src/*.ts',
+			'analysis.pokemonshowdown.com/src/*.tsx',
 		],
 		extends: [configs.es3ts],
 		languageOptions: {
@@ -120,6 +122,19 @@ export default configure([
 				],
 				allowBoolean: false, allowNever: false, allowNullish: false, allowRegExp: false,
 			}],
+		},
+	},
+	{
+		name: "Analysis tool (DigiPen fork; modern browsers only)",
+		files: [
+			'analysis.pokemonshowdown.com/src/*.ts',
+			'analysis.pokemonshowdown.com/src/*.tsx',
+		],
+		rules: {
+			// the analysis tool requires fetch/AbortController/async, so the ES3-era client restrictions don't apply
+			"no-restricted-syntax": "off",
+			"no-restricted-globals": "off",
+			"require-atomic-updates": "off",
 		},
 	},
 ]);

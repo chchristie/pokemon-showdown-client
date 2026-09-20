@@ -1,0 +1,20 @@
+{
+	"name": "analysis-browser-tests",
+	"private": true,
+	"description": "Headless-Chrome tests for the DigiPen analysis tool (see README.md)",
+	"scripts": {
+		"smoke": "node smoke.js",
+		"calc": "node calc.js",
+		"turn-events": "node turn-events.js",
+		"edits": "node edits.js",
+		"pokemon-edits": "node pokemon-edits.js",
+		"teambuilder": "node teambuilder.js",
+		"setup": "node setup.js",
+		"replay": "node replay.js",
+		"export": "node export.js",
+		"autosave": "node autosave.js"
+	},
+	"dependencies": {
+		"puppeteer-core": "^25.0.0"
+	}
+}

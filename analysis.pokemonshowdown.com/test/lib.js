@@ -1,0 +1,359 @@
+'use strict';
+/**
+ * Helpers for driving the analysis page in headless Chrome (puppeteer-core).
+ * See README.md in this folder. Scenarios (e.g. smoke.js) build on these.
+ */
+const fs = require('fs');
+const path = require('path');
+const puppeteer = require('puppeteer-core');
+
+const OUTPUT_DIR = path.join(__dirname, 'output');
+
+const config = {
+	/** where `node start-analysis` serves the client (client repo root on 8081) */
+	pageURL: process.env.ANALYSIS_URL || 'http://localhost:8081/analysis.pokemonshowdown.com/',
+	/** host:port of the analysis API (`?~~host:port` on the page) */
+	api: process.env.ANALYSIS_API || 'localhost:8002',
+	headful: process.env.HEADFUL === '1',
+	chromePath: process.env.CHROME_PATH || [
+		'/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+		'/Applications/Chromium.app/Contents/MacOS/Chromium',
+		'/usr/bin/google-chrome',
+		'/usr/bin/google-chrome-stable',
+		'/usr/bin/chromium',
+		'/usr/bin/chromium-browser',
+	].find(candidate => fs.existsSync(candidate)),
+};
+
+/**
+ * Packed test team (gen9ou-legal): Garchomp (Earthquake, Dragon Tail, Stealth Rock, Spikes),
+ * Rotom-Wash (Hydro Pump, Volt Switch, Will-O-Wisp, Protect),
+ * Kingambit (Kowtow Cleave, Sucker Punch, Iron Head, Swords Dance).
+ */
+const SMOKE_TEAM = 'Garchomp||RockyHelmet|RoughSkin|earthquake,dragontail,stealthrock,spikes|Jolly|252,,4,,,252|||||]' +
+	'Rotom-Wash||Leftovers|Levitate|hydropump,voltswitch,willowisp,protect|Bold|252,,252,,4,|||||]' +
+	'Kingambit||BlackGlasses|SupremeOverlord|kowtowcleave,suckerpunch,ironhead,swordsdance|Adamant|252,252,,,4,|||||';
+
+const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const step = message => console.log(`- ${message}`);
+
+/** Fails fast with a useful message if the client or API isn't running. */
+async function checkServers() {
+	const problems = [];
+	try {
+		const response = await fetch(config.pageURL);
+		if (!response.ok) problems.push(`client page returned HTTP ${response.status}: ${config.pageURL}`);
+	} catch (error) {
+		problems.push(`client page unreachable: ${config.pageURL} (${error.message})`);
+	}
+	try {
+		// an empty request is rejected with 400, which proves the API is up
+		const response = await fetch(`http://${config.api}/analysis/start`, { method: 'POST', body: '{}' });
+		if (response.status !== 400) problems.push(`analysis API returned unexpected HTTP ${response.status}`);
+	} catch (error) {
+		problems.push(`analysis API unreachable at ${config.api} (${error.message})`);
+	}
+	if (problems.length) {
+		throw new Error(`${problems.join('\n')}\nStart both with: cd pokemon-showdown && node start-analysis`);
+	}
+}
+
+/** Launches Chrome and opens the analysis page with the given teams in localStorage. */
+async function openAnalysisPage(teams) {
+	if (!config.chromePath) throw new Error('Chrome not found; set CHROME_PATH to a Chrome/Chromium executable.');
+	const browser = await puppeteer.launch({
+		executablePath: config.chromePath,
+		headless: !config.headful,
+		args: ['--no-sandbox'],
+	});
+	const page = await browser.newPage();
+	await page.setViewport({ width: 1500, height: 950 });
+	const errors = [];
+	page.on('pageerror', error => {
+		// The battle's sound effects are started and then cut off whenever a test pauses or rebuilds the
+		// battle, which rejects the play() promise. It's benign, it happens on any page the tests drive,
+		// and treating it as a failure would make every suite red.
+		if (error.message.includes('The play() request was interrupted')) return;
+		errors.push(`pageerror: ${error.message}`);
+	});
+	page.on('console', message => {
+		// resource failures are reported with URLs by the 'response' listener below
+		if (message.type() === 'error' && !message.text().startsWith('Failed to load resource')) {
+			errors.push(`console: ${message.text()}`);
+		}
+	});
+	page.on('response', response => {
+		// pokedex-mini*.js are expected to 404 locally; the page falls back to the official copies
+		if (response.status() >= 400 && !/pokedex-mini/.test(response.url())) {
+			errors.push(`http ${response.status()}: ${response.url()}`);
+		}
+	});
+
+	/*
+	 * The first load exists only to reach this origin's localStorage, but it must still carry `?~~`: the
+	 * page's API prefix defaults to its own origin now (see getAnalysisApi), so without it the startup
+	 * calls go to the static file server, which answers 405 — and the `response` listener above turns
+	 * every one of those into a suite failure.
+	 */
+	const pageWithAPI = `${config.pageURL}?~~${config.api}`;
+	await page.goto(pageWithAPI, { waitUntil: 'domcontentloaded' });
+	await page.evaluate(storedTeams => {
+		localStorage.setItem('showdown_teams', storedTeams.map(team => `${team.format}]${team.name}|${team.packed}`).join('\n'));
+	}, teams);
+	await page.goto(pageWithAPI, { waitUntil: 'networkidle2' });
+	return { browser, page, errors };
+}
+
+/**
+ * Reloads to a clean home screen, discarding the autosaved tabs first.
+ *
+ * A plain reload no longer gets you one: autosave reopens whatever was open, which is the whole point of
+ * it. A suite that reloads to start something fresh has to say so, or it lands in the previous tab and
+ * every home-screen button is out of reach.
+ */
+async function resetPage(page) {
+	/*
+	 * Close the tabs rather than deleting the stored entry: the page flushes its autosave on `pagehide`,
+	 * so a `removeItem` followed by a navigation is written straight back over on the way out. Closing
+	 * them makes the app clear the entry itself, which is also what a user does.
+	 */
+	await page.evaluate(() => {
+		for (const button of document.querySelectorAll('.maintabbar-left .closebutton')) button.click();
+	});
+	await waitFor(page, () => document.querySelectorAll('.maintabbar-left a.roomtab').length === 1,
+		'every tab to close before a reset');
+	await page.goto(`${config.pageURL}?~~${config.api}`, { waitUntil: 'networkidle2' });
+	await waitFor(page, () => document.body.textContent.includes('New Analysis From Teams'),
+		'the home screen after a reset');
+}
+
+/** Clicks the first visible, enabled button whose text contains `text`. */
+async function clickButton(page, text, timeout = 20000) {
+	const start = Date.now();
+	while (Date.now() - start < timeout) {
+		const clicked = await page.evaluate(buttonText => {
+			const button = [...document.querySelectorAll('button')].find(candidate =>
+				!candidate.disabled && candidate.offsetParent !== null &&
+				candidate.textContent.replace(/\s+/g, ' ').trim().includes(buttonText));
+			if (!button) return false;
+			// some analysis buttons listen for mouseup (team preview), others for click
+			button.dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+			button.dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+			button.click();
+			return true;
+		}, text);
+		if (clicked) return;
+		await sleep(150);
+	}
+	throw new Error(`Button not found or not enabled: "${text}"`);
+}
+
+/** Polls a function evaluated in the page until it returns truthy. */
+async function waitFor(page, fn, label, timeout = 30000, ...args) {
+	const start = Date.now();
+	while (Date.now() - start < timeout) {
+		if (await page.evaluate(fn, ...args)) return;
+		await sleep(150);
+	}
+	throw new Error(`Timed out waiting for ${label}`);
+}
+
+function battleControlsText(page) {
+	return page.evaluate(() => document.querySelector('.battle-controls')?.textContent || '');
+}
+
+function linesText(page) {
+	return page.evaluate(() => document.querySelector('.analysis-node-tree')?.textContent || '');
+}
+
+/**
+ * Waits until the controls show `readyText`, clicking "Skip Turn" through turn animations and
+ * submitting end-of-turn faint replacements (first available Pokémon) if random rolls cause a KO.
+ * Returns how many times replacements were submitted.
+ *
+ * NOTE: right after clicking Submit Choices, the controls still show the previous decision's text for a
+ * moment, so this would return immediately. First wait for something that proves the request finished
+ * (e.g. the new Turn node in Lines), then call this. When the turn can end in a faint, the new node only
+ * appears after replacements, so wait for a different signal (e.g. the controls changing) instead.
+ */
+// 'Submit Choices' rather than the old instruction line: that text moved into the Controls hover tooltip,
+// so it is in a data-help attribute now and no longer part of the controls' textContent.
+async function waitForDecision(page, readyText = 'Submit Choices', timeout = 60000) {
+	const start = Date.now();
+	let replacements = 0;
+	while (Date.now() - start < timeout) {
+		const state = await page.evaluate(ready => {
+			const text = document.querySelector('.battle-controls')?.textContent || '';
+			if ([...document.querySelectorAll('button')].some(button => button.textContent.trim() === 'Skip Turn')) return 'skip';
+			if (text.includes(ready)) return 'ready';
+			if (text.includes('Choose replacement')) return 'faint';
+			return 'wait';
+		}, readyText);
+		if (state === 'ready') return replacements;
+		if (state === 'skip') await clickButton(page, 'Skip Turn', 2000).catch(() => {});
+		if (state === 'faint') {
+			await page.evaluate(() => {
+				for (const menu of document.querySelectorAll('.switchcontrols .switchmenu')) {
+					[...menu.querySelectorAll('button')].find(button => !button.disabled)?.click();
+				}
+			});
+			await clickButton(page, 'Submit replacements');
+			replacements++;
+		}
+		await sleep(250);
+	}
+	throw new Error(`Timed out waiting for "${readyText}" (controls: ${(await battleControlsText(page)).slice(0, 200)})`);
+}
+
+/**
+ * Home page -> New Analysis From Teams -> (optional format) -> Start Analysis.
+ * Teams for `format` must already be in localStorage (see openAnalysisPage).
+ */
+/**
+ * Picks a format in the start form's format picker.
+ *
+ * The picker is a button plus our own popup, not a `<select>` (see src/analysis-pickers.tsx), so setting a
+ * value and firing `change` does nothing: it has to be opened and an option clicked, the way a user does.
+ */
+async function chooseFormat(page, format) {
+	await page.evaluate(() => {
+		const button = document.querySelector('.analysis-picker-format button.formatselect');
+		if (!button) throw new Error('no format picker on the start form');
+		button.click();
+	});
+	// `.option` is the play client's own class, reused by the menu (src/analysis-pickers.tsx);
+	// `data-format` is ours, added so a test can name a format exactly
+	const option = `.analysis-format-popup .option[data-format="${format}"]`;
+	await page.waitForSelector(option, { timeout: 20000 });
+	await page.evaluate(selector => document.querySelector(selector).click(), option);
+	// choosing closes the menu; wait for that so a later click isn't swallowed by the popup
+	await waitFor(page, () => !document.querySelector('.analysis-picker-popup'), 'the format menu to close');
+}
+
+async function startAnalysisFromTeams(page, format) {
+	await clickButton(page, 'New Analysis From Teams');
+	if (format) {
+		await chooseFormat(page, format);
+	}
+	await clickButton(page, 'Start Analysis');
+}
+
+/**
+ * Home page -> Set Up Position -> (optional format) -> Set Up Position. Needs no teams: the server builds
+ * placeholder ones, and the tab opens straight at Turn 1 (docs/analysis/plan.md, Phase 4).
+ */
+async function startSetUpPosition(page, format) {
+	await clickButton(page, 'Set Up Position');
+	if (format) {
+		await chooseFormat(page, format);
+	}
+	// the home button and the submit button share their text, so pick the one inside the form
+	await page.evaluate(() => {
+		const button = [...document.querySelectorAll('.analysis-form button')]
+			.find(candidate => candidate.type === 'submit' && !candidate.disabled);
+		if (!button) throw new Error('no enabled submit button on the start form');
+		button.click();
+	});
+}
+
+/**
+ * Team preview: picks leads by team index (0-based) and sends them out. Pass a number for one lead
+ * (singles) or an array for several (e.g. doubles picks two).
+ */
+async function selectLeads(page, p1Leads, p2Leads) {
+	await waitFor(page, () => document.body.textContent.includes('Choose Pokémon'), 'team preview');
+	for (const [side, leads] of [[0, p1Leads], [1, p2Leads]]) {
+		for (const lead of [].concat(leads)) {
+			await page.evaluate((sideIndex, leadIndex) => {
+				const menu = document.querySelectorAll('.switchcontrols .switchmenu')[sideIndex];
+				menu.querySelectorAll('button')[leadIndex].dispatchEvent(new MouseEvent('mouseup', { bubbles: true }));
+			}, side, lead);
+			await sleep(200);
+		}
+	}
+	await clickButton(page, 'Send out Pokémon');
+}
+
+/**
+ * Clicks side `sideIndex`'s (0 = p1) first active Pokémon in the battle to open its action menu.
+ * Retries, because clicks are ignored while a turn animation is still finishing.
+ */
+async function openActionMenu(page, sideIndex, timeout = 30000) {
+	const start = Date.now();
+	while (Date.now() - start < timeout) {
+		const opened = await page.evaluate(n => {
+			if (document.querySelector('.movemenu button')) return true;
+			const active = [...document.querySelectorAll(`.battle [data-tooltip^="analysispokemon|${n}|"]`)]
+				.find(element => !element.classList.contains('picon'));
+			active?.click();
+			return !!document.querySelector('.movemenu button');
+		}, sideIndex);
+		if (opened) return;
+		await sleep(250);
+	}
+	throw new Error(`Timed out opening the action menu for side ${sideIndex}`);
+}
+
+/** Chooses move slot `moveIndex` (0-based) for side `sideIndex`'s first active Pokémon (singles). */
+async function chooseMove(page, sideIndex, moveIndex) {
+	await openActionMenu(page, sideIndex);
+	await page.evaluate(index => document.querySelectorAll('.movemenu button')[index].click(), moveIndex);
+	await waitFor(page, () => !document.querySelector('.movemenu'), 'move menu to close');
+	await sleep(200);
+}
+
+/**
+ * Hovers the `index`th element matching `selector` (optionally only those whose text includes `text`)
+ * and returns the visible tooltip's text and HTML once `until(text)` is true (or null on timeout).
+ */
+async function hoverTooltip(page, selector, { text, index = 0, until = () => true, timeout = 15000 } = {}) {
+	await page.mouse.move(0, 0);
+	const handles = await page.$$(selector);
+	const matches = [];
+	for (const handle of handles) {
+		const content = await handle.evaluate(element => element.textContent);
+		if (!text || content.includes(text)) matches.push(handle);
+	}
+	if (!matches[index]) throw new Error(`No element to hover: ${selector}${text ? ` containing "${text}"` : ''}`);
+	await matches[index].hover();
+	const start = Date.now();
+	let tooltip = null;
+	while (Date.now() - start < timeout) {
+		tooltip = await page.evaluate(() => {
+			const wrapper = document.querySelector('#tooltipwrapper');
+			return wrapper?.textContent ? { text: wrapper.textContent, html: wrapper.innerHTML } : null;
+		});
+		if (tooltip && until(tooltip.text)) return tooltip;
+		await sleep(150);
+	}
+	return tooltip && until(tooltip.text) ? tooltip : null;
+}
+
+/** Number of damage calc lines in a tooltip's HTML (see analysis-tooltips.ts). */
+function calcLineCount(tooltipHTML) {
+	const match = /<p class="tooltip-section analysis-calc-lines">([\s\S]*?)<\/p>/.exec(tooltipHTML || '');
+	return match ? match[1].split('<br>').length : 0;
+}
+
+/** Prints page state and saves a screenshot to output/ for debugging a failure. */
+async function dumpFailure(page, name = 'failure') {
+	if (!page) return;
+	fs.mkdirSync(OUTPUT_DIR, { recursive: true });
+	const state = await page.evaluate(() => ({
+		controls: document.querySelector('.battle-controls')?.textContent.replace(/\s+/g, ' ').slice(0, 300),
+		lines: document.querySelector('.analysis-node-tree')?.textContent.replace(/\s+/g, ' ').slice(0, 400),
+		error: document.querySelector('.message-error')?.textContent,
+		recentLog: [...document.querySelectorAll('.battle-log .inner div')].slice(-12).map(div => div.textContent).join(' | '),
+	})).catch(error => ({ evaluateError: error.message }));
+	console.log(JSON.stringify(state, null, 1));
+	const file = path.join(OUTPUT_DIR, `${name}.png`);
+	await page.screenshot({ path: file }).catch(() => {});
+	console.log(`screenshot: ${file}`);
+}
+
+module.exports = {
+	config, SMOKE_TEAM, OUTPUT_DIR, sleep, step, checkServers, openAnalysisPage, resetPage, clickButton, waitFor,
+	battleControlsText, linesText, waitForDecision, startAnalysisFromTeams, startSetUpPosition,
+	selectLeads, openActionMenu, chooseMove, chooseFormat,
+	hoverTooltip, calcLineCount, dumpFailure,
+};

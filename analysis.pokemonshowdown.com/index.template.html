@@ -1,0 +1,461 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width" />
+
+<title>Analysis - Pokemon Showdown!</title>
+
+<link rel="icon" href="../play.pokemonshowdown.com/favicon.ico" />
+<!-- The header nav's styling (`.nav`, `.nav-wrapper`, `.greenbutton`).
+     Served from this build rather than from pokemonshowdown.com, which it was until 2026-09-20: it was the
+     one remotely-loaded asset on the page, so the header lost its styling whenever that host was slow or
+     unreachable. The repo's copy is byte-identical to the live one.
+     It was loaded remotely because it references root-relative images (`/images/bg-starfield.jpg`,
+     `/images/bg-horizon-fade@2x.jpg`) that only resolve on the main site — but **neither is ever
+     requested here**: the starfield is on `html`, whose background the block below overrides outright,
+     and the other is on `.body`, a class this page has no element with. The browser suites fail on any
+     HTTP >= 400, so a regression on that would be caught rather than silently 404. -->
+<link rel="stylesheet" href="../pokemonshowdown.com/style/global.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/font-awesome.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/client.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/client2.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/battle.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/sim-types.css?" />
+<!-- the embedded teambuilder (battle-team-editor.js) needs these -->
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/battle-log.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/teambuilder.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/battle-search.css?" />
+<link rel="stylesheet" href="../play.pokemonshowdown.com/style/utilichart.css?" />
+
+<style>
+	:root { color-scheme: light; }
+	/* on `html` too: when the page is taller than the window, the canvas below the body must not be white */
+	html, body { background: #f1f4f6; }
+	.analysis-shell { width: 100%; margin: 0; padding: 0; }
+	.analysis-panel { min-height: calc(100vh - 120px); margin: 0; padding: 0; }
+	.analysis-shell > .header { position: relative; z-index: 12; }
+	/* `global.css` (loaded from pokemonshowdown.com) caps `.nav-wrapper` at 700px and reserves 140px at the
+	   left of `.nav` for the site logo it positions absolutely. **This header has no logo**, so that
+	   reservation is dead space — and with seven buttons needing about 570px it is also exactly what pushed
+	   the last one onto a second row. Flex rather than a wider fixed width: the buttons are floats up
+	   there, and a float row one pixel too wide wraps, so a nowrap flex row is the only version that cannot
+	   break again when a label changes. Same fix as `.analysis-picker-columns`. */
+	.analysis-shell > .header .nav-wrapper { width: auto; display: flex; justify-content: center; }
+	.analysis-shell > .header .nav { height: 49px; margin: 0; padding-left: 0; display: flex; flex-wrap: nowrap; }
+	/* Below 554px `global.css` lifts the green Play button out of flow and pins it top-right, which assumes
+	   a nav short enough not to reach it. Six buttons do, so keep them clear of it — but only down to
+	   420px, where `global.css` shrinks the buttons again: past that, reserving the space costs a
+	   horizontal page scroll, and a phone-width overlap on a tool whose battle window alone is 640px wide
+	   is the better of two bad options. */
+	@media (max-width: 554px) and (min-width: 420px) {
+		.analysis-shell > .header .nav { padding-right: 62px; }
+	}
+	.analysis-shell > .header .nav .button { height: 34px; margin-top: 6px; padding-top: 7px; padding-bottom: 7px; box-sizing: border-box; font-size: 9pt; }
+	/* Home sits below the header at a fixed distance rather than being centred in the window, so the
+	   title lands in the same place whatever the window height — as the Pokédex's does. */
+	/* client.css sets `body { color: white }` for the real client's dark background image; this page
+	   overrides the background but inherits that colour, so anything here that doesn't set its own is
+	   white on light grey. Set once for the whole home screen, headings included. */
+	.analysis-home { box-sizing: border-box; max-width: 980px; margin: 0 auto; padding: 0 16px 48px; color: #26333c; }
+	.analysis-home-intro { text-align: center; }
+	/* Copied from `.pokedex h1` (pokemon-showdown-dex/theme/pokedex.css): 36pt, bold by default, and 80px
+	   clear of the header — there that padding is the whole gap, because its panel adds none of its own.
+	   The dex's 40px below the title is the gap to the next *section*, so it goes under the intro block
+	   rather than between the title and its subtitle. */
+	/* stated again rather than inherited: a bare `h1 { color }` in the remote global.css would otherwise
+	   beat the colour inherited from .analysis-home, and this selector outranks it */
+	.analysis-home h1 { margin: 0; padding: 80px 0 14px; font-size: 36pt; line-height: 1.1; color: #26333c; }
+	.analysis-home-intro p { max-width: 620px; margin: 0 auto; color: #53616b; font-size: 11pt; line-height: 1.5; }
+	/* With a form open the header gives up its room, as `.pokedex.aboveresults h1` does: the intro has been
+	   read by then, and the form is what wants the height. Transitioned for the same reason the dex does. */
+	.analysis-home h1 { transition: padding 0.2s, font-size 0.2s; }
+	.analysis-home-compact h1 { padding: 16px 0 8px; font-size: 17pt; }
+	.analysis-home-compact .analysis-home-intro p { display: none; }
+	.analysis-home-compact .analysis-options { margin-top: 18px; }
+	.analysis-home-compact .analysis-option { min-height: 0; }
+	.analysis-home-compact .analysis-option small { display: none; }
+	.analysis-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 40px 0 0; }
+	.analysis-option { display: flex; flex-direction: column; min-height: 132px; padding: 14px 13px; text-align: left; border-radius: 6px; transition: transform 0.1s, box-shadow 0.1s; }
+	.analysis-option:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.13); }
+	.analysis-option[aria-current="true"] { border-color: #6b8299; box-shadow: inset 0 0 0 1px #6b8299; }
+	.analysis-option-icon { margin-bottom: 9px; color: #7b8b98; font-size: 15pt; }
+	.analysis-option strong { display: block; font-size: 10.5pt; }
+	.analysis-option small { display: block; margin-top: 6px; white-space: normal; color: #53616b; line-height: 1.45; }
+	.analysis-form { box-sizing: border-box; width: 100%; max-width: 620px; margin: 26px auto 0; padding: 20px 22px 18px; background: #fff; border: 1px solid #cbd4da; border-radius: 6px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); text-align: left; }
+	.analysis-form h2 { margin: 0 0 6px; font-size: 15pt; font-weight: normal; color: #26333c; }
+	.analysis-form-lead { margin: 0 0 16px; color: #53616b; line-height: 1.45; }
+	.analysis-field { display: block; margin: 0 0 14px; }
+	.analysis-field-label { display: block; margin-bottom: 4px; font-weight: bold; font-size: 9pt; color: #3d4a54; }
+	.analysis-form select, .analysis-form input[type="text"], .analysis-form textarea { box-sizing: border-box; width: 100%; max-width: none; padding: 6px; }
+	.analysis-form input[type="file"] { width: 100%; }
+	.analysis-form textarea { min-height: 110px; font: 9pt monospace; }
+	/* a rule with the word sitting in the gap, so the two replay inputs read as alternatives */
+	.analysis-field-or { display: flex; align-items: center; gap: 9px; margin: 0 0 14px; color: #8794a0; font-size: 9pt; }
+	.analysis-field-or::before, .analysis-field-or::after { content: ""; flex: 1; border-top: 1px solid #dde3e8; }
+	.analysis-form-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+	/* the side of an either/or that isn't in force; its controls are disabled too, so this only has
+	   to say so visually */
+	.analysis-choice-off { opacity: 0.45; }
+	/* Format and team pickers. Nearly everything here is the play client's own: `.select.formatselect`,
+	   `.select.teamselect`, `.options`/`.option`, `.teamdropdown`/`.team` and `.ps-popup` all come from
+	   client.css and client2.css, which this page loads. These rules only anchor the popup to the field and
+	   add the folding headings, which the client's menu doesn't have (see analysis-pickers.tsx). */
+	.analysis-picker { position: relative; display: block; }
+	.analysis-picker .select { width: 100%; text-align: left; }
+	.analysis-picker-popup { position: absolute; z-index: 20; top: 100%; left: 0; box-sizing: border-box; margin-top: 2px; padding: 8px; max-height: 70vh; overflow-y: auto; }
+	/* the team list is sized by `.teamdropdown .team`, so the popup only has to not squeeze it */
+	.analysis-picker-team .analysis-picker-popup { min-width: 305px; }
+	.analysis-picker-searchrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+	.analysis-picker-searchrow .textbox { flex: 1 1 160px; min-width: 0; padding: 5px; }
+	.analysis-picker-gens { flex: none; white-space: nowrap; }
+	/* Flex, not the floats `.options` brings from client2.css, so the columns **cannot wrap**: a float row
+	   one pixel too wide drops its last column underneath the others, which is how the four-column menu
+	   broke. As flex items they overflow into the horizontal scroll instead, which is a failure the user
+	   can see and use. `align-items: flex-start` keeps each column its own height, as the floats did. */
+	.analysis-picker-columns { display: flex; align-items: flex-start; overflow-x: auto; }
+	.analysis-picker-columns > .options { flex: 0 0 auto; }
+	/* The format menu is centred rather than hung off the field, as the client's is: it is a `modal-popup`
+	   there, and four 225px columns do not fit under a control inside a 620px form. */
+	.analysis-format-popup { position: fixed; top: 96px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 32px); }
+	/* a heading that folds its section: styled by `.options h3`, so this only undoes the button chrome */
+	.analysis-picker-section { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+	.analysis-picker-section:hover { text-decoration: underline; }
+	.analysis-picker-popup .teamdropdown .team { margin: 1px 0; }
+	.analysis-syntax-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+	.analysis-form-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #e4e9ed; }
+	.analysis-form-go { font-weight: bold; }
+	.analysis-team-preview { display: block; margin-top: 5px; min-height: 26px; }
+	.analysis-team-preview .picon { display: inline-block; vertical-align: middle; margin-right: 2px; }
+	.analysis-battle-stage > .battle-controls { bottom: 0; box-sizing: border-box; overflow-y: auto; }
+	.analysis-choice-summary-wrap { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px; min-width: 0; margin: 6px 0; overflow: hidden; font: 9pt monospace; color: #53616b; }
+	.analysis-choice-summary { display: flex; align-items: center; min-width: 0; overflow: hidden; white-space: nowrap; }
+	.analysis-choice-summary .picon { flex: 0 0 auto; }
+	.analysis-choice-selectable { cursor: pointer; border-radius: 3px; }
+	.analysis-choice-selectable:hover { background: #dbeaf4; }
+	.analysis-selection-heading { display: flex; align-items: center; gap: 8px; }
+	.analysis-action-controls { display: flex; flex-direction: column; width: 100%; min-width: 0; }
+	.analysis-action-controls .movecontrols, .analysis-action-controls .switchcontrols { flex: none; box-sizing: border-box; width: 100%; min-width: 0; max-width: none; }
+	.analysis-action-controls .movemenu, .analysis-action-controls .switchmenu { display: flex; box-sizing: border-box; width: 100%; min-width: 0; margin-right: 0; padding-left: 4px; }
+	.analysis-action-controls .movemenu button, .analysis-action-controls .switchmenu button { float: none; flex: 1 1 0; width: auto; min-width: 0; margin-right: 4px; white-space: nowrap; overflow: hidden; }
+	.analysis-action-controls .movebutton { max-width: 155px; height: auto; min-height: 40px; }
+	.analysis-action-controls .switchmenu button { max-width: 102px; }
+	.analysis-choice-controls .megaevo-box { margin: 5px 0; }
+	.analysis-choice-controls .megaevo { display: inline-block; margin-right: 8px; padding: 3px 6px; border: 1px solid #aaa; background: #eef2f5; }
+	.analysis-choice-controls .megaevo.cur { background: #c7e7ff; }
+	.analysis-debug-log { margin: 0; white-space: pre-wrap; word-break: break-word; font: 8pt monospace; color: #33434d; }
+	.analysis-node-tree, .analysis-node-branch > ol { margin: 0; padding: 0; list-style: none; }
+	.analysis-node-tree { margin: 0 8px 16px; }
+	.analysis-node-entry { position: relative; margin: 3px 0; }
+	.analysis-node-branch { margin: 3px 0; padding-left: 16px; border-left: 2px solid #8ba4b3; list-style: none; }
+	.analysis-node-button { display: block; box-sizing: border-box; width: 100%; min-width: 0; padding: 4px 6px; overflow: hidden; border: 0; background: transparent; color: inherit; text-align: left; cursor: pointer; }
+	.analysis-node-button > strong { display: block; }
+	/* the end-of-game node's result, where a turn node shows its chosen actions */
+	.analysis-node-outcome { display: block; margin: 6px 0 0; font: 9pt monospace; color: #53616b; }
+	.analysis-node-button .analysis-choice-summary-wrap { margin-bottom: 0; }
+	.analysis-node-button:hover, .analysis-node-current .analysis-node-button { background: #dbeaf4; }
+	.analysis-node-tooltip { visibility: hidden; position: fixed; z-index: 30; top: 0; left: 0; pointer-events: none; box-sizing: border-box; width: 360px; max-width: calc(100vw - 16px); padding: 8px 10px; border: 1px solid #64757f; background: #26343d; color: #fff; font-size: 9pt; font-weight: normal; line-height: 1.35; white-space: normal; box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
+	.analysis-node-button:hover + .analysis-node-tooltip { visibility: visible; }
+	.analysis-node-tooltip > strong, .analysis-node-tooltip .analysis-simulation-actions, .analysis-node-tooltip .analysis-simulation-actions > span { display: block; }
+	.analysis-node-tooltip .analysis-simulation-actions { margin-top: 6px; color: #fff; }
+	.analysis-simulation-list { margin: 0; padding: 0; list-style: none; }
+	.analysis-simulation-group { margin: 0; padding: 0; }
+	.analysis-simulation-outcome { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 10px; border: 0; border-bottom: 1px solid #bbc7cd; background: #f7f9fa; color: #26343d; text-align: left; cursor: pointer; }
+	.analysis-simulation-outcome:hover, .analysis-simulation-outcome.hovered { background: #e8f1f5; }
+	.analysis-simulation-outcome.selected { background: #cfe5f1; box-shadow: inset 3px 0 #2b79a2; }
+	.analysis-simulation-outcome.selected.hovered { background: #bddbea; }
+	.analysis-simulation-list strong, .analysis-simulation-list span, .analysis-simulation-list small { display: block; overflow-wrap: anywhere; }
+	.analysis-simulation-list small { margin-top: 2px; color: #53616b; font: 8pt monospace; }
+	.analysis-simulation-actions { margin-top: 6px; color: #40515c; }
+	.analysis-simulation-actions > span { min-height: 24px; line-height: 24px; }
+	.analysis-simulation-actions .picon { display: inline-block; vertical-align: middle; }
+	.analysis-execution-separator { margin: 7px 0; color: #687780; font-weight: bold; text-align: center; text-transform: uppercase; }
+	.analysis-radio-group { display: flex; align-items: center; gap: 12px; margin: 8px 0; padding: 4px 8px 6px; border: 1px solid #c4cdd2; }
+	.analysis-radio-group legend { padding: 0 4px; color: #40515c; font-weight: bold; }
+	.analysis-radio-group label { white-space: nowrap; cursor: pointer; }
+	.analysis-grouping-mode { align-items: flex-start; flex-direction: column; gap: 5px; }
+	.analysis-grouping-mode label:has(input:disabled) { cursor: default; opacity: .6; }
+	.analysis-grouping-help { display: inline-block; position: relative; margin-left: 4px; color: #53616b; cursor: help; }
+	.analysis-grouping-help::after { position: absolute; z-index: 20; top: calc(100% + 5px); left: 0; display: none; box-sizing: border-box; width: 360px; max-width: calc(100vw - 48px); padding: 7px 9px; border: 1px solid #64757f; background: #26343d; color: #fff; font-size: 9pt; font-weight: normal; line-height: 1.35; white-space: normal; content: attr(data-help); box-shadow: 0 2px 6px rgba(0, 0, 0, .25); }
+	.analysis-grouping-help:hover::after { display: block; }
+	/* the same hover tooltip at the right of the controls' button row, with a line per instruction. It is
+	   labelled rather than a bare icon: what it holds is how to drive the battle, not a note about a field */
+	.analysis-controls-help { float: right; margin: 10px 2px 0 8px; border-bottom: 1px dotted #8ba4b3; font-size: 9pt; }
+	.analysis-controls-help::after { right: 0; left: auto; white-space: pre-line; }
+	/* sits beside Submit/Simulate, so it uses the panel's small-caps label and a number input sized to it */
+	.analysis-sim-count { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; vertical-align: middle; cursor: pointer; }
+	.analysis-sim-count .analysis-number-input { width: 5em; text-align: right; cursor: text; }
+	@media (max-width: 1050px) { .analysis-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+	@media (max-width: 650px) {
+		.analysis-options { grid-template-columns: 1fr; }
+		.analysis-option { min-height: 0; }
+		.analysis-syntax-grid { grid-template-columns: 1fr; }
+		.analysis-home h1 { padding: 44px 0 12px; font-size: 24pt; }
+	}
+	/* a short window has no room for the Pokédex's generous header, so close the gap rather than
+	   pushing the options off the bottom */
+	@media (max-height: 640px) {
+		.analysis-home h1 { padding: 28px 0 12px; font-size: 22pt; }
+		.analysis-options { margin-top: 24px; }
+	}
+	#tooltipwrapper .tooltip-analysismove, #tooltipwrapper .tooltip-analysischoice { width: 440px; }
+	.analysis-node-edits { margin-bottom: 6px; }
+	.analysis-node-edits > strong, .analysis-node-edits span { display: block; }
+	.analysis-node-edits-teams { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 12px; margin-top: 3px; }
+	.analysis-node-edits-teams em { display: block; color: #b8c7d0; }
+	.analysis-calc-lines { line-height: 1.6; }
+	/* field edit form (analysis-field-editor.tsx); buttons copy calc.pokemonshowdown.com's .btn */
+	.analysis-field-editor { margin-top: 8px; padding-top: 6px; border-top: 1px solid #c4cdd2; }
+	.analysis-field-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px; margin-bottom: 6px; }
+	.analysis-field-rows { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+	.analysis-field-row { display: flex; flex-wrap: wrap; justify-content: center; align-items: flex-start; gap: 5px 10px; }
+	/* per-side state rather than a field effect, so it keeps its label beside the input; the label matches
+	   the segmented buttons' font, and Side 2 mirrors the input to the left as its toggles mirror */
+	.analysis-field-fainted { align-items: center; gap: 6px; }
+	.analysis-field-fainted label { color: #222; font: 8pt Verdana, Helvetica, Arial, sans-serif; white-space: nowrap; }
+	.analysis-field-fainted .analysis-field-turns { width: 44px; }
+	.analysis-field-side-p2 .analysis-field-fainted { flex-direction: row-reverse; }
+	.analysis-field-sides { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 14px; margin-top: 10px; }
+	.analysis-field-joined { gap: 0; }
+	/* joined rows overlap borders by moving whole items (button and input), not just the buttons */
+	.analysis-field-joined > .analysis-field-item + .analysis-field-item { margin-left: -1px; }
+	.analysis-field-joined .analysis-field-button.btn-mid, .analysis-field-joined .analysis-field-button.btn-right { margin-left: 0; }
+	.analysis-field-side { display: flex; flex-direction: column; align-items: flex-start; gap: 5px; min-width: 0; }
+	/* a quieter label than the "Edit Field" heading above: matches the Pokémon panel's group labels */
+	.analysis-field-side-title { color: #53616b; font-size: 8pt; font-weight: bold; text-transform: uppercase; letter-spacing: .04em; }
+	.analysis-field-side-p1 .analysis-field-row { justify-content: flex-start; }
+	.analysis-field-side-p2 { align-items: flex-end; }
+	.analysis-field-side-p2 .analysis-field-row { justify-content: flex-end; }
+	.analysis-field-item { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+	.analysis-field-stacked { flex-direction: column; }
+	.analysis-field-actions { display: flex; gap: 6px; }
+	.analysis-field-segmented { display: inline-flex; }
+	.analysis-field-button { position: relative; box-sizing: border-box; min-width: 3.5em; margin: 0; padding: 3px 8px; border: 1px solid #aaa; border-radius: 5px; background: #e3e3e3; background: linear-gradient(to bottom, #f6f6f6, #d3d3d3); box-shadow: 0 1px 2px rgba(0, 0, 0, .2), inset 0 -1px 2px #fff; color: #222; text-shadow: 0 1px 0 #fff; font: 8pt Verdana, Helvetica, Arial, sans-serif; text-align: center; cursor: pointer; }
+	.analysis-field-button.btn-single { min-width: 7em; }
+	/* reserve the bold label's width, so selecting a button doesn't shift its row */
+	.analysis-field-button::after { content: attr(data-label); display: block; height: 0; overflow: hidden; visibility: hidden; font-weight: bold; }
+	.analysis-field-button:hover:not(:disabled), .analysis-field-button:focus-visible { z-index: 1; border-color: #606060; background: linear-gradient(to bottom, #f2f2f2, #b2b2b2); }
+	.analysis-field-button:active:not(:disabled) { background: linear-gradient(to bottom, #bfbfbf, #f2f2f2); }
+	.analysis-field-button.selected, .analysis-field-button.selected:hover:not(:disabled) { background: #fff; border-color: #ccc; box-shadow: 0 1px 2px rgba(0, 0, 0, .1); color: #000; font-weight: bold; text-shadow: none; }
+	.analysis-field-button.selected:hover:not(:disabled) { border-color: #606060; }
+	.analysis-field-button:disabled { color: #999; cursor: default; }
+	.analysis-field-button.btn-left { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+	.analysis-field-button.btn-mid { margin-left: -1px; border-radius: 0; }
+	.analysis-field-button.btn-right { margin-left: -1px; border-top-left-radius: 0; border-bottom-left-radius: 0; }
+	.analysis-field-turns { box-sizing: border-box; width: 44px; padding: 1px 3px; }
+	.analysis-field-turns:disabled { border-color: #ccc; background: #eee; color: #999; }
+	/*
+	 * Narrow and short, like the damage calculator's boost pickers. client.css forces every `.select` to
+	 * 32px, which towers over the 19px EV/IV inputs beside them in the same stat row.
+	 */
+	.analysis-boost-select { box-sizing: border-box; width: 4.2em; min-width: 0; height: 20px; padding: 0 2px; font-size: 8pt; }
+	/*
+	 * Pokémon edit panel (analysis-pokemon-editor.tsx), laid out like the damage calculator's poke-info:
+	 * boxed "info groups" stacked down the panel. calc.pokemonshowdown.com's own class names aren't in this
+	 * client's CSS, so these are our own approximations of that look.
+	 */
+	/* the Lines panel's own colour (client2.css `.ps-room-light`), as a solid value: these sit on the opaque
+	   room, so a group still reads as raised against it without being near-white */
+	.analysis-info-group { margin: 6px 0; padding: 6px 8px; border: 1px solid #c4cdd2; border-radius: 4px; background: #f2f7fa; }
+	/* These come after .analysis-info-group on purpose: same specificity, so order decides the margin. */
+	.analysis-action-summary { margin: 10px 0; }
+	.analysis-action-summary .analysis-choice-summary-wrap { margin: 5px 0 0; }
+	/*
+	 * Team Preview: each side's heading, icons and count boxed together, the roster on one row. Two
+	 * client2.css rules get in the way, both of which the play client opts out of with `wide-controls`
+	 * (not used here, since that would widen the move menu too):
+	 * - `.movecontrols, .switchcontrols` caps these at 330px, which is what made the group a half-width box
+	 *   in a 640px panel;
+	 * - `.switchmenu button` floats at a fixed 102px and the menu hangs 10px past its right edge, which
+	 *   wrapped the roster onto a second line and pushed it through the group's border. Flex lets the row
+	 *   share whatever width there is, shrinking below 102px to keep six on one line, while `max-width`
+	 *   keeps that 102px as the ceiling so a short team looks like every other switch menu rather than
+	 *   stretching two buttons across the panel.
+	 */
+	.analysis-switch-group { max-width: none; margin: 10px 0; }
+	.analysis-switch-group .switchmenu { display: flex; flex-wrap: nowrap; gap: 4px; margin-right: 0; padding-left: 0; }
+	.analysis-switch-group .switchmenu button { flex: 1 1 0; float: none; width: auto; max-width: 102px; min-width: 0; margin-right: 0; }
+	.analysis-switch-group h3 { margin: 0; }
+	.analysis-switch-count { margin: 6px 0 0; padding: 0; color: #53616b; font: 9pt monospace; }
+	.analysis-info-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; }
+	.analysis-info-row + .analysis-info-row { margin-top: 5px; }
+	.analysis-info-field { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+	.analysis-info-field > label { color: #53616b; font-size: 8pt; }
+	/*
+	 * One field per row, with the labels sharing a column so every input's left edge lines up. The column is
+	 * kept tight because a 2x2 cell has to fit a dropdown plus a second control beside it (Status and the
+	 * badly-poisoned counter, or the sleep-turns input).
+	 */
+	.analysis-info-line { display: grid; grid-template-columns: 4.2em minmax(0, 1fr); align-items: center; gap: 4px 2px; }
+	.analysis-info-line + .analysis-info-line { margin-top: 4px; }
+	.analysis-info-line > label { color: #53616b; font-size: 8pt; }
+	/*
+	 * Nature/ability/item/status as a 2x2 block rather than four rows, which leaves the volatiles row below it
+	 * the panel's full width for its combobox. `align-items: start` keeps the top row aligned when the status
+	 * cell grows a second control (the badly-poisoned counter, or sleep turns).
+	 */
+	/*
+	 * The columns are uneven on purpose: nature and item are lone dropdowns, while status shares its cell
+	 * with the badly-poisoned counter or the sleep-turns input, so the right column gets the extra room.
+	 */
+	.analysis-info-grid { display: grid; grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); align-items: start; gap: 5px 12px; }
+	.analysis-info-grid > .analysis-info-line + .analysis-info-line { margin-top: 0; }
+	.analysis-info-grid + .analysis-info-line { margin-top: 6px; padding-top: 6px; border-top: 1px solid #e3e8eb; }
+	.analysis-info-value { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; min-width: 0; }
+	.analysis-info-value > select { min-width: 0; max-width: 13em; }
+	.analysis-info-checkbox { display: flex; align-items: center; gap: 3px; color: #40515c; font-size: 8pt; white-space: nowrap; }
+	.analysis-toxic-select { box-sizing: border-box; width: 5em; min-width: 0; }
+	.analysis-number-input { box-sizing: border-box; width: 5.2em; padding: 1px 3px; }
+	.analysis-stat-table { width: 100%; border-collapse: collapse; font-size: 8pt; }
+	.analysis-stat-table th { padding: 1px 3px; color: #53616b; font-weight: normal; text-align: center; }
+	.analysis-stat-table th:first-child { text-align: left; }
+	.analysis-stat-table td { padding: 1px 3px; text-align: center; }
+	.analysis-stat-table td:first-child { color: #40515c; font-weight: bold; text-align: left; }
+	.analysis-stat-table .analysis-stat-base, .analysis-stat-table .analysis-stat-total { font-variant-numeric: tabular-nums; }
+	.analysis-stat-table .analysis-stat-total { font-weight: bold; }
+	.analysis-stat-input { box-sizing: border-box; width: 4.2em; padding: 1px 3px; text-align: right; }
+	.analysis-move-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 6px; }
+	/* Rage Fist's hit counter sits between its move and its PP, so the row needs a third column. It is
+	   left-aligned in that column, unlike the PP cell which hugs the right edge of the row. */
+	/* The hits column takes the free space so its input sits just after the move select, left-aligned;
+	   without that the 1fr select pushes both it and the PP cell against the right edge. The select is
+	   held to its column's width, or it overflows and covers the input. */
+	.analysis-move-row:has(.analysis-move-hits) { grid-template-columns: minmax(0, 16em) minmax(0, 1fr) auto; }
+	.analysis-move-row:has(.analysis-move-hits) > select { width: 100%; max-width: 100%; }
+	.analysis-move-hits { display: flex; justify-content: flex-start; align-items: center; gap: 4px; white-space: nowrap; }
+	.analysis-move-pp { display: flex; align-items: center; gap: 4px; white-space: nowrap; }
+	.analysis-move-row + .analysis-move-row { margin-top: 4px; }
+	.analysis-move-row select { min-width: 0; }
+	.analysis-move-row .analysis-stat-input { width: 3.6em; }
+	.analysis-poke-actions { display: flex; flex-wrap: wrap; gap: 5px; margin: 6px 0; }
+	/* settings popup (analysis-settings.tsx); `.userbar` and `.ps-popup` come from the old client's CSS */
+	.analysis-settings-popup { position: absolute; top: 30px; right: 0; width: 15em; }
+	.analysis-settings-note { color: #53616b; font-size: 8pt; }
+	/*
+	 * Multi-select combobox (analysis-multiselect.tsx), used for volatiles. The box wears `.textbox` for the
+	 * panel's standard input chrome, but `:focus` can't fire on a div, so the focus ring is reproduced with
+	 * `:focus-within`. The popup is absolutely positioned so filtering doesn't resize the panel underneath it.
+	 */
+	.analysis-multiselect { position: relative; flex: 1 1 auto; min-width: 0; }
+	.analysis-multiselect-box { display: flex; flex-wrap: wrap; align-items: center; gap: 3px; box-sizing: border-box; width: 100%; min-height: 22px; padding: 2px 3px; cursor: text; }
+	.analysis-multiselect-box:focus-within { outline: 0 none; border-color: #004488; box-shadow: inset 0 1px 2px #d2d2d2, 0 0 6px #2266aa; background: #fff; }
+	.analysis-multiselect-disabled, .analysis-multiselect-disabled:hover { background: #ccc; cursor: default; }
+	.analysis-multiselect-chip { display: inline-flex; align-items: center; gap: 1px; padding: 0 1px 0 6px; border: 1px solid #b6c2cb; border-radius: 9px; background: #e9eff4; color: #24323c; font-size: 8pt; line-height: 15px; white-space: nowrap; }
+	.analysis-multiselect-remove { padding: 0 4px; border: 0; background: none; color: #53616b; font-size: 9pt; line-height: 1; cursor: pointer; }
+	.analysis-multiselect-remove:hover:not(:disabled) { color: #c0392b; }
+	.analysis-multiselect-remove:disabled { color: #aaa; cursor: default; }
+	.analysis-multiselect-input { flex: 1 1 7em; min-width: 7em; padding: 0; border: 0; outline: 0 none; background: none; font-family: inherit; font-size: 8pt; }
+	.analysis-multiselect-list { position: absolute; z-index: 10; right: 0; left: 0; max-height: 11.5em; margin: 1px 0 0; padding: 0; overflow-y: auto; border: 1px solid #aaa; border-radius: 3px; background: #fff; box-shadow: 0 2px 5px rgba(0,0,0,.25); list-style: none; }
+	.analysis-multiselect-option { padding: 2px 6px; font-size: 8pt; cursor: pointer; }
+	/* the tick is always in the box, so a selected option doesn't shift its neighbours' text */
+	.analysis-multiselect-option::before { content: '\2713'; display: inline-block; width: 1.2em; color: #53616b; visibility: hidden; }
+	.analysis-multiselect-option[aria-selected="true"] { color: #53616b; }
+	.analysis-multiselect-option[aria-selected="true"]::before { visibility: visible; }
+	.analysis-multiselect-option:hover { background: #eef3f7; }
+	.analysis-multiselect-option.active { background: #d7e5f0; }
+	/* options the sim would refuse: listed so they can be found, with the reason beside them */
+	.analysis-multiselect-blocked { color: #999; cursor: default; }
+	.analysis-multiselect-blocked:hover { background: none; }
+	.analysis-multiselect-reason { color: #a09080; font-style: italic; }
+	.analysis-multiselect-reason::before { content: ' — '; }
+	.analysis-multiselect-empty { padding: 2px 6px 2px 1.7em; color: #53616b; font-size: 8pt; font-style: italic; }
+	.analysis-selection-edit { margin-left: auto; }
+	.analysis-field-invalid { border-color: #c0392b; background: #fdecea; }
+	.analysis-field-note { color: #53616b; font-style: italic; }
+	.analysis-calc-lines .picon { display: inline-block; vertical-align: middle; margin: -6px -4px -4px -6px; }
+	/* teambuilder panel (analysis-teambuilder.tsx); it replaces the battle window and its controls */
+	.analysis-teambuilder-frame { display: flex; flex-direction: column; }
+	.analysis-teambuilder { display: flex; flex-direction: column; flex: 1 1 auto; min-height: 0; padding: 6px 10px 0; }
+	.analysis-teambuilder-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; flex: none; gap: 6px; margin-bottom: 6px; }
+	.analysis-teambuilder-error { flex: none; margin: 0 0 6px; padding: 5px 8px; }
+	.analysis-teambuilder-error > strong, .analysis-teambuilder-error > em { display: block; }
+	.analysis-teambuilder-problems { margin: 4px 0; padding-left: 20px; }
+	.analysis-teambuilder .analysis-field-note { flex: none; margin: 0 0 6px; }
+	/* the editor's focused view is position:absolute inset 0, so this is its containing block and needs a real height */
+	.analysis-teambuilder-editor { position: relative; flex: 1 1 auto; min-height: 0; overflow: auto; }
+	/*
+	 * This page loads client.css for the old-style battle controls, but the teambuilder is new-client
+	 * markup and index-new.html never loads client.css. Its rules have the same specificity as
+	 * client2.css's, so whatever client2.css doesn't redeclare leaks in. Undo that inside the panel.
+	 * The worst of it: client.css's `.tabbar` is the old room tab bar, pinned to the bottom of the room,
+	 * which threw the editor's Form/Import-Export bar to the bottom of the page behind everything.
+	 */
+	.analysis-teambuilder .tabbar { position: static; height: auto; top: auto; bottom: auto; left: auto; right: auto; }
+	.analysis-teambuilder .tabbar li, .analysis-teambuilder .tabbar ul { float: none; }
+	.analysis-teambuilder .select { width: auto; height: auto; }
+	/* the trainer sprites open their team's builder */
+	.battle .trainersprite { cursor: pointer; }
+</style>
+
+<div class="analysis-shell" id="main">
+    <noscript><section class="section">You need to enable JavaScript to use this page.</section></noscript>
+</div>
+
+<!--
+	Source template: `node build` writes index.html (gitignored) from this file,
+	adding cache-busting hashes to every URL that ends in `?`.
+	All assets come from this client build (not the official play.pokemonshowdown.com),
+	so custom-format data (DigiPen, FNAF) and local battle-* changes are used.
+-->
+<script>
+	function loadRemoteData(src) {
+		// sprite size tables need sprite images this repo doesn't have; fall back to the official copies
+		var scriptEl = document.createElement('script');
+		scriptEl.src = src.replace(/.*\/(data|js)\//g, 'https://play.pokemonshowdown.com/$1/').replace(/\?.*$/, '');
+		document.head.appendChild(scriptEl);
+	}
+</script>
+<script nomodule src="../play.pokemonshowdown.com/js/lib/ps-polyfill.js?"></script>
+<script src="../play.pokemonshowdown.com/js/lib/preact.min.js?"></script>
+<script src="../play.pokemonshowdown.com/config/config.js?"></script>
+<script src="../play.pokemonshowdown.com/js/lib/jquery-1.11.0.min.js?"></script>
+<script src="../play.pokemonshowdown.com/js/lib/html-sanitizer-minified.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-sound.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battledata.js?"></script>
+<script src="../play.pokemonshowdown.com/data/pokedex-mini.js?" onerror="loadRemoteData(this.src)"></script>
+<script src="../play.pokemonshowdown.com/data/pokedex-mini-bw.js?" onerror="loadRemoteData(this.src)"></script>
+<script src="../play.pokemonshowdown.com/data/graphics.js?"></script>
+<script src="../play.pokemonshowdown.com/data/pokedex.js?"></script>
+<script src="../play.pokemonshowdown.com/data/moves.js?"></script>
+<script src="../play.pokemonshowdown.com/data/abilities.js?"></script>
+<script src="../play.pokemonshowdown.com/data/items.js?"></script>
+<script src="../play.pokemonshowdown.com/data/teambuilder-tables.js?"></script>
+<script src="../play.pokemonshowdown.com/data/search-index.js?"></script>
+<script src="../play.pokemonshowdown.com/data/typechart.js?"></script>
+<script src="../play.pokemonshowdown.com/data/aliases.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-tooltips.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-scene-stub.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-choices.js?"></script>
+<!--
+	The embedded teambuilder. analysis-ps-shims.js must come first: battle-team-editor.js
+	evaluates `class extends PSModel` as it loads. client-main.js, panels.js and
+	client-connection.js are deliberately NOT loaded (they boot the app), so the shims stand in
+	for PSModel, PSIcon, PSView and Net.
+-->
+<script src="js/analysis-ps-shims.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-dex-search.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-searchresults.js?"></script>
+<script src="../play.pokemonshowdown.com/js/battle-team-editor.js?"></script>
+<script src="js/analysis-model.js?"></script>
+<script src="js/analysis-api.js?"></script>
+<script src="js/analysis-nodes.js?"></script>
+<script src="js/analysis-choices.js?"></script>
+<script src="js/analysis-tooltips.js?"></script>
+<script src="js/analysis-battle.js?"></script>
+<script src="js/analysis-team-utils.js?"></script>
+<script src="js/analysis-settings.js?"></script>
+<script src="js/analysis-pickers.js?"></script>
+<script src="js/analysis-header.js?"></script>
+<script src="js/analysis-choice-summary.js?"></script>
+<script src="js/analysis-turn-events.js?"></script>
+<script src="js/analysis-node-tree.js?"></script>
+<script src="js/analysis-field-editor.js?"></script>
+<script src="js/analysis-multiselect.js?"></script>
+<script src="js/analysis-pokemon-editor.js?"></script>
+<script src="js/analysis-teambuilder.js?"></script>
+<script src="js/analysis-replay-controls.js?"></script>
+<!-- Replay import: the parser runs the client `Battle` headlessly, which needs the scene stub. -->
+<script src="js/analysis-replay-parse.js?"></script>
+<script src="js/analysis-replay-import.js?"></script>
+<script src="js/analysis-export.js?"></script>
+<script src="js/analysis-autosave.js?"></script>
+<script src="js/analysis.js?"></script>

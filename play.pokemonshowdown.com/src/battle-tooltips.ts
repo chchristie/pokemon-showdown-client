@@ -1021,10 +1021,10 @@ export class BattleTooltips {
 			const battlePokemon = clientPokemon || this.battle.findCorrespondingPokemon(pokemon);
 			for (const moveid of serverPokemon.moves) {
 				const move = this.battle.dex.moves.get(moveid);
-				let moveName = `&#8226; ${move.name}`;
+				let moveName = this.getPPUseText([move.name, 0], true);
 				if (battlePokemon?.moveTrack) {
 					for (const row of battlePokemon.moveTrack) {
-						if (moveName === row[0]) {
+						if (move.id === this.battle.dex.moves.get(row[0]).id) {
 							moveName = this.getPPUseText(row, true);
 							break;
 						}
@@ -1576,7 +1576,7 @@ export class BattleTooltips {
 				return `${bullet} ${move.name} <small>(${maxpp - ppUsed[0]}/${maxpp} to ${maxpp - ppUsed[1]}/${maxpp})</small>`;
 			}
 		}
-		return `${bullet} ${move.name} ${showKnown ? ' <small>(revealed)</small>' : ''}`;
+		return `${bullet} ${move.name}${showKnown ? ` <small>(${maxpp}/${maxpp})</small>` : ''}`;
 	}
 
 	ppUsed(move: Dex.Move, pokemon: Pokemon) {
