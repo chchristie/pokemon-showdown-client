@@ -89,12 +89,42 @@ async function openAnalysisPage(teams) {
 		}
 	});
 
-	await page.goto(config.pageURL, { waitUntil: 'domcontentloaded' });
+	/*
+	 * The first load exists only to reach this origin's localStorage, but it must still carry `?~~`: the
+	 * page's API prefix defaults to its own origin now (see getAnalysisApi), so without it the startup
+	 * calls go to the static file server, which answers 405 — and the `response` listener above turns
+	 * every one of those into a suite failure.
+	 */
+	const pageWithAPI = `${config.pageURL}?~~${config.api}`;
+	await page.goto(pageWithAPI, { waitUntil: 'domcontentloaded' });
 	await page.evaluate(storedTeams => {
 		localStorage.setItem('showdown_teams', storedTeams.map(team => `${team.format}]${team.name}|${team.packed}`).join('\n'));
 	}, teams);
-	await page.goto(`${config.pageURL}?~~${config.api}`, { waitUntil: 'networkidle2' });
+	await page.goto(pageWithAPI, { waitUntil: 'networkidle2' });
 	return { browser, page, errors };
+}
+
+/**
+ * Reloads to a clean home screen, discarding the autosaved tabs first.
+ *
+ * A plain reload no longer gets you one: autosave reopens whatever was open, which is the whole point of
+ * it. A suite that reloads to start something fresh has to say so, or it lands in the previous tab and
+ * every home-screen button is out of reach.
+ */
+async function resetPage(page) {
+	/*
+	 * Close the tabs rather than deleting the stored entry: the page flushes its autosave on `pagehide`,
+	 * so a `removeItem` followed by a navigation is written straight back over on the way out. Closing
+	 * them makes the app clear the entry itself, which is also what a user does.
+	 */
+	await page.evaluate(() => {
+		for (const button of document.querySelectorAll('.maintabbar-left .closebutton')) button.click();
+	});
+	await waitFor(page, () => document.querySelectorAll('.maintabbar-left a.roomtab').length === 1,
+		'every tab to close before a reset');
+	await page.goto(`${config.pageURL}?~~${config.api}`, { waitUntil: 'networkidle2' });
+	await waitFor(page, () => document.body.textContent.includes('New Analysis From Teams'),
+		'the home screen after a reset');
 }
 
 /** Clicks the first visible, enabled button whose text contains `text`. */
@@ -322,7 +352,7 @@ async function dumpFailure(page, name = 'failure') {
 }
 
 module.exports = {
-	config, SMOKE_TEAM, OUTPUT_DIR, sleep, step, checkServers, openAnalysisPage, clickButton, waitFor,
+	config, SMOKE_TEAM, OUTPUT_DIR, sleep, step, checkServers, openAnalysisPage, resetPage, clickButton, waitFor,
 	battleControlsText, linesText, waitForDecision, startAnalysisFromTeams, startSetUpPosition,
 	selectLeads, openActionMenu, chooseMove, chooseFormat,
 	hoverTooltip, calcLineCount, dumpFailure,

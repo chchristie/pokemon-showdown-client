@@ -124,6 +124,16 @@ export function parseAnalysisExport(text: string): AnalysisExport {
 	} catch {
 		fail("That file isn't valid JSON, so it isn't an exported analysis.");
 	}
+	return validateAnalysisExport(file);
+}
+
+/**
+ * The half of `parseAnalysisExport` that works on an already-parsed object, so autosave can run a restored
+ * entry through exactly the checks an imported file gets (`analysis-autosave.ts`). Splitting it here is
+ * what keeps the two paths from drifting: an autosaved tab is the same recipe an export writes, so it has
+ * to survive the same rebuild.
+ */
+export function validateAnalysisExport(file: any): AnalysisExport {
 	if (!file || typeof file !== 'object') fail("That file isn't an exported analysis.");
 	if (typeof file.schema !== 'number') fail("That file isn't an exported analysis (no schema).");
 	if (file.schema > ANALYSIS_EXPORT_SCHEMA) {
@@ -168,10 +178,18 @@ export function parseAnalysisExport(text: string): AnalysisExport {
  * ignore it.
  */
 export function stalenessWarning(file: AnalysisExport, serverCommit: string) {
-	const saved = file.createdWith?.serverCommit || '';
-	if (!saved || !serverCommit || saved === serverCommit) return '';
-	return `This analysis was saved under a different server build (${saved.slice(0, 9)}; this server is ` +
-		`${serverCommit.slice(0, 9)}). Positions rebuild from seeds, so simulated turns may differ from ` +
+	return stalenessWarningFor(file.createdWith?.serverCommit || '', serverCommit);
+}
+
+/**
+ * The same warning from the two commits alone, for autosave: a restored tab's commit arrives as data
+ * (`AnalysisAutosaveRestore.savedCommits`) because the running server's commit is still in flight when the
+ * tabs are rebuilt at startup.
+ */
+export function stalenessWarningFor(savedCommit: string, serverCommit: string) {
+	if (!savedCommit || !serverCommit || savedCommit === serverCommit) return '';
+	return `This analysis was saved under a different server build (${savedCommit.slice(0, 9)}; this server ` +
+		`is ${serverCommit.slice(0, 9)}). Positions rebuild from seeds, so simulated turns may differ from ` +
 		`what you saw when you saved it.`;
 }
 

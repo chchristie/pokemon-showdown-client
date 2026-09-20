@@ -117,12 +117,18 @@ function battleLogText(page) {
 		[...document.querySelectorAll('.battle-log .inner div')].map(div => div.textContent).join(' | '));
 }
 
-/** The header's Home link, which is an `<a>` and so out of `clickButton`'s reach. */
+/**
+ * The **tab bar's** Home tab, which is an `<a>` and so out of `clickButton`'s reach.
+ *
+ * Scoped to `.maintabbar-left`, not matched on the text alone: the site nav below the tab bar now has its
+ * own "Home" button too, and that one leaves the page entirely. Document order happens to find the tab
+ * first, which is exactly the kind of luck a suite should not run on.
+ */
 function goHome(page) {
 	return page.evaluate(() => {
-		const link = [...document.querySelectorAll('a')]
+		const link = [...document.querySelectorAll('.maintabbar-left a.roomtab')]
 			.find(entry => entry.textContent.trim() === 'Home');
-		if (!link) throw new Error('no Home link in the header');
+		if (!link) throw new Error('no Home tab in the tab bar');
 		link.click();
 	});
 }

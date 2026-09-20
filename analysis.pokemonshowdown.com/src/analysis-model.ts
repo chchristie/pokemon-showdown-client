@@ -460,6 +460,16 @@ export interface AnalysisTab {
 	 */
 	staleWarning?: string;
 	/**
+	 * Why an autosaved tab could not be rebuilt, shown in the tab itself with a Retry.
+	 *
+	 * Autosave restores a tab's *recipe* and rebuilds the position lazily, so a rebuild can fail long after
+	 * the page has loaded — on a tab the user has just clicked, with the start form nowhere in sight. The
+	 * import path can report the same failure through `startError` because it is still standing on the home
+	 * screen; this one has nowhere to put it, and dropping the tab would throw away the user's work over
+	 * what may be a restarted API.
+	 */
+	restoreError?: string;
+	/**
 	 * Whether the teambuilder has been opened on this sandbox tab yet. Until it has, the controls are just
 	 * the line telling you how to start (see renderBattleControls): there is nothing useful to do with a
 	 * field of placeholders, and the turn controls would only invite you to play one.
@@ -571,13 +581,53 @@ export const LAYOUT = {
 	logReserveWidth: 180,
 };
 
+/**
+ * Where the analysis API lives, as a prefix the request paths are appended to.
+ *
+ * **The default is the empty string, meaning the page's own origin**, so `/analysis/start` is a relative
+ * path. That is what a hosted deployment wants: the plan is an nginx `location /analysis/` proxy in front
+ * of the API on the same vhost (docs/hosting/overview.md), which keeps the calls on `https` — a page
+ * served over `https` cannot call an `http://host:port` API at all — and means the browser treats them as
+ * same-origin and sends no `Origin` header, so no CORS grant is needed.
+ *
+ * `?~~host:port` overrides it with an explicit `http://host:port`, which is how local development runs:
+ * the client is a static file server on one port and the API is on another, so they are different origins
+ * and the API has to allow the client's (see `ANALYSIS_ALLOWED_ORIGINS` in tools/analysis-server.ts).
+ * `start-analysis` prints that URL and the browser test harness builds it, so nothing relies on the old
+ * `http://localhost:8002` default, which is gone: guessing an API host is exactly what breaks when the
+ * page is finally hosted somewhere.
+ */
 export function getAnalysisApi() {
 	const match = /\?~~([^:/]+)(?::(\d+))?/.exec(window.location.search);
-	if (!match) return 'http://localhost:8002';
+	if (!match) return '';
 	return `http://${match[1]}:${match[2] || '8002'}`;
 }
 
 export const ANALYSIS_API = getAnalysisApi();
+
+/**
+ * Where the play client lives, as an origin, or `''` when there is nowhere to ask.
+ *
+ * Saved teams are `localStorage` under `showdown_teams`, and `localStorage` is per **origin**. In local
+ * development one static file server serves both apps on one port, so the analysis page reads the play
+ * client's teams directly and this is never needed. Hosted, they are `play.<domain>` and
+ * `analysis.<domain>` — two origins — and the pickers would be empty without a bridge
+ * (`play.pokemonshowdown.com/analysis-teams.html`).
+ *
+ * Derived by swapping the first label rather than configured, because `config/routes.json` is not the
+ * place for it: production deliberately leaves `routes.client` pointing at the official domain so default
+ * sprites keep loading from the real play.pokemonshowdown.com (docs/hosting/overview.md). `?~teams=host`
+ * overrides it for anything the rule does not fit; a bare hostname like `localhost` returns `''`, which
+ * turns the bridge off.
+ */
+export function getPlayOrigin() {
+	const match = /[?&]~teams=([^&:/]+)(?::(\d+))?/.exec(window.location.search);
+	if (match) return `${window.location.protocol}//${match[1]}${match[2] ? `:${match[2]}` : ''}`;
+	const labels = window.location.hostname.split('.');
+	if (labels.length < 3 || labels[0] === 'play') return '';
+	labels[0] = 'play';
+	return `${window.location.protocol}//${labels.join('.')}`;
+}
 
 /**
  * Whether this is still one of a Set Up Position tab's untouched placeholders, which is what makes its

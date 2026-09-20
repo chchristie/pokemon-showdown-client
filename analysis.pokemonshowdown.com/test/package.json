@@ -11,7 +11,8 @@
 		"teambuilder": "node teambuilder.js",
 		"setup": "node setup.js",
 		"replay": "node replay.js",
-		"export": "node export.js"
+		"export": "node export.js",
+		"autosave": "node autosave.js"
 	},
 	"dependencies": {
 		"puppeteer-core": "^25.0.0"

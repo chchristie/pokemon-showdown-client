@@ -72,8 +72,30 @@ interface FormatPickerState {
 	collapsed: { [section: string]: boolean };
 }
 
-/** One column of the menu: a run of formats sharing `column`, split into its sections. */
+/**
+ * How wide one column of the format menu really is: `.options .option` is 220px in `client2.css` and
+ * `.options` adds 2px of padding a side.
+ *
+ * The client's own menu sizes at a flat 225px a column, which is a pixel over and has nothing else to pay
+ * for. This popup does, hence `POPUP_CHROME`.
+ */
+const COLUMN_WIDTH = 224;
+
+/**
+ * What the popup costs on top of its columns: 8px of padding a side, plus room for its own vertical
+ * scrollbar, plus slack.
+ *
+ * The scrollbar is the part that is easy to miss and the reason the four-column menu wrapped. The popup is
+ * `max-height: 70vh; overflow-y: auto`, so the format list always has one — but it is an **overlay**
+ * scrollbar (0-2px) in headless Chrome and on a trackpad Mac, and a classic one (15-17px) with a mouse or
+ * with "always show scrollbars". Sized for the classic case, since the overlay case simply has room spare.
+ */
+const POPUP_CHROME = 16 + 18 + 8;
+
+/** One column of the menu: every section that declared this `column`, in list order. */
 interface FormatColumn {
+	/** the column number `formats.ts` assigned, which is what orders the menu */
+	column: number;
 	sections: { name: string, formats: AnalysisFormat[] }[];
 }
 
@@ -91,29 +113,55 @@ export class AnalysisFormatPicker extends PopupControl<AnalysisFormatPickerProps
 	};
 
 	/**
-	 * Groups into the columns `formats.ts` assigns, then into sections within each, exactly as the client's
-	 * menu does: a new column whenever `column` changes, a new heading whenever `section` does. Filtering
-	 * happens first, so a search collapses the menu down to as many columns as still have anything in them.
+	 * Buckets formats by the `column` number `formats.ts` assigns them, then by section within each.
+	 *
+	 * **Bucketed by number and sorted, not grouped by runs.** The new play client
+	 * (`panel-teamdropdown.tsx`) starts a fresh column whenever `column` *changes* as it walks the list,
+	 * which is only right while the list happens to be in column order — and it is not. `mergeFormatLists`
+	 * appends the fork's custom sections at the **end** of the list, so `custom-formats.ts`'s `column: 1`
+	 * sections arrive after `formats.ts`'s columns 2–4 and a run-based walk emits them as a trailing
+	 * column. That put DigiPen and FNAF at the far right instead of first.
+	 *
+	 * The **old** client is the one to follow here, and it is also what this fork serves
+	 * (`testclient-old.html`): `client-mainmenu.js` appends into `bufs[format.column]` and renders the
+	 * buffers in index order, so where a section sits in the list never affects which column it lands in.
+	 * That is what `formats.ts` describes too — *"New sections will be added to the bottom of the specified
+	 * column."*
+	 *
+	 * Filtering happens first, so a search collapses the menu down to as many columns as still have
+	 * anything in them.
 	 */
 	buildColumns(): FormatColumn[] {
 		const searchID = toID(this.state.search);
 		const { gen } = this.state;
+		/*
+		 * The array is what is returned; the map is only the lookup. Collecting into both rather than
+		 * spreading `byColumn.values()` at the end is not a style choice — **the client build compiles
+		 * `[...map.values()]` to `[].concat(map.values())`**, which wraps the iterator as a single element
+		 * instead of spreading it, and the menu renders one undefined column. It fails at runtime, not at
+		 * build time. See "Client build gotchas" in docs/analysis/handoff.md.
+		 */
 		const columns: FormatColumn[] = [];
-		let columnNumber: number | null = null;
+		const byColumn = new Map<number, FormatColumn>();
 		for (const format of this.props.formats) {
 			// matched on the id, as the client does, so "gen9ou" and "Gen 9 OU" both find it
 			if (searchID && !toID(format.name).includes(searchID)) continue;
 			if (gen && !format.id.startsWith(gen)) continue;
-			if (format.column !== columnNumber || !columns.length) {
-				columnNumber = format.column;
-				columns.push({ sections: [] });
+			let column = byColumn.get(format.column);
+			if (!column) {
+				column = { column: format.column, sections: [] };
+				byColumn.set(format.column, column);
+				columns.push(column);
 			}
-			const column = columns[columns.length - 1];
+			/*
+			 * Matched against the last section in *this* column rather than the previous format, so a
+			 * section split across the list still reads as one heading instead of two identical ones.
+			 */
 			const last = column.sections[column.sections.length - 1];
 			if (last?.name === format.section) last.formats.push(format);
 			else column.sections.push({ name: format.section, formats: [format] });
 		}
-		return columns;
+		return columns.sort((a, b) => a.column - b.column);
 	}
 
 	renderGenButtons() {
@@ -132,8 +180,7 @@ export class AnalysisFormatPicker extends PopupControl<AnalysisFormatPickerProps
 	override render() {
 		const { value, disabled } = this.props;
 		const columns = this.buildColumns();
-		// the client's own sizing: 225px a column, floored at about two so the search row still fits
-		const width = Math.min(Math.max(columns.length, 2.1) * 225 + 30, window.innerWidth - 40);
+		const width = Math.min(Math.max(columns.length, 2.1) * COLUMN_WIDTH + POPUP_CHROME, window.innerWidth - 40);
 		return <span class="analysis-picker analysis-picker-format">
 			<button
 				type="button" class="select formatselect" disabled={disabled}
@@ -153,7 +200,7 @@ export class AnalysisFormatPicker extends PopupControl<AnalysisFormatPickerProps
 					<span class="analysis-picker-gens">{this.renderGenButtons()}</span>
 				</div>
 				<div class="analysis-picker-columns">
-					{columns.map((column, index) => <ul class="options" key={index}>
+					{columns.map((column, index) => <ul class="options" key={index} data-column={column.column}>
 						{column.sections.map(section => <>
 							<li key={`h-${section.name}`}>
 								{/* the client's headings are inert; these fold, which long columns want */}

@@ -32,9 +32,12 @@ npm run teambuilder      # embedded teambuilder (teambuilder.js)
 npm run setup            # Set Up Position (setup.js)
 npm run replay           # Import Replay (replay.js)
 npm run export           # Export and Import Analysis (export.js)
+npm run autosave         # reopening the open tabs after a reload (autosave.js)
 ```
 
-Server-side edit logic (what gets written to the sim and which protocol lines are emitted) has its own mocha test in the server repo: `npx mocha --no-config --exit test/main.js test/tools/analysis/edits.js`.
+Server-side edit logic (what gets written to the sim and which protocol lines are emitted) has its own mocha test in the server repo: `npx mocha --no-config --exit test/main.js test/tools/analysis/edits.js`. The API's **HTTP layer** — CORS, the body cap, the rate limit, routing — is `test/tools/analysis/server.js` there.
+
+The cross-origin team bridge (`play.pokemonshowdown.com/analysis-teams.html`) is tested by `node --test test/analysis-teams-bridge.test.js` in the client repo root, not here: local dev serves both apps from one origin, so no browser suite can reach it.
 
 - The output lists one `- step` line per passed step, then `PASS`, or `FAIL: <reason>`. Exit code 1 means failure.
 - On failure, it prints the controls text, the Lines text and the recent battle log, and saves `output/<test>-failure.png`. A successful smoke run saves `output/smoke-final.png`. `output/` is gitignored.
@@ -52,6 +55,9 @@ Server-side edit logic (what gets written to the sim and which protocol lines ar
 To test against a separately started API, e.g. `ANALYSIS_PORT=8092 node dist/tools/analysis-server.js` in `pokemon-showdown`, run `ANALYSIS_API=localhost:8092 npm run smoke`.
 
 ## What `smoke.js` covers
+
+- The **format menu's layout**: all columns on one row, the popup fully on screen, and no horizontal overflow. Headless hides this class of bug — its overlay scrollbar is 2px where a real one is 15-17px, which is exactly the slack the four-column menu ran out of.
+- The **format menu's column order**: columns come out in ascending `column` (read from each `<ul>`'s `data-column`) with the fork's own sections first. The assertion is the rule, not which format sits where, because the format list keeps changing. It regressed once — see docs/analysis/overview.md on why the *old* client is the model here.
 
 The test uses gen9ou with the same team on both sides: Garchomp, Rotom-Wash and Kingambit (moves listed in `lib.js`). Steps:
 
@@ -178,6 +184,18 @@ The rest:
 blob is read back through `fetch`. That keeps headless Chrome's download directory out of the picture. The
 stub fetches inside the click, because the export revokes the object URL on a timer.
 
+## What `autosave.js` covers
+
+A reload reopens the tabs that were open (docs/analysis/overview.md, "Autosave"):
+
+- the stored entry under `analysis-open-tabs` is an **export recipe** — format, root seed, nodes — not a second format;
+- a reload brings the tab back, rebuilds its position, and **every Lines button comes back with its icon count**. The icons are the assertion that matters, for the same reason as in `export.js`: a node whose summary was lost still renders its heading and empty cells, so comparing text alone reports a match while the content is gone;
+- with two tabs, both reopen and the active one is in front; the background one shows its Lines immediately and builds its battle on the first click;
+- closing the last tab clears the entry, so a reload does not reopen work the user just closed;
+- an unreadable entry (bad JSON, a newer schema, a tab with no nodes) is discarded and the page still loads. This is the one that matters most: a stored entry is replayed on *every* load, so one that throws would break the page permanently.
+
+**Wait for the stored value, don't sleep.** `waitForStored` polls, because a write already in flight when the tabs change pushes the next one a whole throttle further out — a fixed sleep was measured failing against exactly that. And read Lines **after** the settle: `waitForDecision` returns as soon as the controls are ready, but the current node's summary is written a render later, so a capture at that moment is one button short of what is about to be saved.
+
 ## Writing or extending tests
 
 `lib.js` has the reusable pieces. Use them from new scenario files (e.g. `calc.js`) or new steps in `smoke.js`:
@@ -186,6 +204,7 @@ stub fetches inside the click, because the export revokes the object URL on a ti
 - `openAnalysisPage(teams)`: launches Chrome with teams in `localStorage`, then returns `{ browser, page, errors }`. Each team is `{ format, name, packed }`. Add teams for every format the scenario starts.
 - `startAnalysisFromTeams(page, format?)`: home page → New Analysis From Teams → pick the format → Start.
 - `startSetUpPosition(page, format?)`: home page → Set Up Position → pick the format → Set Up Position. Needs no teams; the tab opens straight at Turn 1 on placeholder Pokémon.
+- `resetPage(page)`: closes every tab, then reloads to a clean home screen. **Use this instead of `location.reload()`.** A plain reload reopens whatever was open, because of autosave, and deleting the stored entry first does not help — the page flushes its autosave on `pagehide` and writes it straight back on the way out. Closing the tabs makes the app clear the entry itself.
 - **Clicking and waiting:**
   - `clickButton(page, text)`: clicks by visible button text; retries until it's enabled.
   - `waitFor(page, fn, label)`: polls a function in the page.

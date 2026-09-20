@@ -3,6 +3,27 @@ import preact from '../../play.pokemonshowdown.com/js/lib/preact';
 import { formatTabLabel, type AnalysisTab } from './analysis-model';
 import { AnalysisSettings } from './analysis-settings';
 
+/**
+ * The header nav's destinations.
+ *
+ * Absolute and written out rather than derived from the page's own hostname or from `config/routes.json`.
+ * Neither would work here: `routes.json` deliberately still names the official domains in production, so
+ * that default sprites keep loading from the real play.pokemonshowdown.com (docs/hosting/overview.md), and
+ * deriving from `window.location` gives nothing on `localhost`, where the analysis tool is developed.
+ *
+ * The dex does this through its own `config/config.js` routes, which it can because it has no sprite
+ * dependency to preserve. Two mechanisms for the same nav is a wart; this is the one place to change if
+ * the fork's domain ever moves.
+ */
+const NAV_LINKS = {
+	home: 'https://play.digipenshowdown.dynv6.net/',
+	dex: 'https://dex.digipenshowdown.dynv6.net/',
+	analysis: 'https://analysis.digipenshowdown.dynv6.net/',
+	strategy: 'https://smogon.com/dex/',
+	forum: 'https://smogon.com/forums/',
+	github: 'https://github.com/chchristie/pokemon-showdown-client/tree/master/analysis.pokemonshowdown.com',
+};
+
 interface AnalysisHeaderProps {
 	tabs: AnalysisTab[];
 	activeTab: AnalysisTab | undefined;
@@ -62,11 +83,19 @@ export function AnalysisHeader(props: AnalysisHeaderProps) {
 				</li>)}
 			</ul>
 		</div></div>
+		{/*
+			One joined group (`nav-first` … `nav-last`) plus a detached Play button, which is the play
+			client's own pattern: `global.css` rounds only those two classes, so Play carries both to be
+			round on all four corners. Analysis is `cur` because this is it.
+		*/}
 		<div class="nav-wrapper"><ul class="nav">
-			<li><a class="button nav-first" href="//pokemonshowdown.com/">Pokemon Showdown</a></li>
-			<li><a class="button cur" href="/">Analysis</a></li>
-			<li><a class="button nav-last" href="//replay.pokemonshowdown.com/">Replay</a></li>
-			<li><a class="button greenbutton nav-first nav-last" href="//play.pokemonshowdown.com/">Play</a></li>
+			<li><a class="button nav-first" href={NAV_LINKS.home}>Home</a></li>
+			<li><a class="button" href={NAV_LINKS.dex}>Pokédex</a></li>
+			<li><a class="button cur" href={NAV_LINKS.analysis}>Analysis</a></li>
+			<li><a class="button" href={NAV_LINKS.strategy}>Strategy</a></li>
+			<li><a class="button" href={NAV_LINKS.forum}>Forum</a></li>
+			<li><a class="button nav-last" href={NAV_LINKS.github}>GitHub</a></li>
+			<li><a class="button greenbutton nav-first nav-last" href={NAV_LINKS.home}>Play</a></li>
 		</ul></div>
 	</div>;
 }

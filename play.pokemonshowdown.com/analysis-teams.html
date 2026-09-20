@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<meta charset="utf-8" />
+<title>Analysis team bridge</title>
+<!--
+	Hands this origin's saved teams to the analysis tool, which is on a different host.
+
+	WHY THIS EXISTS. Teams live in `localStorage` under `showdown_teams`, and `localStorage` is scoped to
+	an origin. Locally that costs nothing, because one static file server serves both apps on one port —
+	but in production the play client is on `play.<domain>` and the analysis tool is on `analysis.<domain>`,
+	two origins, so the analysis tool's team pickers would simply come up empty. This page is loaded by the
+	analysis tool in a hidden iframe, reads the teams as a first party, and posts them across.
+
+	This is upstream's `crossdomain.php` pattern, rebuilt as a static page for two reasons: production runs
+	no PHP (docs/hosting/overview.md), and `crossdomain.php` only answers hosts matching `routes.client` or
+	`routes.analysis`, which production deliberately leaves pointing at the official domains so that
+	default sprites keep loading from the real play.pokemonshowdown.com.
+
+	WHY THIS IS SAFE. The destination is never taken on trust. The caller states which origin it is in
+	`?origin=`, this checks that claim against ALLOWED_ORIGINS below, and then posts with that origin as
+	`targetOrigin` — so the browser refuses to deliver the message unless the frame really is there. A page
+	that embeds this and lies about its origin gets nothing, exactly as with crossdomain.php.
+
+	It is NOT a fork of an upstream file: upstream has no page by this name, so it cannot conflict at a
+	merge. It is recorded in docs/analysis/overview.md's list of changes outside the designated areas.
+-->
+<script>
+(function () {
+	/**
+	 * Extra origins allowed to ask, beyond the derived one below. Add to this only for a host that cannot
+	 * be reached by the `play.` -> `analysis.` rule; every entry is a page that may read these teams.
+	 */
+	var ALLOWED_ORIGINS = [];
+
+	/**
+	 * The analysis host for this play host: the same name with its first label swapped.
+	 * `play.digipenshowdown.dynv6.net` -> `https://analysis.digipenshowdown.dynv6.net`.
+	 */
+	function derivedOrigin() {
+		var labels = location.hostname.split('.');
+		if (labels.length < 3) return '';
+		labels[0] = 'analysis';
+		return location.protocol + '//' + labels.join('.');
+	}
+
+	function isAllowed(origin) {
+		if (!origin) return false;
+		// same origin needs no bridge, but allowing it keeps a local smoke test honest
+		if (origin === location.origin) return true;
+		if (origin === derivedOrigin()) return true;
+		for (var i = 0; i < ALLOWED_ORIGINS.length; i++) {
+			if (origin === ALLOWED_ORIGINS[i]) return true;
+		}
+		return false;
+	}
+
+	// Parsed by hand rather than with URLSearchParams: this page is loaded by the same old browsers the
+	// play client supports, and it is one parameter.
+	var match = /[?&]origin=([^&]*)/.exec(location.search);
+	var target = match ? decodeURIComponent(match[1]) : '';
+	if (!isAllowed(target) || window.parent === window) return;
+
+	var teams = '';
+	try {
+		teams = localStorage.getItem('showdown_teams') || localStorage.getItem('showdown_teams_local') || '';
+	} catch (error) {
+		// Blocked storage, or a browser partitioning it inside a third-party frame. Reported below as an
+		// empty answer rather than silence, so the caller stops waiting instead of timing out.
+	}
+	// 't' + buffer, the prefix upstream's crossdomain.php uses for the same payload
+	window.parent.postMessage('t' + teams, target);
+})();
+</script>

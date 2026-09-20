@@ -8,6 +8,7 @@ import { Teams } from '../../play.pokemonshowdown.com/src/battle-teams';
 import {
 	FORMATS, LAYOUT, getRenderedLog, getRenderedLogTail, getReplayStartTurn, getRequestState,
 	registerFormatNames, type AnalysisFormat,
+	getPlayOrigin,
 	isPlaceholderPokemon,
 	type AnalysisBattle, type AnalysisCalcMode, type AnalysisCalcState, type AnalysisChoiceSummary,
 	type AnalysisEdits, type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisNode,
@@ -20,9 +21,10 @@ import {
 } from './analysis-api';
 import { AnalysisFormatPicker, AnalysisTeamPicker } from './analysis-pickers';
 import {
-	downloadAnalysisExport, parseAnalysisExport, stalenessWarning, tabFromAnalysisExport,
+	downloadAnalysisExport, parseAnalysisExport, stalenessWarning, stalenessWarningFor, tabFromAnalysisExport,
 	type AnalysisExport,
 } from './analysis-export';
+import { loadOpenTabs, saveOpenTabs } from './analysis-autosave';
 import { AnalysisBattleRenderer } from './analysis-battle';
 import {
 	buildReplayNodes, fetchReplayLog, packReplayTeams, readReplayFileText, replayInputLog,
@@ -107,6 +109,21 @@ class AnalysisApp extends preact.Component {
 	serverCommit = '';
 	/** every format the server offers; `FORMATS` until the call lands, and if it never does */
 	formats: AnalysisFormat[] = FORMATS.map(entry => ({ ...entry, section: 'Formats', column: 0 }));
+	/**
+	 * How long an autosave may lag the tabs it is saving.
+	 *
+	 * Autosave is driven off renders rather than off edits, because the tab objects are mutated in place
+	 * all over this file and there is no single choke point to hook. A battle animation renders constantly,
+	 * so this throttles rather than debounces: the first render schedules one write and later renders in
+	 * the same window ride on it, instead of pushing it back indefinitely.
+	 */
+	static AUTOSAVE_DELAY = 2000;
+	autosaveTimer: ReturnType<typeof setTimeout> | null = null;
+	/**
+	 * The commit each autosaved tab was saved under, until the running server's commit lands and the
+	 * staleness warnings can be worked out. Emptied once they have been.
+	 */
+	autosavedCommits: Record<string, string> = {};
 	/** developer panels, behind the header's settings popup; remembered across reloads */
 	debugMode = loadDebugMode();
 	settingsOpen = false;
@@ -147,9 +164,10 @@ class AnalysisApp extends preact.Component {
 	constructor() {
 		super();
 		this.loadTeams();
-		// only an export reads it, and it never blocks one: a failed call leaves it empty
+		// an export reads it, and so does an autosaved tab's staleness warning; a failed call leaves it empty
 		void getAnalysisVersion().then(commit => {
 			this.serverCommit = commit;
+			this.applyAutosaveStaleWarnings();
 		});
 		/*
 		 * The real format list. Registered as well as stored, because a format's *name* is wanted where
@@ -166,6 +184,8 @@ class AnalysisApp extends preact.Component {
 		window.addEventListener('resize', this.updateLayout);
 		this.updateLayout();
 		this.openHome();
+		// after openHome, which clears the active tab: a restore then decides which tab the reload lands on
+		this.restoreAutosavedTabs();
 	}
 
 	updateLayout = () => {
@@ -1087,6 +1107,46 @@ class AnalysisApp extends preact.Component {
 			buffer = localStorage.getItem('showdown_teams') || localStorage.getItem('showdown_teams_local') || '';
 		} catch {}
 		this.loadTeamsFromPacked(buffer);
+		// nothing here means either no teams or, hosted, the play client's teams sitting on another origin
+		if (!this.teams.length) this.loadTeamsFromPlayHost();
+	}
+
+	/**
+	 * Asks the play host for its saved teams, when this page is not on it.
+	 *
+	 * `localStorage` is per origin, so a hosted analysis tool on `analysis.<domain>` cannot see the teams
+	 * the play client saved on `play.<domain>`. The bridge page there reads them as a first party and posts
+	 * them back; see `play.pokemonshowdown.com/analysis-teams.html` for why it is a static page and why
+	 * naming the destination origin is what makes it safe.
+	 *
+	 * **A fallback, not the mechanism.** It runs only when the direct read came up empty, so local
+	 * development — where one file server serves both apps on one origin — never loads it at all. If the
+	 * page is missing, or the browser partitions storage in a third-party frame (Safari does; same-site
+	 * hosts should be exempt, but it is the browser's call), nothing arrives and the pickers stay as they
+	 * were. The paste-a-team path is unaffected either way.
+	 */
+	loadTeamsFromPlayHost() {
+		const origin = getPlayOrigin();
+		if (!origin || origin === window.location.origin) return;
+		const iframe = document.createElement('iframe');
+		iframe.hidden = true;
+		const finish = () => {
+			window.removeEventListener('message', onMessage);
+			iframe.remove();
+		};
+		const onMessage = (event: MessageEvent) => {
+			if (event.origin !== origin || typeof event.data !== 'string' || !event.data.startsWith('t')) return;
+			finish();
+			const buffer = event.data.slice(1);
+			if (!buffer) return;
+			this.loadTeamsFromPacked(buffer);
+			this.forceUpdate();
+		};
+		window.addEventListener('message', onMessage);
+		iframe.src = `${origin}/analysis-teams.html?origin=${encodeURIComponent(window.location.origin)}`;
+		document.body.appendChild(iframe);
+		// give up rather than leave a listener and a frame behind; a missing bridge simply never answers
+		setTimeout(finish, 5000);
 	}
 
 	loadTeamsFromPacked(buffer: string) {
@@ -1161,6 +1221,112 @@ class AnalysisApp extends preact.Component {
 		this.pendingOutcomeScroll = null;
 		this.simulationGroupElements = {};
 	}
+
+	/*********************************************************
+	 * Autosave
+	 *********************************************************/
+
+	/**
+	 * Reopens the tabs a previous visit left open (docs/analysis/plan.md, Phase 6 extra).
+	 *
+	 * **Only the active tab is rebuilt here.** A restored tab is a recipe with no position — the same state
+	 * an imported file arrives in — so each one costs an `/analysis/start` call, and rebuilding five of them
+	 * on load would mean five sim runs before the page is usable. The rest keep their Lines panel, which
+	 * renders straight from `tab.nodes`, and build their position the first time they are shown
+	 * (`activateTab`).
+	 */
+	restoreAutosavedTabs() {
+		const { tabs, activeTabId, savedCommits } = loadOpenTabs();
+		if (!tabs.length) return;
+		this.tabs = tabs;
+		this.autosavedCommits = savedCommits;
+		// the last tab is the fallback because that is where `closeTab` also sends you
+		this.activeTab = activeTabId || tabs[tabs.length - 1].id;
+		const active = this.tabs.find(tab => tab.id === this.activeTab);
+		if (active) void this.openRestoredTab(active);
+	}
+
+	/**
+	 * Works out the staleness warnings once the running server's commit has landed.
+	 *
+	 * It cannot be done during the restore: `getAnalysisVersion` is fired off in the constructor and the
+	 * tabs are rebuilt long before it answers. An import has no such race, because it happens after the
+	 * user has clicked something.
+	 */
+	applyAutosaveStaleWarnings() {
+		// iterated over the tabs, not the record: `find` inside the loop would close over the loop
+		// variable, which the client build refuses outright (see "Client build gotchas" in the handoff)
+		for (const tab of this.tabs) {
+			const savedCommit = this.autosavedCommits[tab.id];
+			if (savedCommit !== undefined) tab.staleWarning = stalenessWarningFor(savedCommit, this.serverCommit);
+		}
+		this.autosavedCommits = {};
+		this.forceUpdate();
+	}
+
+	/**
+	 * Builds the position behind a restored tab, the first time it is shown.
+	 *
+	 * An import that never finished goes back to the step it was on rather than into the analysis — that is
+	 * what the autosave's `ui` block is for. Onboarding needs no server call at all: the teambuilder works
+	 * from the tab's packed teams and replaces the battle window while it is open.
+	 */
+	async openRestoredTab(tab: AnalysisTab) {
+		tab.restoreError = '';
+		if (tab.onboarding) {
+			this.openOnboardingSide(tab, tab.onboarding);
+			return;
+		}
+		tab.loading = true;
+		this.forceUpdate();
+		try {
+			if (tab.importPreview) await this.openImportPreview(tab);
+			else await this.restoreAnalysisNode(tab, tab.currentNodeId);
+		} finally {
+			tab.loading = false;
+		}
+		/*
+		 * Both paths report a failed rebuild by setting `startError` rather than throwing, and `startError`
+		 * only renders on the home screen — which is not where the user is. Move it onto the tab, where the
+		 * placeholder shows it with a Retry (see renderRestorePlaceholder).
+		 */
+		if (this.startError && !tab.log.length) {
+			tab.restoreError = this.startError;
+			this.startError = '';
+		}
+		this.forceUpdate();
+	}
+
+	activateTab = (tabId: string) => {
+		if (this.activeTab === tabId) return;
+		this.activeTab = tabId;
+		const tab = this.tabs.find(entry => entry.id === tabId);
+		// a tab restored from autosave and never opened has no position yet; anything else already has one
+		if (tab && !tab.log.length && !tab.loading) void this.openRestoredTab(tab);
+		else this.forceUpdate();
+	};
+
+	scheduleAutosave() {
+		if (this.autosaveTimer !== null) return;
+		this.autosaveTimer = setTimeout(() => {
+			this.autosaveTimer = null;
+			this.saveOpenTabsNow();
+		}, AnalysisApp.AUTOSAVE_DELAY);
+	}
+
+	/**
+	 * Writes the open tabs now, cancelling any pending write.
+	 *
+	 * A tab that has not been rebuilt yet saves like any other: what is stored is the recipe, which a
+	 * restored tab still holds in full whether or not its position has been built.
+	 */
+	saveOpenTabsNow = () => {
+		if (this.autosaveTimer !== null) {
+			clearTimeout(this.autosaveTimer);
+			this.autosaveTimer = null;
+		}
+		saveOpenTabs(this.tabs, this.activeTab, this.serverCommit);
+	};
 
 	openHome = () => {
 		this.leaveCurrentTab();
@@ -1682,11 +1848,18 @@ class AnalysisApp extends preact.Component {
 		 * lib.js has to ignore come from. There is no PS prefs object on this page, so nothing unsets it.
 		 */
 		BattleSound.setMute(true);
+		/*
+		 * `pagehide` rather than `beforeunload`: it fires on a back/forward-cache navigation too, which is
+		 * exactly the case a throttled write would otherwise miss, and it is the one modern browsers still
+		 * honour on mobile. The write is synchronous, which is what makes it safe to do this late.
+		 */
+		window.addEventListener('pagehide', this.saveOpenTabsNow);
 	}
 
 	override componentDidUpdate() {
 		this.applyOutcomeScroll();
 		this.syncChoiceTooltips();
+		this.scheduleAutosave();
 		const tab = this.tabs.find(entry => entry.id === this.activeTab);
 		this.refreshCalcs(tab);
 		if (!tab || !this.battleFrame || !this.battleLogFrame || !tab.log.length || this.battleTabId === tab.id) return;
@@ -1753,6 +1926,8 @@ class AnalysisApp extends preact.Component {
 	override componentWillUnmount() {
 		this.destroyBattle();
 		window.removeEventListener('resize', this.updateLayout);
+		window.removeEventListener('pagehide', this.saveOpenTabsNow);
+		if (this.autosaveTimer !== null) clearTimeout(this.autosaveTimer);
 	}
 
 	/*********************************************************
@@ -3051,6 +3226,36 @@ class AnalysisApp extends preact.Component {
 		</fieldset>;
 	}
 
+	/**
+	 * What a restored tab shows until its position exists.
+	 *
+	 * A tab reopened from autosave holds only its recipe, so it has no rendered battle until
+	 * `openRestoredTab` has been through `/analysis/start`. Without this the battle area is simply blank,
+	 * which reads as a broken tab — and a rebuild that *failed* would say nothing at all, because
+	 * `startError` renders on the home screen.
+	 *
+	 * Retry rather than an automatic one: the usual cause is an API that is down or restarting, and
+	 * retrying on a timer would hammer it. Closing the tab is offered beside it because a tab whose format
+	 * this server no longer has will never rebuild.
+	 */
+	renderRestorePlaceholder(tab: AnalysisTab, width: number) {
+		return <div
+			class="analysis-restore-placeholder"
+			style={`position:absolute;top:0;left:0;width:${width}px;padding:14px;`}
+		>
+			{tab.restoreError ? <>
+				<p class="message-error">{tab.restoreError}</p>
+				<p>
+					<button class="button" type="button" onClick={() => void this.openRestoredTab(tab)}>Retry</button>
+					{' '}
+					<button class="button" type="button" onClick={event => this.closeTab(event, tab.id)}>
+						Close Tab
+					</button>
+				</p>
+			</> : <p>Rebuilding this analysis&hellip;</p>}
+		</div>;
+	}
+
 	renderAnalysis(tab: AnalysisTab) {
 		const { battleWidth, battleHeight, mainWidth, treeWidth, sideBySide } = this.layout;
 		const requestState = getRequestState(tab.requestState, tab.requests);
@@ -3079,6 +3284,7 @@ class AnalysisApp extends preact.Component {
 						class="battle" ref={setBattleFrame} hidden={!!teamSide}
 						style={`position:absolute;top:0;left:0;width:${battleWidth}px;height:${battleHeight}px`}
 					/>
+					{!teamSide && !tab.log.length && this.renderRestorePlaceholder(tab, battleWidth)}
 					{!teamSide && (requestState === 'move' || requestState === 'switch') &&
 						<div class="battle-controls" style={controlsStyle} role="complementary" aria-label="Battle Controls">
 							<div class="pad">{this.renderBattleControls(tab, requestState)}</div>
@@ -3142,7 +3348,7 @@ class AnalysisApp extends preact.Component {
 		const activeTab = this.tabs.find(tab => tab.id === this.activeTab);
 		const header = <AnalysisHeader
 			tabs={this.tabs} activeTab={activeTab} onOpenHome={this.openHome}
-			onActivateTab={tabId => { this.activeTab = tabId; this.forceUpdate(); }}
+			onActivateTab={this.activateTab}
 			onCloseTab={this.closeTab} onDragStart={this.dragStart} onDragEnter={this.dragEnter}
 			onDragEnd={() => { this.draggedTab = null; }}
 			settingsOpen={this.settingsOpen} debugMode={this.debugMode}

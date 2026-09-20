@@ -26,6 +26,59 @@ async function main() {
 		if (officialScripts) throw new Error(`${officialScripts} scripts loaded from the official site instead of this build`);
 		step('page loaded with local assets');
 
+		/*
+		 * The format menu's columns, before anything is started. The assertion is the *rule* — columns come
+		 * out in ascending `column` order — rather than which format sits where, because the format list is
+		 * the fork's and will keep changing.
+		 *
+		 * It is here because it regressed: the menu used to start a new column whenever `column` changed
+		 * while walking the list, which is only right while the list is in column order. It is not —
+		 * `mergeFormatLists` appends `custom-formats.ts` at the end, so its `column: 1` sections arrived
+		 * after columns 2-4 and were rendered last. The old client, which this fork serves, buckets by
+		 * column number instead.
+		 */
+		await clickButton(page, 'New Analysis From Teams');
+		await page.evaluate(() => document.querySelector('.analysis-picker-format button.formatselect').click());
+		await page.waitForSelector('.analysis-format-popup .options[data-column]', { timeout: 20000 });
+		const menu = await page.evaluate(() => [...document.querySelectorAll('.analysis-format-popup .options')]
+			.map(list => ({
+				column: Number(list.dataset.column),
+				firstSection: list.querySelector('h3')?.textContent.replace(/\s+/g, ' ').trim() || '',
+				top: Math.round(list.getBoundingClientRect().top),
+			})));
+		expect(menu.length > 1, `expected several format columns, got ${JSON.stringify(menu)}`);
+		expect(menu.every((entry, index) => !index || entry.column > menu[index - 1].column),
+			`format columns should be in ascending column order, got ${JSON.stringify(menu)}`);
+		// the fork's own formats declare column 1, so they lead the menu however late they are in the list
+		expect(/DigiPen/i.test(menu[0].firstSection),
+			`expected the fork's column-1 sections first, got ${JSON.stringify(menu)}`);
+		/*
+		 * All on one row. The columns are floats from `client2.css`, and a float row one pixel too wide
+		 * drops its last column underneath the others — which is what happened once the fork's formats
+		 * made it four columns: the popup's width formula had not paid for its own vertical scrollbar, and
+		 * a classic 17px one left about a pixel of slack. `.analysis-picker-columns` is a flex row now, so
+		 * being too narrow gives a horizontal scroll instead, but the width is checked here too because
+		 * scrolling to reach a column is still worse than not needing to.
+		 */
+		const layout = await page.evaluate(() => {
+			const popup = document.querySelector('.analysis-format-popup');
+			const wrap = document.querySelector('.analysis-picker-columns');
+			const box = popup.getBoundingClientRect();
+			return {
+				onScreen: Math.round(box.left) >= 0 && Math.round(box.right) <= window.innerWidth,
+				slack: wrap.clientWidth - wrap.scrollWidth,
+			};
+		});
+		expect([...new Set(menu.map(entry => entry.top))].length === 1,
+			`every format column should sit on one row, got ${JSON.stringify(menu.map(e => e.top))}`);
+		expect(layout.onScreen, 'the format menu should be fully on screen');
+		expect(layout.slack >= 0,
+			`the format menu should be wide enough for its columns without scrolling (${layout.slack}px slack)`);
+		step('the format menu fits its columns on one row');
+		await page.keyboard.press('Escape');
+		await waitFor(page, () => !document.querySelector('.analysis-picker-popup'), 'the format menu to close');
+		step('the format menu is laid out in ascending column order');
+
 		await startAnalysisFromTeams(page);
 		// p1 leads Rotom-Wash, p2 leads Kingambit
 		await selectLeads(page, 1, 2);

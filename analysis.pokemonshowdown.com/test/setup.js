@@ -13,7 +13,7 @@
  * Usage and prerequisites: see README.md in this folder.
  */
 const {
-	step, checkServers, openAnalysisPage, waitFor, waitForDecision, startSetUpPosition,
+	step, checkServers, openAnalysisPage, resetPage, waitFor, waitForDecision, startSetUpPosition,
 	linesText, battleControlsText, sleep, dumpFailure,
 } = require('./lib');
 
@@ -228,9 +228,10 @@ async function main() {
 
 		if (errors.length) throw new Error(`page errors:\n${errors.join('\n')}`);
 
-		// doubles: two placeholders a side, both out
-		await page.evaluate(() => window.location.reload());
-		await page.waitForNavigation({ waitUntil: 'networkidle2' });
+		// doubles: two placeholders a side, both out.
+		// `resetPage`, not a plain reload: autosave would otherwise reopen the singles tab above and the
+		// home screen's Set Up Position button would never be on screen.
+		await resetPage(page);
 		await startSetUpPosition(page, 'gen9doublesou');
 		await waitFor(page, () => (document.querySelector('.battle-controls')?.textContent || '')
 			.includes('Click on a placeholder'), 'the opening instruction in doubles');
