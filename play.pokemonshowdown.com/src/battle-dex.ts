@@ -489,7 +489,7 @@ export const Dex = new class implements ModdedDex {
 		return `${protocol}//${window.Config ? Config.routes.client : 'play.pokemonshowdown.com'}/fx/`;
 	})();
 
-	resourcePrefixDigipen = (() => {
+	resourcePrefixCustom = (() => {
 		return `https://chchristie.github.io/pokemon-showdown-client-resources/`;
 	})();
 
@@ -552,10 +552,10 @@ export const Dex = new class implements ModdedDex {
 			avatar = BattleAvatarNumbers[avatar];
 		}
 		if (avatar.startsWith('#')) {
-			return Dex.resourcePrefixDigipen + 'sprites/trainers-custom/' + toID(avatar.slice(1)) + '.png';
+			return Dex.resourcePrefixCustom + 'sprites/trainers-custom/' + toID(avatar.slice(1)) + '.png';
 		}
 		if (avatar.startsWith('$')) {
-			return Dex.resourcePrefixDigipen + 'sprites/trainers/' + toID(avatar.slice(1)) + '.png';
+			return Dex.resourcePrefixCustom + 'sprites/trainers/' + toID(avatar.slice(1)) + '.png';
 		}
 		if (avatar.includes('.')) {
 			if (!window.Config?.server) {
@@ -1024,7 +1024,7 @@ export const Dex = new class implements ModdedDex {
 		}
 
 		// Mod Cries
-		if (options.mod && !species.digipenSprite) {
+		if (options.mod && !species.customSprite) {
 			spriteData.cryurl = `sprites/${options.mod}/audio/${toID(species.baseSpecies)}`;
 			spriteData.cryurl += '.mp3';
 		}
@@ -1068,8 +1068,8 @@ export const Dex = new class implements ModdedDex {
 		}
 
 		// DigiPen sprite path uses the DigiPen sprite host when flagged in dex data
-		if (species.digipenSprite) {
-			spriteData.url = Dex.resourcePrefixDigipen + 'sprites/gen5'
+		if (species.customSprite) {
+			spriteData.url = Dex.resourcePrefixCustom + 'sprites/gen5'
 			if (!isFront) spriteData.url += '-back';
 			spriteData.url += '/' + name + '.png';
 		}
@@ -1103,9 +1103,9 @@ export const Dex = new class implements ModdedDex {
 	}
 
 	getPokemonIconNum(id: ID, isFemale?: boolean, facingLeft?: boolean) {
-		/*const pokedexEntry = window.BattlePokedex?.[id] as { digipenIconnum?: number; iconnum?: number } | undefined;
-		if (pokedexEntry && typeof pokedexEntry.digipenIconnum === 'number') {
-			return pokedexEntry.digipenIconnum;
+		/*const pokedexEntry = window.BattlePokedex?.[id] as { customIconnum?: number; iconnum?: number } | undefined;
+		if (pokedexEntry && typeof pokedexEntry.customIconnum === 'number') {
+			return pokedexEntry.customIconnum;
 		}*/
 		let num = 0;
 		if (window.BattlePokemonSprites?.[id]?.num) {
@@ -1161,10 +1161,10 @@ export const Dex = new class implements ModdedDex {
 		`;opacity:.3;filter:grayscale(100%) brightness(.5)` : ``);
 
 		// Handle DigiPen icons separately
-		const pokedexEntry = window.BattlePokedex?.[id] as { digipenIcon?: boolean } | undefined;
+		const pokedexEntry = window.BattlePokedex?.[id] as { customIcon?: boolean } | undefined;
 		const species = Dex.species.get(id);
-		if (pokedexEntry?.digipenIcon) {
-			const url = Dex.resourcePrefixDigipen + 'sprites/pokemonicons/' + species.spriteid + '.png';
+		if (pokedexEntry?.customIcon) {
+			const url = Dex.resourcePrefixCustom + 'sprites/pokemonicons/' + species.spriteid + '.png';
 			return `background:transparent url(${url}) no-repeat scroll 0px 0px${fainted}`;
 		}
 
@@ -1187,7 +1187,7 @@ export const Dex = new class implements ModdedDex {
 			}
 		}
 		if (species.exists === false) return { spriteDir: 'sprites/gen5', spriteid: '0', x: 10, y: 5, pixelated: true };
-		if (species.digipenSprite) {
+		if (species.customSprite) {
 			return {
 				spriteid,
 				spriteDir: 'sprites/gen5',
@@ -1262,7 +1262,7 @@ export const Dex = new class implements ModdedDex {
 	getTeambuilderSprite(pokemon: any, dex?: ModdedDex, xOffset = 0, yOffset = 0) {
 		if (!pokemon) return '';
 		const data = this.getTeambuilderSpriteData(pokemon, dex);
-		const prefix = data.digipen ? Dex.resourcePrefixDigipen : Dex.resourcePrefix;
+		const prefix = data.digipen ? Dex.resourcePrefixCustom : Dex.resourcePrefix;
 		const shiny = (data.shiny ? '-shiny' : '');
 		const resize = (data.h ? `background-size:${data.h}px` : '');
 		return `background-image:url(${prefix}${data.spriteDir}${shiny}/${data.spriteid}.png);background-position:${data.x + xOffset}px ${data.y + yOffset}px;background-repeat:no-repeat;${resize}`;
@@ -1275,7 +1275,7 @@ export const Dex = new class implements ModdedDex {
 
 		// Handle DigiPen icons separately
 		if (item?.isNonstandard?.startsWith('DigiPen')) {
-			const url = Dex.resourcePrefixDigipen + 'sprites/itemicons/' + item.id + '.png';
+			const url = Dex.resourcePrefixCustom + 'sprites/itemicons/' + item.id + '.png';
 			return `background:transparent url(${url}) no-repeat scroll 0px 0px`;
 		}
 
