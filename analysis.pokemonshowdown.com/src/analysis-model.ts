@@ -8,8 +8,10 @@ export interface AnalysisChoiceSummary {
 	pokemon: string;
 	action: string;
 	targetPokemon?: string;
-	/** set when the action is a move; used for the damage calc tooltip */
+	/** set when the action is a move; used for the damage calc tooltip. Always the *base* move. */
 	moveId?: string;
+	/** the chosen move is Z-powered, so its tooltip is the Z-move's */
+	zMove?: boolean;
 }
 
 export interface AnalysisTeamSelectionSummary {
@@ -340,8 +342,11 @@ export interface AnalysisCalcTargetResult {
 	error?: string;
 }
 
-/** Attacker's own transformation this turn; results exist for each mode it can still use. */
-export type AnalysisCalcMode = '' | 'tera' | 'mega' | 'megax' | 'megay';
+/**
+ * Attacker's own transformation this turn; results exist for each mode it can still use. `z` spends the
+ * Z-Power, which transforms the move rather than the Pokémon. Mirrors tools/analysis-calc.ts.
+ */
+export type AnalysisCalcMode = '' | 'tera' | 'mega' | 'megax' | 'megay' | 'z';
 
 export interface AnalysisCalcMoveResult {
 	attacker: AnalysisCalcPokemonRef;

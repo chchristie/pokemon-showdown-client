@@ -5,8 +5,11 @@
  *
  * Tooltip types:
  * - `analysispokemon|SIDE|TEAMINDEX`: Pokémon tooltip with full request data for either side.
- * - `analysismove|MOVEID|SIDE|ACTIVESLOT`: move button; calcs for all potential targets.
- * - `analysischoice|MOVEID|SIDE|ACTIVESLOT`: choice-summary cell; calcs for the chosen targets only.
+ * - `analysismove|MOVEID|SIDE|ACTIVESLOT[|zmove]`: move button; calcs for all potential targets.
+ * - `analysischoice|MOVEID|SIDE|ACTIVESLOT[|zmove]`: choice-summary cell; calcs for the chosen targets only.
+ *
+ * `MOVEID` is always the base move, even for a Z-move: `BattleTooltips` builds the Z-move from the base
+ * move and the held crystal, and the calc results are keyed by the base move too.
  */
 import { BattleTooltips } from '../../play.pokemonshowdown.com/src/battle-tooltips';
 import { BattleLog } from '../../play.pokemonshowdown.com/src/battle-log';
@@ -60,7 +63,7 @@ export class AnalysisTooltips extends BattleTooltips {
 			const pokemon = this.battle.sides[sideIndex]?.active[slot];
 			const serverPokemon = this.serverTeam(sideIndex)?.filter(candidate => candidate.active)[slot];
 			if (!pokemon || !serverPokemon) return false;
-			buf = this.showMoveTooltip(move, 'move', pokemon, serverPokemon);
+			buf = this.showMoveTooltip(move, args[4] === 'zmove' ? 'zmove' : 'move', pokemon, serverPokemon);
 			buf += this.renderCalcLines(sideIndex, slot, move, args[0] === 'analysischoice' ? 'selected' : 'hover');
 			break;
 		}

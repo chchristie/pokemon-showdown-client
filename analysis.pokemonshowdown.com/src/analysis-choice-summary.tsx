@@ -20,8 +20,9 @@ export function AnalysisChoiceSummaryView(props: {
 	return <div class="analysis-choice-summary-wrap">{positions.map(position => {
 		const choice = props.choices.find(entry => entry.side === position.side && entry.slot === position.slot);
 		if (!choice) return <div class="analysis-choice-summary" aria-hidden="true" />;
+		const zSuffix = choice.zMove ? '|zmove' : '';
 		const tooltip = props.tooltips && choice.moveId ?
-			`analysischoice|${choice.moveId}|${choice.side === 'p1' ? 0 : 1}|${choice.slot}` : undefined;
+			`analysischoice|${choice.moveId}|${choice.side === 'p1' ? 0 : 1}|${choice.slot}${zSuffix}` : undefined;
 		const { onSelect } = props;
 		const classes = `analysis-choice-summary${tooltip ? ' has-tooltip' : ''}${onSelect ? ' analysis-choice-selectable' : ''}`;
 		return <div

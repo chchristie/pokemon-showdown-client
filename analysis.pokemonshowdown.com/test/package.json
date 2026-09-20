@@ -12,7 +12,8 @@
 		"setup": "node setup.js",
 		"replay": "node replay.js",
 		"export": "node export.js",
-		"autosave": "node autosave.js"
+		"autosave": "node autosave.js",
+		"zmove": "node zmove.js"
 	},
 	"dependencies": {
 		"puppeteer-core": "^25.0.0"

@@ -66,6 +66,21 @@ function pokemonLabel(pokemon: any) {
 }
 
 /**
+ * Name, type and target for a Z-move, built the way the battle client's move menu builds them
+ * (`renderMoveControls` in panel-battle.tsx). A status move's Z version is not a real move — the sim
+ * names it "Z-Splash" — so it falls back to the base move and keeps the prefix. `zMove` is one entry of
+ * the request's `zMoves`.
+ */
+function getZMoveData(move: any, zMove: any) {
+	const dex = (window as any).Dex;
+	const special = dex?.moves?.get(zMove.name);
+	const data = special?.exists ? special : dex?.moves?.get(move.id || move.name || move.move);
+	let name = data?.name || zMove.name;
+	if (String(zMove.name).startsWith('Z-') && !name.startsWith('Z-')) name = `Z-${name}`;
+	return { name, type: data?.type || 'Normal', target: zMove.target || data?.target || 'normal' };
+}
+
+/**
  * How the Simulation Outcomes list scrolls after a render:
  * - anchor: keep the outcome at the same on-screen position (selecting it can resize it and the previous selection)
  * - reveal: scroll the least amount needed to show the outcome (Prev/Next)
@@ -1737,10 +1752,12 @@ class AnalysisApp extends preact.Component {
 			const { choiceSide } = this.draft;
 			const current = this.draft.builders[side]?.current;
 			if (!current || choiceSide?.side !== side || choiceSide.index !== slot) return '';
-			return current.tera ? 'tera' : current.megax ? 'megax' : current.megay ? 'megay' : current.mega ? 'mega' : '';
+			return current.tera ? 'tera' : current.megax ? 'megax' : current.megay ? 'megay' :
+				current.mega ? 'mega' : current.z ? 'z' : '';
 		}
 		const choice = this.draft.moveChoicesBySlot[side][slot] || '';
 		if (/\bterastallize\b/.test(choice)) return 'tera';
+		if (/\bzmove\b/.test(choice)) return 'z';
 		const mega = /\b(megax|megay|mega)\b/.exec(choice);
 		return mega ? mega[1] as AnalysisCalcMode : '';
 	};
@@ -2642,24 +2659,33 @@ class AnalysisApp extends preact.Component {
 		if (builder.current.move || pendingTarget) {
 			return this.renderTargetChoices(tab, side, choiceIndex, builder, pendingTarget);
 		}
-		const toggle = (key: 'mega' | 'megax' | 'megay' | 'tera') => {
+		type MoveModifier = 'mega' | 'megax' | 'megay' | 'z' | 'tera';
+		const toggle = (key: MoveModifier) => {
 			builder.current[key] = !builder.current[key];
 			this.forceUpdate();
 		};
-		const megaOption = (key: 'mega' | 'megax' | 'megay' | 'tera', label: string) =>
+		const megaOption = (key: MoveModifier, label: string) =>
 			<label class={`megaevo${builder.current[key] ? ' cur' : ''}`}>
 				<input type="checkbox" checked={builder.current[key]} onChange={() => toggle(key)} /> {label}
 			</label>;
+		/*
+		 * With Z-Power checked the menu shows Z-moves instead, one per move slot, as the battle client's
+		 * move menu does. `zMoves` is filled in by the analysis server from the sim's `canZMove`; a null
+		 * entry is a move with no Z version, which gets a blank button.
+		 */
+		const zMoves: (any[] | null) = builder.current.z ? (active.zMoves || null) : null;
 		return <div class="analysis-choice-controls"><div class="analysis-action-controls">
 			<div class="movecontrols">
 				<h3 class="moveselect">Attack</h3>
 				<div class="movemenu">{active.moves.map((move: any, index: number) =>
-					this.renderMoveButton(tab, side, choiceIndex, move, index))}</div>
-				{(active.canMegaEvo || active.canMegaEvoX || active.canMegaEvoY || active.canTerastallize) &&
+					this.renderMoveButton(tab, side, choiceIndex, move, index, zMoves?.[index] || null))}</div>
+				{(active.canMegaEvo || active.canMegaEvoX || active.canMegaEvoY || active.zMoves ||
+					active.canTerastallize) &&
 					<div class="megaevo-box">
 						{active.canMegaEvo && megaOption('mega', 'Mega Evolution')}
 						{active.canMegaEvoX && megaOption('megax', 'Mega Evolution X')}
 						{active.canMegaEvoY && megaOption('megay', 'Mega Evolution Y')}
+						{active.zMoves && megaOption('z', 'Z-Power')}
 						{active.canTerastallize && megaOption('tera', 'Terastallize')}
 					</div>}
 			</div>
@@ -2682,18 +2708,24 @@ class AnalysisApp extends preact.Component {
 		</div></div>;
 	}
 
-	renderMoveButton(tab: AnalysisTab, side: AnalysisSideID, choiceIndex: number, move: any, index: number) {
+	renderMoveButton(
+		tab: AnalysisTab, side: AnalysisSideID, choiceIndex: number, move: any, index: number, zMove: any = null
+	) {
 		const builder = this.draft.builders[side]!;
-		const moveData = this.getMoveData(move);
+		// Z-Power is on but this move has no Z version: a blank button, as the battle client's menu has
+		if (builder.current.z && !zMove) return <button class="movebutton" disabled>&nbsp;</button>;
+		const moveData = zMove ? getZMoveData(move, zMove) : this.getMoveData(move);
 		const onClick = () => {
 			const targetType = moveData.target;
 			const validTargets = this.getTargetCandidates(tab, side, choiceIndex, targetType);
 			const multiBattle = tab.gameType !== 'singles';
 			const explicitTarget = ['adjacentAlly', 'adjacentAllyOrSelf', 'any', 'adjacentFoe'].includes(targetType);
 			const needsTarget = validTargets.length > 1 || (validTargets.length === 1 && multiBattle && explicitTarget);
+			// same order as `BattleChoiceBuilder.moveSpecial`; the sim accepts only one of them at a time
 			const modifiers = [
 				builder.current.mega && ' mega', builder.current.megax && ' megax',
-				builder.current.megay && ' megay', builder.current.tera && ' terastallize',
+				builder.current.megay && ' megay', builder.current.z && ' zmove',
+				builder.current.tera && ' terastallize',
 			].filter(Boolean).join('');
 			const choice = `move ${index + 1}${modifiers}`;
 			if (needsTarget) {
@@ -2706,13 +2738,16 @@ class AnalysisApp extends preact.Component {
 				this.finishActionSelection(tab);
 			}
 		};
+		// the tooltip is always keyed by the base move: `BattleTooltips` builds the Z-move from it
+		const zSuffix = zMove ? '|zmove' : '';
+		const tooltip = `analysismove|${move.id || move.move || move.name}|${sideIndex(side)}|${choiceIndex}${zSuffix}`;
 		return <button
 			class={`movebutton has-tooltip type-${moveData.type}`} disabled={!!move.disabled} onClick={onClick}
-			data-tooltip={`analysismove|${move.id || move.move || move.name}|${sideIndex(side)}|${choiceIndex}`}
+			data-tooltip={tooltip}
 		>
 			{moveData.name}<br />
 			<small class="type">{moveData.type} <span class="effectiveness-icon"></span></small>{' '}
-			<small class="pp">{move.pp ?? ''}/{move.maxpp ?? ''}</small>&nbsp;
+			<small class="pp">{zMove ? '1/1' : `${move.pp ?? ''}/${move.maxpp ?? ''}`}</small>&nbsp;
 		</button>;
 	}
 
@@ -2892,8 +2927,12 @@ class AnalysisApp extends preact.Component {
 					if (/\bterastallize\b/.test(moveChoice)) modifiers.push('Terastallize');
 					if (/\bmega(?:x|y)?\b/.test(moveChoice)) modifiers.push('Mega-Evolve');
 					if (/\b(?:dynamax|max)\b/.test(moveChoice)) modifiers.push('Dynamax');
-					const moveName = move.name || move.move || (window as any).Dex.moves.get(move.id).name || 'Move';
-					const targetType = this.getMoveData(move).target;
+					// a Z-move is named rather than flagged, and it can target differently from its base move
+					const zMove = /\bzmove\b/.test(moveChoice) ? active.zMoves?.[moveIndex] : null;
+					const zMoveData = zMove ? getZMoveData(move, zMove) : null;
+					const moveName = zMoveData?.name ||
+						move.name || move.move || (window as any).Dex.moves.get(move.id).name || 'Move';
+					const targetType = zMoveData?.target || this.getMoveData(move).target;
 					const targetMatch = /(?:^|\s)([+-]\d+)(?:\s|$)/.exec(moveChoice);
 					if (tab.gameType !== 'singles' && targetType !== 'self' && targetMatch) {
 						const targetLoc = Number(targetMatch[1]);
@@ -2913,6 +2952,7 @@ class AnalysisApp extends preact.Component {
 				choices.push({
 					side, slot, action,
 					moveId: moveChoice && move ? move.id : undefined,
+					zMove: moveChoice ? /\bzmove\b/.test(moveChoice) : undefined,
 					pokemon: pokemonLabel(pokemon),
 					targetPokemon: targetPokemon ? pokemonLabel(targetPokemon) || targetPokemon : undefined,
 				});

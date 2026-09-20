@@ -33,6 +33,7 @@ npm run setup            # Set Up Position (setup.js)
 npm run replay           # Import Replay (replay.js)
 npm run export           # Export and Import Analysis (export.js)
 npm run autosave         # reopening the open tabs after a reload (autosave.js)
+npm run zmove            # gen 7 action menu: Z-moves, and Megas starting unevolved (zmove.js)
 ```
 
 Server-side edit logic (what gets written to the sim and which protocol lines are emitted) has its own mocha test in the server repo: `npx mocha --no-config --exit test/main.js test/tools/analysis/edits.js`. The API's **HTTP layer** — CORS, the body cap, the rate limit, routing — is `test/tools/analysis/server.js` there.
@@ -84,6 +85,25 @@ Damage calc tooltips (docs/analysis/plan.md, Phase 1), with the same team as the
    - Hovering Earthquake shows 3 lines (both foes plus the ally), including the Levitate zero-damage text.
    - Hovering Dragon Tail shows 2 lines (foes only).
    - After choosing Dragon Tail on one target, the summary cell shows 1 line.
+
+## What `zmove.js` covers
+
+The gen 7 action menu, with one team holding a Charizardite X and an Electrium Z
+(docs/analysis/overview.md, "Transformations in the action menu"):
+
+1. **A Mega starts unevolved.** The teambuilder stores Mega Charizard X as `Charizard-Mega-X`, and a battle
+   has to start from Charizard with the stone. The log must not name the Mega, and the action menu must
+   still offer **Mega Evolution** — a menu with no checkbox is exactly what the bug looked like.
+2. **The Z-Power checkbox** appears for the crystal holder and for nobody else.
+3. **Ticking it swaps the move menu** to the Z-moves, with blank disabled buttons where a move has no Z
+   version (Electrium Z powers up the two Electric moves and neither of the others).
+4. **The tooltip and the calc are the Z-move's** — `Gigavolt Havoc (175 BP)`, not Thunderbolt's.
+5. **The chosen action names the Z-move** in the summary, whose own calc follows it.
+6. **Submitting plays the turn with it**, which is the assertion that the choice line the menu builds is one
+   the sim actually runs as a Z-move.
+
+`openActionMenu` treats an already-open menu as success, so the suite cancels p1's menu before opening
+p2's — otherwise the Z-Power step reads Charizard's menu and reports a missing checkbox.
 
 ## What `turn-events.js` covers
 
