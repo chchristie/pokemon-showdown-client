@@ -7,6 +7,7 @@ import { BattleSound } from '../../play.pokemonshowdown.com/src/battle-sound';
 import { Teams } from '../../play.pokemonshowdown.com/src/battle-teams';
 import {
 	FORMATS, LAYOUT, getRenderedLog, getRenderedLogTail, getReplayStartTurn, getRequestState,
+	registerFormatNames, type AnalysisFormat,
 	isPlaceholderPokemon,
 	type AnalysisBattle, type AnalysisCalcMode, type AnalysisCalcState, type AnalysisChoiceSummary,
 	type AnalysisEdits, type AnalysisGroupingMode, type AnalysisMidTurnSwitchOption, type AnalysisNode,
@@ -14,9 +15,10 @@ import {
 	type AnalysisTeamEdit, type LocalTeam, type PlaybackStage, type StartMode,
 } from './analysis-model';
 import {
-	AnalysisTeamValidationError, getAnalysisVersion, runAnalysis, runAnalysisBatch, runAnalysisCalc,
-	runAnalysisSetup, type AnalysisStartResponse,
+	AnalysisTeamValidationError, getAnalysisFormats, getAnalysisVersion, runAnalysis, runAnalysisBatch,
+	runAnalysisCalc, runAnalysisSetup, type AnalysisStartResponse,
 } from './analysis-api';
+import { AnalysisFormatPicker, AnalysisTeamPicker } from './analysis-pickers';
 import {
 	downloadAnalysisExport, parseAnalysisExport, stalenessWarning, tabFromAnalysisExport,
 	type AnalysisExport,
@@ -103,6 +105,8 @@ class AnalysisApp extends preact.Component {
 	 * import has nothing to compare.
 	 */
 	serverCommit = '';
+	/** every format the server offers; `FORMATS` until the call lands, and if it never does */
+	formats: AnalysisFormat[] = FORMATS.map(entry => ({ ...entry, section: 'Formats', column: 0 }));
 	/** developer panels, behind the header's settings popup; remembered across reloads */
 	debugMode = loadDebugMode();
 	settingsOpen = false;
@@ -147,7 +151,18 @@ class AnalysisApp extends preact.Component {
 		void getAnalysisVersion().then(commit => {
 			this.serverCommit = commit;
 		});
-		window.addEventListener('message', this.receiveStorageMessage);
+		/*
+		 * The real format list. Registered as well as stored, because a format's *name* is wanted where
+		 * there is no picker — a tab's label, an export's filename — and those have to work for any format,
+		 * not just the ones `FORMATS` names.
+		 */
+		void getAnalysisFormats().then(formats => {
+			if (!formats.length) return;
+			this.formats = formats;
+			registerFormatNames(formats);
+			this.updateTeamChoices();
+			this.forceUpdate();
+		});
 		window.addEventListener('resize', this.updateLayout);
 		this.updateLayout();
 		this.openHome();
@@ -189,14 +204,6 @@ class AnalysisApp extends preact.Component {
 			frame?.css('transform', `scale(${this.layout.battleHeight / 360})`);
 		}
 		this.forceUpdate();
-	};
-
-	receiveStorageMessage = (event: MessageEvent) => {
-		if (event.origin !== 'https://play.pokemonshowdown.com' || typeof event.data !== 'string') return;
-		if (event.data.startsWith('t')) {
-			this.loadTeamsFromPacked(event.data.slice(1));
-			this.forceUpdate();
-		}
 	};
 
 	/*********************************************************
@@ -1101,18 +1108,15 @@ class AnalysisApp extends preact.Component {
 		this.updateTeamChoices();
 	}
 
-	loadTeamsFromPlay = () => {
-		const iframe = document.createElement('iframe');
-		iframe.hidden = true;
-		const query = [
-			`host=${encodeURIComponent(location.hostname)}`,
-			`path=${encodeURIComponent(location.pathname.slice(1))}`,
-			`protocol=${encodeURIComponent(location.protocol)}`,
-		].join('&');
-		iframe.src = `https://play.pokemonshowdown.com/crossdomain.php?${query}`;
-		document.body.appendChild(iframe);
-		setTimeout(() => iframe.remove(), 3000);
-	};
+	/**
+	 * Whether the teams half of the start form is answered. The two ways of giving them are alternatives,
+	 * so pasted syntax has to satisfy this on its own — before, the submit button was gated on the saved
+	 * team pickers whatever was pasted, which left the syntax path unusable with no saved teams.
+	 */
+	teamsReady() {
+		if (this.showSyntaxImport) return !!this.teamSyntax1.trim() && !!this.teamSyntax2.trim();
+		return !!this.team1 && !!this.team2;
+	}
 
 	updateTeamChoices() {
 		const matchingTeams = this.teams.filter(team => !team.format || team.format === this.format);
@@ -1124,8 +1128,42 @@ class AnalysisApp extends preact.Component {
 		}
 	}
 
-	openHome = () => {
+	/**
+	 * Drops everything that belongs to the tab on screen rather than to the app: the rendered battle and
+	 * its listeners, the panels layered over it, the draft choices, and any request still in flight.
+	 *
+	 * All of this lives on the component rather than on the tab, because only one tab is ever shown. That
+	 * makes leaving a tab the only moment it can be cleared — closing one used to remove it from the list
+	 * and nothing else, so the battle stayed rendered and the next tab inherited the old tab's draft,
+	 * forms and calcs.
+	 */
+	leaveCurrentTab() {
+		// a reply for a tab that no longer exists would land on whatever is shown next
+		this.calcAbortController?.abort();
+		this.calcAbortController = null;
+		this.simulationAbortController?.abort();
+		this.simulationAbortController = null;
 		this.destroyBattle();
+		this.teamForm.close();
+		// plain state holders with no reset of their own, so a fresh one is the reset
+		this.fieldForm = new AnalysisFieldFormState();
+		this.pokemonForm = new AnalysisPokemonFormState();
+		this.editPokemon = null;
+		this.editError = '';
+		this.editProblems = null;
+		this.startError = '';
+		this.calcs = null;
+		this.pendingHydration = null;
+		this.analysisTeams = [];
+		this.draft.reset(undefined, '');
+		this.showMoreFieldEffects = false;
+		this.oneTurnStartTurn = null;
+		this.pendingOutcomeScroll = null;
+		this.simulationGroupElements = {};
+	}
+
+	openHome = () => {
+		this.leaveCurrentTab();
 		this.activeTab = null;
 		this.mode = null;
 		this.forceUpdate();
@@ -1134,8 +1172,15 @@ class AnalysisApp extends preact.Component {
 	closeTab = (event: Event, id: string) => {
 		event.preventDefault();
 		event.stopPropagation();
+		/*
+		 * Only tear down when the tab being closed is the one on screen. Closing a background tab must
+		 * leave the shown tab's battle and draft alone; `battleTabId` is checked as well because the
+		 * renderer can outlive a tab switch that hasn't rebuilt yet.
+		 */
+		const wasShown = this.activeTab === id || this.battleTabId === id;
 		this.tabs = this.tabs.filter(tab => tab.id !== id);
 		if (this.activeTab === id) this.activeTab = this.tabs[this.tabs.length - 1]?.id || null;
+		if (wasShown) this.leaveCurrentTab();
 		this.forceUpdate();
 	};
 
@@ -1707,7 +1752,6 @@ class AnalysisApp extends preact.Component {
 
 	override componentWillUnmount() {
 		this.destroyBattle();
-		window.removeEventListener('message', this.receiveStorageMessage);
 		window.removeEventListener('resize', this.updateLayout);
 	}
 
@@ -1726,6 +1770,12 @@ class AnalysisApp extends preact.Component {
 		if (this.mode === 'teams' && this.showSyntaxImport) {
 			this.team1 = packTeamSyntax(this.teamSyntax1);
 			this.team2 = packTeamSyntax(this.teamSyntax2);
+			// unparseable syntax packs to nothing, which would otherwise fall into the silent return below
+			if (!this.team1 || !this.team2) {
+				this.startError = "Couldn't read those teams. Paste an exported Pokemon Showdown team into each box.";
+				this.forceUpdate();
+				return;
+			}
 		}
 		if (this.mode === 'teams' && (!this.team1 || !this.team2)) return;
 		if (this.mode === 'replay' && !this.replayURL && !this.replayFileLog) {
@@ -2175,22 +2225,48 @@ class AnalysisApp extends preact.Component {
 	}
 
 	renderHome() {
-		return <div class="analysis-home">
-			<h1>Battle Analysis</h1>
-			<p>Build branches from a battle position, inspect choices, and compare possible next turns.</p>
+		/* Four ways in, ordered from building a position by hand to opening one somebody already has. */
+		const options: { mode: StartMode, title: string, blurb: string, icon: string }[] = [
+			{
+				mode: 'setup', title: 'Set Up Position', icon: 'fa-th',
+				blurb: 'Choose a format and manually specify the game state.',
+			},
+			{
+				mode: 'teams', title: 'New Analysis From Teams', icon: 'fa-users',
+				blurb: 'Choose a format and two teams and play a game against yourself from the start.',
+			},
+			{
+				mode: 'replay', title: 'Import Replay', icon: 'fa-file-video-o',
+				blurb: 'Load a replay from URL or an exported replay file. The engine recreates the battle ' +
+					'at each turn from the replay.',
+			},
+			{
+				mode: 'analysis', title: 'Import Analysis', icon: 'fa-folder-open-o',
+				blurb: 'Open an analysis file you exported earlier.',
+			},
+		];
+		/*
+		 * Opening a form shrinks the header, exactly as the Pokédex does once results appear
+		 * (`.pokedex.aboveresults h1`). Without it the 36pt title plus the cards plus a form is taller
+		 * than most windows, and the whole page has to scroll to reach the submit button.
+		 */
+		return <div class={`analysis-home${this.mode ? ' analysis-home-compact' : ''}`}>
+			<div class="analysis-home-intro">
+				<h1>Battle Analysis</h1>
+				<p>
+					Play a battle out along different lines: branch at any decision, simulate
+					the possible outcomes a turn can produce, and replay real games.
+				</p>
+			</div>
 			<div class="analysis-options">
-				<button class="button analysis-option" onClick={() => this.openMode('setup')}>
-					<strong>Set Up Position</strong><small>Choose a format and begin from a manual position.</small>
-				</button>
-				<button class="button analysis-option" onClick={() => this.openMode('analysis')}>
-					<strong>Import Analysis</strong><small>Open an analysis file you exported earlier.</small>
-				</button>
-				<button class="button analysis-option" onClick={() => this.openMode('replay')}>
-					<strong>Import Replay</strong><small>Load a replay URL or prepare an uploaded replay file.</small>
-				</button>
-				<button class="button analysis-option" onClick={() => this.openMode('teams')}>
-					<strong>New Analysis From Teams</strong><small>Choose a format and two local teams.</small>
-				</button>
+				{options.map(option => <button
+					key={option.mode} class="button analysis-option" onClick={() => this.openMode(option.mode)}
+					aria-current={this.mode === option.mode ? 'true' : undefined}
+				>
+					<i class={`fa ${option.icon} analysis-option-icon`} aria-hidden="true"></i>
+					<strong>{option.title}</strong>
+					<small>{option.blurb}</small>
+				</button>)}
 			</div>
 			{this.mode && this.renderStartForm()}
 		</div>;
@@ -2203,11 +2279,16 @@ class AnalysisApp extends preact.Component {
 			const stale = this.analysisFile ? stalenessWarning(this.analysisFile, this.serverCommit) : '';
 			return <form class="analysis-form" onSubmit={onSubmit}>
 				<h2>Import Analysis</h2>
-				<p>Opens an analysis saved with <strong>Export</strong>, at the turn it was saved on.</p>
-				<label>Analysis file<input
-					type="file" accept=".json,application/json"
-					onChange={event => void this.readAnalysisFile(event.target as HTMLInputElement)}
-				/></label>
+				<p class="analysis-form-lead">
+					Opens an analysis saved with <strong>Export</strong>.
+				</p>
+				<label class="analysis-field">
+					<span class="analysis-field-label">Analysis file</span>
+					<input
+						type="file" accept=".json,application/json"
+						onChange={event => void this.readAnalysisFile(event.target as HTMLInputElement)}
+					/>
+				</label>
 				{this.analysisFile && <p class="analysis-field-note">
 					Loaded <strong>{this.analysisFileName}</strong>{' '}
 					({Object.keys(this.analysisFile.tab.nodes).length} nodes
@@ -2216,110 +2297,123 @@ class AnalysisApp extends preact.Component {
 				{/* Said here as well as on the tab, so it can be weighed before the analysis is even opened. */}
 				{stale && <p class="message-error">{stale}</p>}
 				{this.startError && <p class="message-error">{this.startError}</p>}
-				<button class="button" type="submit" disabled={this.starting || !this.analysisFile}>
-					{this.starting ? 'Opening…' : 'Open Analysis'}
-				</button>
-				<button class="button" type="button" onClick={this.openHome}>Cancel</button>
+				<div class="analysis-form-actions">
+					<button class="button analysis-form-go" type="submit" disabled={this.starting || !this.analysisFile}>
+						{this.starting ? 'Opening…' : 'Open Analysis'}
+					</button>
+					<button class="button" type="button" onClick={this.openHome}>Cancel</button>
+				</div>
 			</form>;
 		}
 		if (this.mode === 'replay') {
 			return <form class="analysis-form" onSubmit={onSubmit}>
 				<h2>Import Replay</h2>
-				<label>
-					Replay URL{' '}
+				<p class="analysis-form-lead">
+					Create an analysis from a replay of a past battle. The teams are inferred from the replay and any missing information can be completed manually.
+				</p>
+				<label class="analysis-field">
+					<span class="analysis-field-label">Replay URL</span>
 					<input
 						type="text" value={this.replayURL} placeholder="https://replay.pokemonshowdown.com/..."
 						onInput={event => { this.replayURL = (event.target as HTMLInputElement).value; }}
 					/>
 				</label>
-				<label>Replay HTML file<input
-					type="file" accept=".html,.log,.json"
-					onChange={event => void this.readReplayFile(event.target as HTMLInputElement)}
-				/></label>
+				{/* the two inputs are alternatives, and the file wins where both are given */}
+				<div class="analysis-field-or"><span>or</span></div>
+				<label class="analysis-field">
+					<span class="analysis-field-label">Replay file</span>
+					<input
+						type="file" accept=".html,.log,.json"
+						onChange={event => void this.readReplayFile(event.target as HTMLInputElement)}
+					/>
+				</label>
 				{/* reading the file is async, so say when it's ready rather than failing on an early click */}
 				{this.replayFileLog && <p class="analysis-field-note">
 					Loaded <strong>{this.replayFileName}</strong> ({this.replayFileLog.length} lines).
 				</p>}
 				{this.startError && <p class="message-error">{this.startError}</p>}
-				<button class="button" type="submit" disabled={this.starting}>
-					{this.starting ? 'Reading replay…' : 'Open Replay Analysis'}
-				</button>
-				<button class="button" type="button" onClick={this.openHome}>Cancel</button>
+				<div class="analysis-form-actions">
+					<button class="button analysis-form-go" type="submit" disabled={this.starting}>
+						{this.starting ? 'Reading replay…' : 'Open Replay Analysis'}
+					</button>
+					<button class="button" type="button" onClick={this.openHome}>Cancel</button>
+				</div>
 			</form>;
 		}
 		return <form class="analysis-form" onSubmit={onSubmit}>
 			<h2>{this.mode === 'teams' ? 'New Analysis From Teams' : 'Set Up Position'}</h2>
-			{this.mode === 'setup' && <p>
-				Starts at Turn 1 with a placeholder Pokémon on each side of the field. Click one to build it,
-				and the trainer sprite to build the rest of that team.
-			</p>}
-			<p>
-				<label class="label">Format:</label>
-				<select
-					class="select formatselect" value={this.format}
-					onChange={event => {
-						this.format = (event.target as HTMLSelectElement).value;
+			<p class="analysis-form-lead">{this.mode === 'setup' ?
+				'Starts at Turn 1 with placeholder Pokémon. Manually set up the rest of the battle.' :
+				'Starts at Team Preview with both teams under your control, so you can play the game out ' +
+				'from the beginning.'}</p>
+			<div class="analysis-field">
+				<span class="analysis-field-label">Format</span>
+				<AnalysisFormatPicker
+					formats={this.formats} value={this.format}
+					onChange={format => {
+						this.format = format;
 						this.updateTeamChoices();
 						this.forceUpdate();
 					}}
-				>{FORMATS.map(format => <option value={format.id}>{format.name}</option>)}</select>
-			</p>
+				/>
+			</div>
+			{/*
+				* Two ways to give the teams, and only one is in force at a time: the saved-team pickers, or
+				* a pair of pasted teams. Whichever isn't chosen is dimmed and its controls disabled, so the
+				* "or" between them is a real state rather than a label.
+				*/}
 			{this.mode === 'teams' && <div>
-				<button class="button" type="button" onClick={this.loadTeamsFromPlay}>Load teams from Play</button>
-				<button
-					class="button" type="button"
-					onClick={() => { this.showSyntaxImport = !this.showSyntaxImport; this.forceUpdate(); }}
-				>Import team syntax</button>
-				{this.showSyntaxImport && <div>
-					<label>
-						Team 1 syntax{' '}
+				<div class={`analysis-team-choice${this.showSyntaxImport ? ' analysis-choice-off' : ''}`}>
+					{this.renderTeamSelect('Team 1', this.team1, value => { this.team1 = value; }, this.showSyntaxImport)}
+					{this.renderTeamSelect('Team 2', this.team2, value => { this.team2 = value; }, this.showSyntaxImport)}
+				</div>
+				<div class="analysis-field-or"><span>or</span></div>
+				<div class="analysis-form-tools">
+					<button
+						class="button" type="button" aria-expanded={this.showSyntaxImport}
+						onClick={() => { this.showSyntaxImport = !this.showSyntaxImport; this.forceUpdate(); }}
+					>{this.showSyntaxImport ? 'Use saved teams' : 'Import teams'}</button>
+				</div>
+				{this.showSyntaxImport && <div class="analysis-syntax-grid">
+					<label class="analysis-field">
+						<span class="analysis-field-label">Team 1</span>
 						<textarea
 							value={this.teamSyntax1} placeholder="Paste a standard exported Pokemon Showdown team here"
 							onInput={event => { this.teamSyntax1 = (event.target as HTMLTextAreaElement).value; }}
 						/>
 					</label>
-					<label>
-						Team 2 syntax{' '}
+					<label class="analysis-field">
+						<span class="analysis-field-label">Team 2</span>
 						<textarea
 							value={this.teamSyntax2} placeholder="Paste a standard exported Pokemon Showdown team here"
 							onInput={event => { this.teamSyntax2 = (event.target as HTMLTextAreaElement).value; }}
 						/>
 					</label>
 				</div>}
-				{this.renderTeamSelect('Team 1', this.team1, value => { this.team1 = value; })}
-				{this.renderTeamSelect('Team 2', this.team2, value => { this.team2 = value; })}
 			</div>}
 			{this.startError && <p class="message-error">{this.startError}</p>}
-			<button
-				class="button" type="submit"
-				disabled={this.starting || (this.mode === 'teams' && (!this.team1 || !this.team2))}
-			>{this.starting ? 'Starting...' : (this.mode === 'setup' ? 'Set Up Position' : 'Start Analysis')}</button>
-			<button class="button" type="button" onClick={this.openHome}>Cancel</button>
+			<div class="analysis-form-actions">
+				<button
+					class="button analysis-form-go" type="submit"
+					disabled={this.starting || (this.mode === 'teams' && !this.teamsReady())}
+				>{this.starting ? 'Starting...' : (this.mode === 'setup' ? 'Set Up Position' : 'Start Analysis')}</button>
+				<button class="button" type="button" onClick={this.openHome}>Cancel</button>
+			</div>
 		</form>;
 	}
 
-	renderTeamSelect(label: string, selected: string, onChange: (value: string) => void) {
+	renderTeamSelect(label: string, selected: string, onChange: (value: string) => void, disabled = false) {
 		const teams = this.teams.filter(team => !team.format || team.format === this.format);
-		const selectedTeam = teams.find(team => team.packedTeam === selected);
-		const species = selectedTeam?.packedTeam ? Teams.unpackSpeciesOnly(selectedTeam.packedTeam) : [];
-		const id = `analysis-${label.replace(/\s+/g, '-').toLowerCase()}`;
-		return <p>
-			<label class="label" for={id}>{label}:</label>
-			<select
-				id={id} name="team" class="select teamselect" value={selected} disabled={!teams.length}
-				onChange={event => {
-					onChange((event.target as HTMLSelectElement).value);
+		return <div class="analysis-field">
+			<span class="analysis-field-label">{label}</span>
+			<AnalysisTeamPicker
+				teams={teams} value={selected} label={label} disabled={disabled}
+				onChange={value => {
+					onChange(value);
 					this.forceUpdate();
 				}}
-			>
-				{!teams.length && <option value="">No local teams</option>}
-				{teams.map(team => <option value={team.packedTeam}>{team.name}</option>)}
-			</select>
-			{selectedTeam && <span class="analysis-team-preview">
-				<strong>{selectedTeam.name}</strong>
-				<small>{species.map(pokemon => <PSIcon pokemon={pokemon} />)}</small>
-			</span>}
-		</p>;
+			/>
+		</div>;
 	}
 
 	/*********************************************************

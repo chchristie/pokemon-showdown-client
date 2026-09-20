@@ -404,7 +404,8 @@ async function badFile() {
 		const state = await page.evaluate(() => ({
 			openDisabled: [...document.querySelectorAll('.analysis-form button')]
 				.find(button => /Open Analysis/.test(button.textContent))?.disabled,
-			tabs: document.querySelectorAll('.analysis-tab').length,
+			// the header's own class: an open analysis is a closable room tab, Home is not
+			tabs: document.querySelectorAll('.roomtab.closable').length,
 		}));
 		expect(state.openDisabled === true, 'Open Analysis should stay disabled for a file that failed to read');
 		expect(!state.tabs, `a refused file should open no tab, saw ${state.tabs}`);

@@ -501,6 +501,57 @@ export interface LocalTeam {
 	packedTeam: string;
 }
 
+/** One format the pickers can start an analysis in (server `/analysis/formats`). */
+export interface AnalysisFormat {
+	id: string;
+	name: string;
+	/** the heading it sits under, as `formats.ts` groups them */
+	section: string;
+	/** which column of the menu it belongs in, as the play client's format menu lays them out */
+	column: number;
+}
+
+/**
+ * Every format the server offered, by id, filled in once at startup (`registerFormatNames`).
+ *
+ * It exists because a format's *name* is wanted in places that never see the picker — a tab's label, an
+ * export's filename — and those have to work for any of the 300-odd formats, not just the handful
+ * `FORMATS` lists. The play client solves this with the `BattleFormats` global, which is populated by its
+ * server connection's `|formats|` message; this page has no connection, so it asks the analysis API.
+ */
+const FORMAT_NAMES: { [id: string]: string } = {};
+
+export function registerFormatNames(formats: AnalysisFormat[]) {
+	for (const format of formats) FORMAT_NAMES[format.id] = format.name;
+}
+
+/**
+ * A format's display name: `[Gen 9] OU` for `gen9ou`.
+ *
+ * `formatName` is an imported replay's own tier, which wins because a replay's format may not be one the
+ * server offered at all. Then the registry, then the fallback list, then the raw id — which at least says
+ * something, rather than a guess.
+ */
+export function formatDisplayName(format: string, formatName?: string) {
+	return formatName || FORMAT_NAMES[format] || FORMATS.find(entry => entry.id === format)?.name || format;
+}
+
+/**
+ * The short label a room tab shows above its title, as play.pokemonshowdown.com does: the display name
+ * with its leading bracket dropped, so `[Gen 9] OU` reads `OU` and `[Champions] VGC 2026 Reg M-B` reads
+ * `VGC 2026 Reg M-B`. A name that is nothing *but* a bracket keeps the bracket's contents.
+ */
+export function formatTabLabel(format: string, formatName?: string) {
+	const name = formatDisplayName(format, formatName);
+	const match = /^\[([^\]]+)\]\s*(.*)$/.exec(name);
+	if (!match) return name;
+	return match[2] || match[1];
+}
+
+/**
+ * The formats the pickers fall back to when `/analysis/formats` can't be reached. Not the real list any
+ * more — that comes from the server — but enough to start an analysis if the call fails.
+ */
 export const FORMATS = [
 	{ id: 'gen9ou', name: '[Gen 9] OU' },
 	{ id: 'gen9doublesou', name: '[Gen 9] Doubles OU' },

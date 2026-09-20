@@ -1,6 +1,6 @@
 /** @jsx preact.h */
 import preact from '../../play.pokemonshowdown.com/js/lib/preact';
-import type { AnalysisTab } from './analysis-model';
+import { formatTabLabel, type AnalysisTab } from './analysis-model';
 import { AnalysisSettings } from './analysis-settings';
 
 interface AnalysisHeaderProps {
@@ -53,7 +53,8 @@ export function AnalysisHeader(props: AnalysisHeaderProps) {
 						onDragEnter={event => props.onDragEnter(event, tab.id)}
 						onDragEnd={props.onDragEnd}
 					>
-						<i class="text">Analysis</i><span>{tab.title}</span>
+						{/* the format above the title, as play.pokemonshowdown.com labels a battle room */}
+						<i class="text">{formatTabLabel(tab.format, tab.formatName)}</i><span>{tab.title}</span>
 					</a>
 					<button class="closebutton" name="closeRoom" value={tab.id} aria-label="Close" onClick={event => props.onCloseTab(event, tab.id)}>
 						<i class="fa fa-times-circle" aria-hidden></i>

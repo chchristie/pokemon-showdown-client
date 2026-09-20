@@ -20,26 +20,82 @@
 
 <style>
 	:root { color-scheme: light; }
-	body { background: #f1f4f6; }
+	/* on `html` too: when the page is taller than the window, the canvas below the body must not be white */
+	html, body { background: #f1f4f6; }
 	.analysis-shell { width: 100%; margin: 0; padding: 0; }
 	.analysis-panel { min-height: calc(100vh - 120px); margin: 0; padding: 0; }
 	.analysis-shell > .header { position: relative; z-index: 12; }
 	.analysis-shell > .header .nav { height: 49px; margin: 0; }
 	.analysis-shell > .header .nav .button { height: 34px; margin-top: 6px; padding-top: 7px; padding-bottom: 7px; box-sizing: border-box; font-size: 9pt; }
-	.analysis-home { max-width: 980px; margin: 30px auto; }
-	.analysis-home h1 { margin-bottom: 4px; }
-	.analysis-home > p { color: #53616b; }
-	.analysis-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; margin: 22px 0; }
-	.analysis-option { min-height: 92px; text-align: left; }
-	.analysis-option strong, .analysis-option small { display: block; }
-	.analysis-option small { margin-top: 7px; white-space: normal; color: #53616b; }
-	.analysis-form { max-width: 620px; padding: 18px; background: #fff; border: 1px solid #cbd4da; border-radius: 6px; }
-	.analysis-form label { display: block; margin: 12px 0; }
-	.analysis-form select, .analysis-form input[type="text"], .analysis-form textarea { box-sizing: border-box; width: 100%; max-width: 520px; padding: 6px; }
-	.analysis-form textarea { min-height: 190px; font: 9pt monospace; }
-	.analysis-form .button { margin-right: 6px; }
-	.analysis-team-preview { display: block; margin-top: 5px; }
-	.analysis-team-preview strong, .analysis-team-preview small { display: block; }
+	/* Home sits below the header at a fixed distance rather than being centred in the window, so the
+	   title lands in the same place whatever the window height — as the Pokédex's does. */
+	/* client.css sets `body { color: white }` for the real client's dark background image; this page
+	   overrides the background but inherits that colour, so anything here that doesn't set its own is
+	   white on light grey. Set once for the whole home screen, headings included. */
+	.analysis-home { box-sizing: border-box; max-width: 980px; margin: 0 auto; padding: 0 16px 48px; color: #26333c; }
+	.analysis-home-intro { text-align: center; }
+	/* Copied from `.pokedex h1` (pokemon-showdown-dex/theme/pokedex.css): 36pt, bold by default, and 80px
+	   clear of the header — there that padding is the whole gap, because its panel adds none of its own.
+	   The dex's 40px below the title is the gap to the next *section*, so it goes under the intro block
+	   rather than between the title and its subtitle. */
+	/* stated again rather than inherited: a bare `h1 { color }` in the remote global.css would otherwise
+	   beat the colour inherited from .analysis-home, and this selector outranks it */
+	.analysis-home h1 { margin: 0; padding: 80px 0 14px; font-size: 36pt; line-height: 1.1; color: #26333c; }
+	.analysis-home-intro p { max-width: 620px; margin: 0 auto; color: #53616b; font-size: 11pt; line-height: 1.5; }
+	/* With a form open the header gives up its room, as `.pokedex.aboveresults h1` does: the intro has been
+	   read by then, and the form is what wants the height. Transitioned for the same reason the dex does. */
+	.analysis-home h1 { transition: padding 0.2s, font-size 0.2s; }
+	.analysis-home-compact h1 { padding: 16px 0 8px; font-size: 17pt; }
+	.analysis-home-compact .analysis-home-intro p { display: none; }
+	.analysis-home-compact .analysis-options { margin-top: 18px; }
+	.analysis-home-compact .analysis-option { min-height: 0; }
+	.analysis-home-compact .analysis-option small { display: none; }
+	.analysis-options { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin: 40px 0 0; }
+	.analysis-option { display: flex; flex-direction: column; min-height: 132px; padding: 14px 13px; text-align: left; border-radius: 6px; transition: transform 0.1s, box-shadow 0.1s; }
+	.analysis-option:hover { transform: translateY(-1px); box-shadow: 0 2px 6px rgba(0, 0, 0, 0.13); }
+	.analysis-option[aria-current="true"] { border-color: #6b8299; box-shadow: inset 0 0 0 1px #6b8299; }
+	.analysis-option-icon { margin-bottom: 9px; color: #7b8b98; font-size: 15pt; }
+	.analysis-option strong { display: block; font-size: 10.5pt; }
+	.analysis-option small { display: block; margin-top: 6px; white-space: normal; color: #53616b; line-height: 1.45; }
+	.analysis-form { box-sizing: border-box; width: 100%; max-width: 620px; margin: 26px auto 0; padding: 20px 22px 18px; background: #fff; border: 1px solid #cbd4da; border-radius: 6px; box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06); text-align: left; }
+	.analysis-form h2 { margin: 0 0 6px; font-size: 15pt; font-weight: normal; color: #26333c; }
+	.analysis-form-lead { margin: 0 0 16px; color: #53616b; line-height: 1.45; }
+	.analysis-field { display: block; margin: 0 0 14px; }
+	.analysis-field-label { display: block; margin-bottom: 4px; font-weight: bold; font-size: 9pt; color: #3d4a54; }
+	.analysis-form select, .analysis-form input[type="text"], .analysis-form textarea { box-sizing: border-box; width: 100%; max-width: none; padding: 6px; }
+	.analysis-form input[type="file"] { width: 100%; }
+	.analysis-form textarea { min-height: 110px; font: 9pt monospace; }
+	/* a rule with the word sitting in the gap, so the two replay inputs read as alternatives */
+	.analysis-field-or { display: flex; align-items: center; gap: 9px; margin: 0 0 14px; color: #8794a0; font-size: 9pt; }
+	.analysis-field-or::before, .analysis-field-or::after { content: ""; flex: 1; border-top: 1px solid #dde3e8; }
+	.analysis-form-tools { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+	/* the side of an either/or that isn't in force; its controls are disabled too, so this only has
+	   to say so visually */
+	.analysis-choice-off { opacity: 0.45; }
+	/* Format and team pickers. Nearly everything here is the play client's own: `.select.formatselect`,
+	   `.select.teamselect`, `.options`/`.option`, `.teamdropdown`/`.team` and `.ps-popup` all come from
+	   client.css and client2.css, which this page loads. These rules only anchor the popup to the field and
+	   add the folding headings, which the client's menu doesn't have (see analysis-pickers.tsx). */
+	.analysis-picker { position: relative; display: block; }
+	.analysis-picker .select { width: 100%; text-align: left; }
+	.analysis-picker-popup { position: absolute; z-index: 20; top: 100%; left: 0; box-sizing: border-box; margin-top: 2px; padding: 8px; max-height: 70vh; overflow-y: auto; }
+	/* the team list is sized by `.teamdropdown .team`, so the popup only has to not squeeze it */
+	.analysis-picker-team .analysis-picker-popup { min-width: 305px; }
+	.analysis-picker-searchrow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 6px; }
+	.analysis-picker-searchrow .textbox { flex: 1 1 160px; min-width: 0; padding: 5px; }
+	.analysis-picker-gens { flex: none; white-space: nowrap; }
+	.analysis-picker-columns { overflow-x: auto; }
+	/* The format menu is centred rather than hung off the field, as the client's is: it is a `modal-popup`
+	   there, and four 225px columns do not fit under a control inside a 620px form. */
+	.analysis-format-popup { position: fixed; top: 96px; left: 50%; transform: translateX(-50%); max-width: calc(100vw - 32px); }
+	/* a heading that folds its section: styled by `.options h3`, so this only undoes the button chrome */
+	.analysis-picker-section { width: 100%; padding: 0; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+	.analysis-picker-section:hover { text-decoration: underline; }
+	.analysis-picker-popup .teamdropdown .team { margin: 1px 0; }
+	.analysis-syntax-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+	.analysis-form-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 18px; padding-top: 14px; border-top: 1px solid #e4e9ed; }
+	.analysis-form-go { font-weight: bold; }
+	.analysis-team-preview { display: block; margin-top: 5px; min-height: 26px; }
 	.analysis-team-preview .picon { display: inline-block; vertical-align: middle; margin-right: 2px; }
 	.analysis-battle-stage > .battle-controls { bottom: 0; box-sizing: border-box; overflow-y: auto; }
 	.analysis-choice-summary-wrap { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 4px 18px; min-width: 0; margin: 6px 0; overflow: hidden; font: 9pt monospace; color: #53616b; }
@@ -100,7 +156,18 @@
 	.analysis-sim-count { display: inline-flex; align-items: center; gap: 6px; margin-left: 6px; vertical-align: middle; cursor: pointer; }
 	.analysis-sim-count .analysis-number-input { width: 5em; text-align: right; cursor: text; }
 	@media (max-width: 1050px) { .analysis-options { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
-	@media (max-width: 650px) { .analysis-options { grid-template-columns: 1fr; } }
+	@media (max-width: 650px) {
+		.analysis-options { grid-template-columns: 1fr; }
+		.analysis-option { min-height: 0; }
+		.analysis-syntax-grid { grid-template-columns: 1fr; }
+		.analysis-home h1 { padding: 44px 0 12px; font-size: 24pt; }
+	}
+	/* a short window has no room for the Pokédex's generous header, so close the gap rather than
+	   pushing the options off the bottom */
+	@media (max-height: 640px) {
+		.analysis-home h1 { padding: 28px 0 12px; font-size: 22pt; }
+		.analysis-options { margin-top: 24px; }
+	}
 	#tooltipwrapper .tooltip-analysismove, #tooltipwrapper .tooltip-analysischoice { width: 440px; }
 	.analysis-node-edits { margin-bottom: 6px; }
 	.analysis-node-edits > strong, .analysis-node-edits span { display: block; }
@@ -348,6 +415,7 @@
 <script src="js/analysis-battle.js?"></script>
 <script src="js/analysis-team-utils.js?"></script>
 <script src="js/analysis-settings.js?"></script>
+<script src="js/analysis-pickers.js?"></script>
 <script src="js/analysis-header.js?"></script>
 <script src="js/analysis-choice-summary.js?"></script>
 <script src="js/analysis-turn-events.js?"></script>

@@ -179,14 +179,31 @@ async function waitForDecision(page, readyText = 'Submit Choices', timeout = 600
  * Home page -> New Analysis From Teams -> (optional format) -> Start Analysis.
  * Teams for `format` must already be in localStorage (see openAnalysisPage).
  */
+/**
+ * Picks a format in the start form's format picker.
+ *
+ * The picker is a button plus our own popup, not a `<select>` (see src/analysis-pickers.tsx), so setting a
+ * value and firing `change` does nothing: it has to be opened and an option clicked, the way a user does.
+ */
+async function chooseFormat(page, format) {
+	await page.evaluate(() => {
+		const button = document.querySelector('.analysis-picker-format button.formatselect');
+		if (!button) throw new Error('no format picker on the start form');
+		button.click();
+	});
+	// `.option` is the play client's own class, reused by the menu (src/analysis-pickers.tsx);
+	// `data-format` is ours, added so a test can name a format exactly
+	const option = `.analysis-format-popup .option[data-format="${format}"]`;
+	await page.waitForSelector(option, { timeout: 20000 });
+	await page.evaluate(selector => document.querySelector(selector).click(), option);
+	// choosing closes the menu; wait for that so a later click isn't swallowed by the popup
+	await waitFor(page, () => !document.querySelector('.analysis-picker-popup'), 'the format menu to close');
+}
+
 async function startAnalysisFromTeams(page, format) {
 	await clickButton(page, 'New Analysis From Teams');
 	if (format) {
-		await page.evaluate(formatId => {
-			const select = document.querySelector('select.formatselect');
-			select.value = formatId;
-			select.dispatchEvent(new Event('change', { bubbles: true }));
-		}, format);
+		await chooseFormat(page, format);
 	}
 	await clickButton(page, 'Start Analysis');
 }
@@ -198,11 +215,7 @@ async function startAnalysisFromTeams(page, format) {
 async function startSetUpPosition(page, format) {
 	await clickButton(page, 'Set Up Position');
 	if (format) {
-		await page.evaluate(formatId => {
-			const select = document.querySelector('select.formatselect');
-			select.value = formatId;
-			select.dispatchEvent(new Event('change', { bubbles: true }));
-		}, format);
+		await chooseFormat(page, format);
 	}
 	// the home button and the submit button share their text, so pick the one inside the form
 	await page.evaluate(() => {
@@ -311,6 +324,6 @@ async function dumpFailure(page, name = 'failure') {
 module.exports = {
 	config, SMOKE_TEAM, OUTPUT_DIR, sleep, step, checkServers, openAnalysisPage, clickButton, waitFor,
 	battleControlsText, linesText, waitForDecision, startAnalysisFromTeams, startSetUpPosition,
-	selectLeads, openActionMenu, chooseMove,
+	selectLeads, openActionMenu, chooseMove, chooseFormat,
 	hoverTooltip, calcLineCount, dumpFailure,
 };

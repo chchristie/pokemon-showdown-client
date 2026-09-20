@@ -1,5 +1,5 @@
 import { toID } from '../../play.pokemonshowdown.com/src/battle-dex';
-import { FORMATS, type AnalysisNode, type AnalysisTab } from './analysis-model';
+import { formatDisplayName, type AnalysisNode, type AnalysisTab } from './analysis-model';
 
 /**
  * Exporting an analysis to a file (docs/analysis/plan.md, Phase 6).
@@ -213,7 +213,7 @@ export function tabFromAnalysisExport(file: AnalysisExport, id: string): Analysi
 
 /** `[Gen 9] OU` → `Gen9OU`, as the client's own Download Replay button builds its filename. */
 function formatToken(tab: AnalysisTab) {
-	const name = tab.formatName || FORMATS.find(entry => entry.id === tab.format)?.name || tab.format;
+	const name = formatDisplayName(tab.format, tab.formatName);
 	return (name || 'Analysis').replace(/[^A-Za-z0-9]/g, '') || 'Analysis';
 }
 

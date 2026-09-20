@@ -1,5 +1,6 @@
 import {
 	ANALYSIS_API, type AnalysisAppliedEdits, type AnalysisCalcMoveResult, type AnalysisFieldEffectOption,
+	type AnalysisFormat,
 	type AnalysisMidTurnSwitchOption, type AnalysisReplayRecord, type AnalysisSimulationGroup, type AnalysisSnapshot,
 } from './analysis-model';
 
@@ -145,6 +146,24 @@ export async function getAnalysisVersion(): Promise<string> {
 		return (await response.json()).serverCommit || '';
 	} catch {
 		return '';
+	}
+}
+
+/**
+ * Every format an analysis can be started in. Falls back to an empty list, which leaves the pickers on
+ * `FORMATS`: a start form that can still offer the usual handful beats one that offers nothing.
+ */
+export async function getAnalysisFormats(): Promise<AnalysisFormat[]> {
+	try {
+		const response = await fetch(`${ANALYSIS_API}/analysis/formats`, {
+			method: 'POST',
+			headers: { 'Content-Type': 'application/json' },
+			body: '{}',
+		});
+		if (!response.ok) return [];
+		return (await response.json()).formats || [];
+	} catch {
+		return [];
 	}
 }
 

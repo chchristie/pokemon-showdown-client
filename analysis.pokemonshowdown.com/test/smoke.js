@@ -10,6 +10,10 @@ const {
 	waitForDecision, startAnalysisFromTeams, selectLeads, openActionMenu, chooseMove, dumpFailure,
 } = require('./lib');
 
+function expect(condition, message) {
+	if (!condition) throw new Error(message);
+}
+
 async function main() {
 	await checkServers();
 	const { browser, page, errors } = await openAnalysisPage([
@@ -139,6 +143,36 @@ async function main() {
 		});
 		if ((await debugPanels()).logs) throw new Error('turning Debug Mode off should hide the panels again');
 		step('turning Debug Mode off hides them again');
+
+		/*
+		 * Closing the tab has to take the analysis with it. It used to drop the tab from the list and
+		 * nothing else, leaving the battle rendered over the home screen and handing the next tab the closed
+		 * one's draft, forms and calcs (user report, 2026-09-20).
+		 */
+		await page.evaluate(() => {
+			const close = document.querySelector('.closebutton');
+			if (!close) throw new Error('no close button on the analysis tab');
+			close.click();
+		});
+		await waitFor(page, () => !!document.querySelector('.analysis-home'), 'the home screen after closing');
+		const afterClose = await page.evaluate(() => ({
+			tabs: document.querySelectorAll('.roomtab.closable').length,
+			/*
+			 * Deliberately NOT scoped to `.battle`. The scene builds its own markup outside the frame preact
+			 * manages, so closing the tab removes `.battle` while `.innerbattle` stays in the document —
+			 * which is the leak. Scoping this to `.battle .innerbattle` made it pass against the bug.
+			 */
+			battleScene: document.querySelectorAll('.innerbattle').length,
+			controls: document.querySelectorAll('.battle-controls').length,
+			log: document.querySelectorAll('.battle-log .inner div').length,
+			lines: document.querySelectorAll('.analysis-node-button').length,
+		}));
+		expect(!afterClose.tabs, `closing should leave no analysis tab, saw ${afterClose.tabs}`);
+		expect(!afterClose.battleScene, `the battle should be gone, saw ${afterClose.battleScene}`);
+		expect(!afterClose.controls, `the controls should be gone, saw ${afterClose.controls}`);
+		expect(!afterClose.log, `the battle log should be gone, saw ${afterClose.log} lines`);
+		expect(!afterClose.lines, `the Lines panel should be gone, saw ${afterClose.lines} nodes`);
+		step('closing an analysis closes everything belonging to it');
 
 		fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 		await page.screenshot({ path: path.join(OUTPUT_DIR, 'smoke-final.png') }).catch(() => {});
