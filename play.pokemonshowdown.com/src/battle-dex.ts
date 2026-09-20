@@ -537,12 +537,10 @@ export const Dex = new class implements ModdedDex {
 		if (dex.gen === 9 && formatid.includes('champions')) {
 			dex = Dex.mod('champions' as ID);
 		}
-		if (dex.gen === 9 && formatid.includes('digipen')) {
-			dex = Dex.mod('gen9digipen' as ID);
-		}
-		// fork: FNAF formats, so the teambuilder's dex matches what DexSearch already returns
-		if (dex.gen === 9 && formatid.includes('fnaf')) {
-			dex = Dex.mod('gen9fnaf' as ID);
+		// DigiPen fork: custom content mods, so the teambuilder's dex matches what DexSearch returns.
+		const customMod = dex.gen === 9 ? BattleCustomMods.forFormat(formatid) : null;
+		if (customMod) {
+			dex = Dex.mod(customMod.mod.id as ID);
 		}
 		return dex;
 	}

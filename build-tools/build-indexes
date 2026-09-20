@@ -1480,6 +1480,11 @@ process.stdout.write("Building `data/teambuilder-tables.js`... ");
 		}
 	}
 
+	// DigiPen fork: ship the custom mod registry to the browser. The client runtime needs to know
+	// which mods exist, and `teambuilder-tables.js` is already generated from the server and already
+	// loaded on every page, so this rides along rather than adding a data file and the <script> tags
+	// in four upstream HTML files that would come with it.
+	BattleTeambuilderTable.customMods = CustomModBuild.CustomMods;
 	buf += `exports.BattleTeambuilderTable = JSON.parse('${JSON.stringify(BattleTeambuilderTable).replace(/['\\]/g, "\\$&")}');\n\n`;
 
 	fs.writeFileSync('play.pokemonshowdown.com/data/teambuilder-tables.js', buf);

@@ -675,9 +675,12 @@ abstract class BattleTypedSearch<T extends SearchType> {
 	protected formatType: 'doubles' | 'bdsp' | 'bdspdoubles' | 'rs' | 'frlg' | 'bw1' | 'letsgo' | 'metronome' | 'natdex' |
 	'nfe' | 'ssdlc1' | 'ssdlc1doubles' | 'predlc' | 'predlcdoubles' | 'svdlc1' | 'svdlc1doubles' | 'stadium' | 'lc' |
 	'champions' | 'natdexchampions' |
-	'digipen' | 'digipendoubles' | 'digipennatdex' | 'digipenvgc' | 
-	'fnaf' | 'fnafnatdex' | 'fnafvgc' |
 	null = null;
+	/**
+	 * DigiPen fork: the custom content mod this format belongs to, if any. Held separately from
+	 * `formatType` so that a mod needs no members of its own in that union.
+	 */
+	protected customMod: CustomModFormat | null = null;
 	isDoubles = false;
 
 	/**
@@ -708,74 +711,14 @@ abstract class BattleTypedSearch<T extends SearchType> {
 		} else if (!format) {
 			this.dex = Dex;
 		}
-		if (format.startsWith('digipen')) {
-			this.dex = Dex.mod('gen9digipen' as ID);
-			format = format.slice(7) as ID; // remove 'digipen' (7 chars)
-			switch (format) {
-				case 'singles':
-					this.formatType = 'digipennatdex';
-					break;
-				case 'ou':
-					this.formatType = 'digipen';
-					break;
-				case 'ubers':
-					this.formatType = 'digipen';
-					break;
-				case 'nationaldex':
-					this.formatType = 'digipennatdex';
-					break;
-				case 'nationaldexubers':
-					this.formatType = 'digipennatdex';
-					break;
-				case 'doublesou':
-					this.formatType = 'digipendoubles';
-					break;
-				case 'doublesubers':
-					this.formatType = 'digipendoubles';
-					break;
-				case 'vgc2026regf':
-					this.formatType = 'digipenvgc';
-					break;
-				case 'vgc2026regi':
-					this.formatType = 'digipenvgc';
-					break;
-				case 'vgcnonrestricted':
-					this.formatType = 'digipenvgc';
-					break;
-				case 'vgconerestricted':
-					this.formatType = 'digipenvgc';
-					break;
-				case 'vgctworestricted':
-					this.formatType = 'digipenvgc';
-					break;	
-				case 'dexnatdex':
-					this.formatType = 'digipennatdex';
-					break;
-				default:
-					this.formatType = 'digipen';
-					break;
-			}
-		}
-		else if (format.startsWith('fnaf')) {
-			this.dex = Dex.mod('gen9fnaf' as ID);
-			format = format.slice(4) as ID; // remove 'fnaf' (7 chars)
-			switch (format) {
-				case 'singles':
-					this.formatType = 'fnaf';
-					break;
-				case 'ou':
-					this.formatType = 'fnaf';
-					break; 
-				case 'nationaldex':
-					this.formatType = 'fnafnatdex';
-					break;
-				case 'vgc': 
-					this.formatType = 'fnafvgc';
-					break; 
-				default: 
-					this.formatType = 'fnaf';
-					break;
-			}
+		// DigiPen fork: a custom content mod's format. The flavour comes from the format's shape
+		// rather than a case per format, so a new format of an existing shape needs no change here.
+		const customMod = BattleCustomMods.forFormat(format);
+		if (customMod) {
+			this.customMod = customMod;
+			this.dex = Dex.mod(customMod.mod.id as ID);
+			this.isDoubles = customMod.flavor === 'vgc';
+			format = customMod.rest as ID;
 		}
 		else {
 			if (format.startsWith('dlc1') && this.dex.gen === 8) {
@@ -1024,16 +967,8 @@ abstract class BattleTypedSearch<T extends SearchType> {
 	}
 	protected canLearn(speciesid: ID, moveid: ID) {
 		const move = this.dex.moves.get(moveid);
-		if (move.isNonstandard === 'DigiPen' && !this.formatType?.startsWith('digipen')) {
-			return false;
-		}
-		if ((move.isNonstandard === 'DigiPen Past' || move.isNonstandard === 'DigiPen Future') &&
-				!(this.formatType === 'digipennatdex')) {
-			return false;
-		}
-		if ((move.isNonstandard === 'FNAF') && !(this.formatType?.startsWith('fnaf'))) {
-			return false;
-		}
+		// DigiPen fork: a mod's own moves are learnable only in that mod's formats.
+		if (!BattleCustomMods.allowsEntry(move, this.customMod)) return false;
 		if (this.formatType?.includes('natdex') && move.isNonstandard && move.isNonstandard !== 'Past') {
 			return false;
 		}
@@ -1103,13 +1038,7 @@ abstract class BattleTypedSearch<T extends SearchType> {
 			this.formatType === 'natdex' ? `gen${gen}natdex` :
 			this.formatType === 'stadium' ? `gen${gen}stadium${gen > 1 ? gen : ''}` :
 			this.formatType === 'champions' ? `champions` :
-			this.formatType === 'digipen' ? 'gen9digipen' :
-			this.formatType === 'digipendoubles' ? 'gen9digipendoubles' :
-			this.formatType === 'digipennatdex' ? 'gen9digipennatdex' :
-			this.formatType === 'digipenvgc' ? 'gen9digipenvgc' :
-			this.formatType === 'fnaf' ? 'gen9fnaf' :
-			this.formatType === 'fnafnatdex' ? 'gen9fnafnatdex' :
-			this.formatType === 'fnafvgc' ? 'gen9fnafvgc' :
+			this.customMod ? this.customMod.table :
 			this.formatType === 'natdexchampions' ? `natdexchampions` :
 			`gen${gen}`;
 		if (table?.[tableKey]) {
@@ -1198,6 +1127,57 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 		}
 		return results;
 	}
+	/**
+	 * DigiPen fork: the Pokedex site's species list for a mod.
+	 *
+	 * Unlike the teambuilder it leads with the mod's own Pokemon, then the base-game ones the mod
+	 * rebalanced, then everything else — so a reader sees what the mod changed before the rest.
+	 */
+	customModDexList(tierSet: SearchRow[], slices: { [k: string]: number }, dex: ModdedDex): SearchRow[] {
+		const mod = this.customMod!.mod;
+		const { fe, nfe, lc } = BattleCustomMods.tiers(mod);
+		const isModified = (id: ID) => dex.species.get(id).modified === mod.label;
+
+		const listed = new Set<ID>();
+		const collect = (from: number, to: number, ownOnly: boolean) => {
+			const ids: ID[] = [];
+			for (const row of tierSet.slice(from, to)) {
+				if (row[0] !== 'pokemon') continue;
+				const id = row[1];
+				if (listed.has(id) || isModified(id)) continue;
+				if (ownOnly && dex.species.get(id).isNonstandard !== mod.label) continue;
+				listed.add(id);
+				ids.push(id);
+			}
+			return ids;
+		};
+		const byName = (a: ID, b: ID) => dex.species.get(a).name.localeCompare(dex.species.get(b).name);
+
+		const own: ID[] = [];
+		for (const [startKey, endKey] of [[fe, 'AG'], [nfe, 'NFE'], [lc, 'LC']] as [string, string][]) {
+			own.push(...collect(slices[startKey] ?? 0, slices[endKey] ?? tierSet.length, true));
+		}
+		own.sort(byName);
+
+		const modified: ID[] = [];
+		for (const id in BattlePokedex) {
+			const pid = id as ID;
+			if (isModified(pid) && !listed.has(pid)) {
+				listed.add(pid);
+				modified.push(pid);
+			}
+		}
+		modified.sort(byName);
+
+		const rest = tierSet.filter(row => row[0] !== 'pokemon' || !listed.has(row[1]));
+		return [
+			...(own.length ? [['header', mod.label] as SearchRow, ...own.map(id => ['pokemon', id] as SearchRow)] : []),
+			...(modified.length ?
+				[['header', 'Modified'] as SearchRow, ...modified.map(id => ['pokemon', id] as SearchRow)] : []),
+			...rest,
+		];
+	}
+
 	getBaseResults(): SearchRow[] {
 		const format = this.format;
 		if (!format) return this.getDefaultResults();
@@ -1212,20 +1192,8 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 			table = table[`gen${dex.gen}`];
 		} else if (this.formatType === 'champions') {
 			table = table[`champions`];
-		} else if (this.formatType === 'digipen') {	
-			table = table['gen9digipen'];
-		} else if (this.formatType === 'digipendoubles') {
-			table = table['gen9digipendoubles'];
-		} else if (this.formatType === 'digipennatdex') {
-			table = table['gen9digipennatdex'];
-		} else if (this.formatType === 'digipenvgc') {
-			table = table['gen9digipenvgc'];
-		} else if (this.formatType === 'fnaf') {	
-			table = table['gen9fnaf'];
-		} else if (this.formatType === 'fnafnatdex') {
-			table = table['gen9fnafnatdex'];
-		} else if (this.formatType === 'fnafvgc') {
-			table = table['gen9fnafvgc'];
+		} else if (this.customMod) {
+			table = table[this.customMod.table];
 		} else if (this.formatType === 'natdexchampions') {
 			table = table[`natdexchampions`];
 		} else if (isVGCOrBS) {
@@ -1301,124 +1269,42 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 		let tierSet: SearchRow[] = table.tierSet;
 		let slices: { [k: string]: number } = table.formatSlices;
 
-		// DigiPen formats use their own tier-section slices that interleave
-		// DigiPen-specific headers before the standard tiers.
-		const concatDigiPenTiers = (...sections: [string, string][]) => {
-			const rows: SearchRow[] = [];
-			for (const [startKey, endKey] of sections) {
-				const start = slices[startKey] ?? 0;
-				const end = slices[endKey] ?? tierSet.length;
-				if (start < end) rows.push(...tierSet.slice(start, end));
-			}
-			return rows;
-		};
-		if (this.formatType === 'digipenvgc') {
-			if (format.endsWith('regi') || format.endsWith('regg') || format.endsWith('onerestricted') || format.endsWith('tworestricted')) {
-				tierSet = tierSet.slice(slices['DigiPen Restricted'] ?? 0);
-			} else {
-				tierSet = tierSet.slice(slices['DigiPen Regular'] ?? slices.Regular ?? 0);
-			}
-		} else if (this.formatType === 'digipen' || this.formatType === 'digipennatdex') {
-			if (format === 'dexnatdex') {
-				// NatDex tierSet is built Uber → DigiPen → OU…RU → DigiPen NFE → NFE → DigiPen LC → LC.
-				// Dex list: DigiPen block, Modified block, then standard tiers (no Uber block).
-				const isDigipenModified = (id: ID) => dex.species.get(id).modified === 'DigiPen';
-				const filterDexRows = (rows: SearchRow[], exclude: Set<ID>) => {
-					const out: SearchRow[] = [];
-					for (const row of rows) {
-						if (row[0] === 'pokemon' && exclude.has(row[1])) continue;
-						out.push(row);
-					}
-					return out;
-				};
-				const collectDigipenDexPokemon = (): SearchRow[] => {
-					const seen = new Set<ID>();
-					const ids: ID[] = [];
-					const addFromSlice = (startKey: string, endKey: string, digipenOnly = false) => {
-						const start = slices[startKey] ?? 0;
-						const end = slices[endKey] ?? tierSet.length;
-						for (const row of tierSet.slice(start, end)) {
-							if (row[0] !== 'pokemon') continue;
-							const id = row[1];
-							if (seen.has(id) || isDigipenModified(id)) continue;
-							if (digipenOnly) {
-								const species = dex.species.get(id);
-								const modTier = (species as Dex.Species & { natDexTier?: string }).natDexTier ||
-									species.tier;
-								const isDigiPenSpecies = typeof species.isNonstandard === 'string' &&
-									species.isNonstandard.startsWith('DigiPen');
-								const isDigiPenTier = modTier === 'DigiPen Uber' || modTier === 'DigiPen' ||
-									modTier === 'DigiPen NFE' || modTier === 'DigiPen LC';
-								if (!isDigiPenSpecies && !isDigiPenTier) continue;
-							}
-							seen.add(id);
-							ids.push(id);
-						}
-					};
-					addFromSlice('DigiPen Uber', 'DigiPen', true);
-					addFromSlice('DigiPen', 'OU');
-					addFromSlice('DigiPen NFE', 'NFE');
-					addFromSlice('DigiPen LC', 'LC');
-					ids.sort((a, b) => dex.species.get(a).name.localeCompare(dex.species.get(b).name));
-					return [['header', 'DigiPen'], ...ids.map(id => ['pokemon', id] as SearchRow)];
-				};
-				const collectModifiedDexPokemon = (exclude: Set<ID>): SearchRow[] => {
-					const ids: ID[] = [];
-					for (const id in BattlePokedex) {
-						const pid = id as ID;
-						if (!isDigipenModified(pid) || exclude.has(pid)) continue;
-						ids.push(pid);
-					}
-					ids.sort((a, b) => dex.species.get(a).name.localeCompare(dex.species.get(b).name));
-					if (!ids.length) return [];
-					return [['header', 'Modified'], ...ids.map(id => ['pokemon', id] as SearchRow)];
-				};
-				const digipenBlock = collectDigipenDexPokemon();
-				const listed = new Set<ID>();
-				for (const row of digipenBlock) {
-					if (row[0] === 'pokemon') listed.add(row[1]);
+		// DigiPen fork: a custom content mod's list. The build already emits each mod's sections in
+		// the right order, so this only has to decide where the format starts and what it drops.
+		if (this.customMod) {
+			const { fe, nfe, lc } = BattleCustomMods.tiers(this.customMod.mod);
+			/** Rows from the named sections only, in the order given. */
+			const sections = (...pairs: [string, string][]) => {
+				const rows: SearchRow[] = [];
+				for (const [startKey, endKey] of pairs) {
+					const from = slices[startKey] ?? 0;
+					const to = slices[endKey] ?? tierSet.length;
+					if (from < to) rows.push(...tierSet.slice(from, to));
 				}
-				const modifiedBlock = collectModifiedDexPokemon(listed);
-				for (const row of modifiedBlock) {
-					if (row[0] === 'pokemon') listed.add(row[1]);
+				return rows;
+			};
+			const isRestricted = (id: ID) => !!dex.species.get(id).tags?.includes('Restricted Legendary');
+
+			if (this.customMod.flavor === 'vgc') {
+				if (format.endsWith('mythical')) {
+					// Mythicals count as restricted here, so the whole table is in play.
+				} else if (format.endsWith('restricted') && !format.endsWith('nonrestricted')) {
+					tierSet = tierSet.slice(slices['Restricted'] ?? 0);
+				} else if (format.endsWith('nonrestricted')) {
+					tierSet = tierSet.slice(slices[fe] ?? slices['Regular'] ?? 0);
+				} else {
+					// Plain VGC: only the mod's own Pokemon.
+					tierSet = sections([fe, 'Regular'], [nfe, 'NFE'], [lc, 'LC']);
 				}
-				const rest = filterDexRows(concatDigiPenTiers(
-					['OU', 'DigiPen NFE'],
-					['NFE', 'DigiPen LC'],
-					['LC', 'Unreleased'],
-				), listed);
-				tierSet = [...digipenBlock, ...modifiedBlock, ...rest];
-			} else if (format === 'singles') {
-				tierSet = concatDigiPenTiers(
-					['DigiPen Uber', 'Uber'],
-					['DigiPen', 'OU'],
-					['DigiPen NFE', 'NFE'],
-					['DigiPen LC', 'LC'],
-				);
+			} else if (this.customMod.flavor === 'natdex') {
+				if (format === 'dexnatdex') {
+					tierSet = this.customModDexList(tierSet, slices, dex);
+				} else if (!format.includes('ubers')) {
+					// National Dex bans restricted legendaries; National Dex Ubers does not.
+					tierSet = tierSet.filter(row => row[0] !== 'pokemon' || !isRestricted(row[1]));
+				}
 			}
-			else if (format.includes('ubers')) {
-				tierSet = tierSet.slice(slices['DigiPen Uber'] ?? 0);
-			}
-			else {
-				tierSet = tierSet.slice(slices['DigiPen'] ?? slices.OU ?? 0);
-			}
-		} else if (this.formatType === 'digipendoubles') {
-			if (format === 'doubles') {
-				tierSet = concatDigiPenTiers(
-					['DigiPen DUber', 'DUber'],
-					['DigiPen', 'DOU'],
-					['DigiPen NFE', 'NFE'],
-					['DigiPen LC', 'LC'],
-				);
-			}
-			else if (format === 'doublesou') {
-				tierSet = tierSet.slice(slices['DigiPen'] ?? slices.DOU ?? 0);
-			}
-			else if (format === 'doublesubers') {
-				tierSet = tierSet.slice(slices['DigiPen DUber'] ?? 0);
-			}
-		} else if (this.formatType === 'fnaf') {
-			tierSet = tierSet.slice(slices['FNAF'] ?? 0);
+			// The singles table holds only the mod's own Pokemon, so it needs no slicing at all.
 		} else if (format === 'ubers' || format === 'uber' || format === 'ubersuu' ||
 			format === '4v4doublesuu' || format === 'nationaldexdoubles'
 		) {
@@ -1615,6 +1501,44 @@ class BattlePokemonSearch extends BattleTypedSearch<'pokemon'> {
 	}
 }
 
+/**
+ * DigiPen fork: the Pokedex site's flat list of a mod's moves, items or abilities.
+ *
+ * The mod's own entries first, then base-game ones it rebalanced, then everything else — the same
+ * shape the species list uses, so the whole dex reads consistently.
+ */
+function customModDexEntries(
+	kind: 'move' | 'item' | 'ability', plural: string, ids: string[],
+	get: (id: ID) => { name: string, gen: number, isNonstandard?: string | null, modified?: string },
+	gen: number, mod: CustomModInfo
+): SearchRow[] {
+	const own: SearchRow[] = [];
+	const modified: SearchRow[] = [];
+	const other: SearchRow[] = [];
+	for (const id of ids) {
+		const entry = get(id as ID);
+		if (entry.gen > gen) continue;
+		if (entry.isNonstandard === mod.label) {
+			own.push([kind, id as ID]);
+		} else if (entry.modified === mod.label) {
+			modified.push([kind, id as ID]);
+		} else if (!BattleCustomMods.isModContent(entry)) {
+			// Another mod's content never shows here.
+			other.push([kind, id as ID]);
+		}
+	}
+	const byName = (rows: SearchRow[]) => rows.sort(
+		(a, b) => get(a[1] as ID).name.localeCompare(get(b[1] as ID).name)
+	);
+	byName(own);
+	byName(modified);
+	const results: SearchRow[] = [];
+	if (own.length) results.push(['header', `${mod.label} ${plural}`], ...own);
+	if (modified.length) results.push(['header', `Modified ${plural}`], ...modified);
+	if (other.length) results.push(['header', plural.charAt(0).toUpperCase() + plural.slice(1)], ...other);
+	return results;
+}
+
 class BattleAbilitySearch extends BattleTypedSearch<'ability'> {
 	protected override sortRow: SearchRow | null = null;
 
@@ -1627,8 +1551,8 @@ class BattleAbilitySearch extends BattleTypedSearch<'ability'> {
 		return BattleAbilities;
 	}
 	getDefaultResults(reverseSort?: boolean): SearchRow[] {
-		if (this.format === 'dexnatdex' && this.formatType?.startsWith('digipen')) {
-			return this.getDigipenPokedexAbilityResults();
+		if (this.format === 'dexnatdex' && this.customMod) {
+			return this.getCustomModPokedexAbilityResults();
 		}
 		const results: SearchRow[] = [];
 		for (let id in BattleAbilities) {
@@ -1637,44 +1561,8 @@ class BattleAbilitySearch extends BattleTypedSearch<'ability'> {
 		if (reverseSort) results.reverse();
 		return results;
 	}
-	getDigipenPokedexAbilityResults(): SearchRow[] {
-		const digipen: SearchRow[] = [];
-		const modified: SearchRow[] = [];
-		const other: SearchRow[] = [];
-		const sortAbilities = (rows: SearchRow[]) => {
-			rows.sort((a, b) =>
-				this.dex.abilities.get(a[1]).name.localeCompare(this.dex.abilities.get(b[1]).name)
-			);
-		};
-		for (const id in BattleAbilities) {
-			const ability = this.dex.abilities.get(id as ID);
-			if (ability.gen > this.dex.gen) continue;
-			const isDigiPen =
-				typeof ability.isNonstandard === 'string' && ability.isNonstandard.startsWith('DigiPen');
-			if (isDigiPen) {
-				digipen.push(['ability', id as ID]);
-			} else if (ability.modified === 'DigiPen') {
-				modified.push(['ability', id as ID]);
-			} else {
-				other.push(['ability', id as ID]);
-			}
-		}
-		sortAbilities(digipen);
-		sortAbilities(modified);
-		const results: SearchRow[] = [];
-		if (digipen.length) {
-			results.push(['header', 'DigiPen abilities']);
-			results.push(...digipen);
-		}
-		if (modified.length) {
-			results.push(['header', 'Modified abilities']);
-			results.push(...modified);
-		}
-		if (other.length) {
-			results.push(['header', 'Abilities']);
-			results.push(...other);
-		}
-		return results;
+	getCustomModPokedexAbilityResults(): SearchRow[] {
+		return customModDexEntries('ability', 'abilities', Object.keys(BattleAbilities), id => this.dex.abilities.get(id), this.dex.gen, this.customMod!.mod);
 	}
 	getBaseResults(): SearchRow[] {
 		if (!this.species) return this.getDefaultResults();
@@ -1770,24 +1658,12 @@ class BattleItemSearch extends BattleTypedSearch<'item'> {
 		return BattleItems;
 	}
 	getDefaultResults(): SearchRow[] {
-		if (this.format === 'dexnatdex' && this.formatType?.startsWith('digipen')) {
-			return this.getDigipenPokedexItemResults();
+		if (this.format === 'dexnatdex' && this.customMod) {
+			return this.getCustomModPokedexItemResults();
 		}
 		let table = BattleTeambuilderTable;
-		if (this.formatType === 'digipennatdex') {
-			table = table['gen9digipennatdex'];
-		} else if (this.formatType === 'digipen') {
-			table = table['gen9digipen'];
-		} else if (this.formatType === 'digipendoubles') {
-			table = table['gen9digipendoubles'];
-		} else if (this.formatType === 'digipenvgc') {
-			table = table['gen9digipenvgc'];
-		} else if (this.formatType === 'fnaf') {
-			table = table['gen9fnaf'];
-		} else if (this.formatType === 'fnafnatdex') {
-			table = table['gen9fnafnatdex'];
-		} else if (this.formatType === 'fnafvgc') {
-			table = table['gen9fnafvgc'];
+		if (this.customMod) {
+			table = table[this.customMod.table];
 		} else if (this.formatType?.startsWith('bdsp')) {
 			table = table['gen8bdsp'];
 		} else if (this.formatType === 'bw1') {
@@ -1820,44 +1696,8 @@ class BattleItemSearch extends BattleTypedSearch<'item'> {
 		}
 		return table.itemSet;
 	}
-	getDigipenPokedexItemResults(): SearchRow[] {
-		const digipen: SearchRow[] = [];
-		const modified: SearchRow[] = [];
-		const other: SearchRow[] = [];
-		const sortItems = (rows: SearchRow[]) => {
-			rows.sort((a, b) =>
-				this.dex.items.get(a[1]).name.localeCompare(this.dex.items.get(b[1]).name)
-			);
-		};
-		for (const id in BattleItems) {
-			const item = this.dex.items.get(id as ID);
-			if (item.gen > this.dex.gen) continue;
-			const isDigiPen =
-				typeof item.isNonstandard === 'string' && item.isNonstandard.startsWith('DigiPen');
-			if (isDigiPen) {
-				digipen.push(['item', id as ID]);
-			} else if (item.modified === 'DigiPen') {
-				modified.push(['item', id as ID]);
-			} else {
-				other.push(['item', id as ID]);
-			}
-		}
-		sortItems(digipen);
-		sortItems(modified);
-		const results: SearchRow[] = [];
-		if (digipen.length) {
-			results.push(['header', 'DigiPen items']);
-			results.push(...digipen);
-		}
-		if (modified.length) {
-			results.push(['header', 'Modified items']);
-			results.push(...modified);
-		}
-		if (other.length) {
-			results.push(['header', 'Items']);
-			results.push(...other);
-		}
-		return results;
+	getCustomModPokedexItemResults(): SearchRow[] {
+		return customModDexEntries('item', 'items', Object.keys(BattleItems), id => this.dex.items.get(id), this.dex.gen, this.customMod!.mod);
 	}
 	getBaseResults(): SearchRow[] {
 		if (!this.species) return this.getDefaultResults();
@@ -1921,8 +1761,8 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 		return BattleMovedex;
 	}
 	getDefaultResults(): SearchRow[] {
-		if (this.format === 'dexnatdex' && this.formatType?.startsWith('digipen')) {
-			return this.getDigipenPokedexMoveResults();
+		if (this.format === 'dexnatdex' && this.customMod) {
+			return this.getCustomModPokedexMoveResults();
 		}
 		let results: SearchRow[] = [];
 		results.push(['header', TL`Moves`]);
@@ -1938,44 +1778,8 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 		}
 		return results;
 	}
-	getDigipenPokedexMoveResults(): SearchRow[] {
-		const digipen: SearchRow[] = [];
-		const modified: SearchRow[] = [];
-		const other: SearchRow[] = [];
-		const sortMoves = (rows: SearchRow[]) => {
-			rows.sort((a, b) =>
-				this.dex.moves.get(a[1]).name.localeCompare(this.dex.moves.get(b[1]).name)
-			);
-		};
-		for (const id in BattleMovedex) {
-			if (id === 'magikarpsrevenge') continue;
-			const move = this.dex.moves.get(id as ID);
-			const isDigiPen =
-				typeof move.isNonstandard === 'string' && move.isNonstandard.startsWith('DigiPen');
-			if (isDigiPen) {
-				digipen.push(['move', id as ID]);
-			} else if (move.modified === 'DigiPen') {
-				modified.push(['move', id as ID]);
-			} else {
-				other.push(['move', id as ID]);
-			}
-		}
-		sortMoves(digipen);
-		sortMoves(modified);
-		const results: SearchRow[] = [];
-		if (digipen.length) {
-			results.push(['header', 'DigiPen moves']);
-			results.push(...digipen);
-		}
-		if (modified.length) {
-			results.push(['header', 'Modified moves']);
-			results.push(...modified);
-		}
-		if (other.length) {
-			results.push(['header', 'Moves']);
-			results.push(...other);
-		}
-		return results;
+	getCustomModPokedexMoveResults(): SearchRow[] {
+		return customModDexEntries('move', 'moves', Object.keys(BattleMovedex), id => this.dex.moves.get(id), this.dex.gen, this.customMod!.mod);
 	}
 	private moveIsNotUseless(id: ID, species: Dex.Species, moves: string[], set: Dex.PokemonSet | null) {
 		// IMPORTANT!
@@ -2310,16 +2114,8 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 					if (!this.formatType?.includes('natdex') && move.isNonstandard === "Past") {
 						continue;
 					}
-					if (move.isNonstandard === 'DigiPen' && !this.formatType?.startsWith('digipen')) {
-						continue;
-					}
-					if ((move.isNonstandard === 'DigiPen Past' || move.isNonstandard === 'DigiPen Future') &&
-						!(this.formatType === 'digipennatdex')) {
-						continue;
-					}
-					if (move.isNonstandard === 'FNAF' && !this.formatType?.startsWith('fnaf')) {
-						continue;
-					}
+					// DigiPen fork: another mod's moves never show here.
+					if (!BattleCustomMods.allowsEntry(move, this.customMod)) continue;
 					if (
 						this.formatType?.startsWith('dlc1') &&
 						BattleTeambuilderTable['gen8dlc1']?.nonstandardMoves.includes(moveid)
@@ -2350,20 +2146,20 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 			}
 			learnsetid = this.nextLearnsetid(learnsetid, species.id, true);
 		}
-		// For DigiPen formats, merge in DigiPen-specific learnable moves on top of
-		// the base gen9 learnset. The DigiPen learnset table only stores additions
-		// (custom moves) so we loop through it separately to avoid replacing the
-		// full base learnset.
-		if (this.formatType?.startsWith('digipen')) {
-			let digiLearnsetid = this.firstLearnsetid(species.id);
-			while (digiLearnsetid) {
-				const digiLearnset = (BattleTeambuilderTable as any)['gen9digipen']?.learnsets?.[digiLearnsetid];
-				if (digiLearnset) {
-					for (const moveid in digiLearnset) {
+		// DigiPen fork: add the moves this mod gives the species on top of its base movepool. The
+		// mod's learnset table holds only the additions, so it is walked separately rather than
+		// replacing the base learnset.
+		if (this.customMod) {
+			const modTable = (BattleTeambuilderTable as any)[this.customMod.table]?.learnsets;
+			let modLearnsetid = this.firstLearnsetid(species.id);
+			while (modLearnsetid) {
+				const modLearnset = modTable?.[modLearnsetid];
+				if (modLearnset) {
+					for (const moveid in modLearnset) {
 						if (!moves.includes(moveid)) moves.push(moveid);
 					}
 				}
-				digiLearnsetid = this.nextLearnsetid(digiLearnsetid, species.id, true);
+				modLearnsetid = this.nextLearnsetid(modLearnsetid, species.id, true);
 			}
 		}
 		if (sketch || isHackmons) {
@@ -2372,12 +2168,11 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				if (!format.startsWith('cap') && (id === 'paleowave' || id === 'shadowstrike')) continue;
 				const move = dex.moves.get(id);
 				if (move.gen > dex.gen || !move.exists) continue;
-			if (move.isNonstandard === 'DigiPen' && !this.formatType?.startsWith('digipen')) continue;
-			if ((move.isNonstandard === 'DigiPen Past' || move.isNonstandard === 'DigiPen Future') &&
-				!(this.formatType === 'digipennatdex')) continue;
-			if (sketch) {
-				if (move.flags['nosketch'] || move.isMax || move.isZ) continue;
-				if (move.isNonstandard && move.isNonstandard !== 'Past' && move.isNonstandard !== 'DigiPen') continue;
+				if (!BattleCustomMods.allowsEntry(move, this.customMod)) continue;
+				if (sketch) {
+					if (move.flags['nosketch'] || move.isMax || move.isZ) continue;
+					if (move.isNonstandard && move.isNonstandard !== 'Past' &&
+						!BattleCustomMods.isModContent(move)) continue;
 					if (move.isNonstandard === 'Past' && this.formatType !== 'natdex') continue;
 					sketchMoves.push(move.id);
 				} else {
@@ -2441,27 +2236,21 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 		moves.sort();
 		sketchMoves.sort();
 
-		let digipenMoves: SearchRow[] = [];
-		let modifiedMoves: SearchRow[] = [];
-		let fnafMoves: SearchRow[] = [];
+		// DigiPen fork: <Mod> moves, then Modified moves, then the standard lists.
+		const modMoves: SearchRow[] = [];
+		const modifiedMoves: SearchRow[] = [];
 		let usableMoves: SearchRow[] = [];
 		let uselessMoves: SearchRow[] = [];
 		for (const id of moves) {
 			const move = dex.moves.get(id as ID);
 			const isUsable = this.moveIsNotUseless(id as ID, species, moves, this.set);
-			if (move.isNonstandard === 'DigiPen' && this.formatType?.startsWith('digipen')) {
-				if (!digipenMoves.length) digipenMoves.push(['header', "DigiPen moves"]);
-				digipenMoves.push(['move', id as ID]);
-			}
-			else if (move.modified === 'DigiPen' && this.formatType?.startsWith('digipen')) {
+			if (this.customMod && move.isNonstandard === this.customMod.mod.label) {
+				if (!modMoves.length) modMoves.push(['header', `${this.customMod.mod.label} moves`]);
+				modMoves.push(['move', id as ID]);
+			} else if (this.customMod && move.modified === this.customMod.mod.label) {
 				if (!modifiedMoves.length) modifiedMoves.push(['header', "Modified moves"]);
 				modifiedMoves.push(['move', id as ID]);
-			}
-			else if (move.isNonstandard === 'FNAF' && this.formatType?.startsWith('fnaf')) {
-				if (!fnafMoves.length) fnafMoves.push(['header', "FNAF moves"]);
-				fnafMoves.push(['move', id as ID]);
-			}
-			else if (isUsable) {
+			} else if (isUsable) {
 				if (!usableMoves.length) usableMoves.push(['header', TL`Moves`]);
 				usableMoves.push(['move', id as ID]);
 			} else {
@@ -2481,7 +2270,7 @@ class BattleMoveSearch extends BattleTypedSearch<'move'> {
 				uselessMoves.push(['move', id as ID]);
 			}
 		}
-		return [...digipenMoves, ...modifiedMoves, ...fnafMoves, ...usableMoves, ...uselessMoves];
+		return [...modMoves, ...modifiedMoves, ...usableMoves, ...uselessMoves];
 	}
 	filter(row: SearchRow, filters: string[][]) {
 		if (!filters) return true;
