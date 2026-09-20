@@ -63,15 +63,30 @@ function customModSpeciesTier(table, species, baseSpecies) {
 	// The mod-only formats ban everything else outright.
 	if (table.flavor === 'singles') return isModSpecies ? species.tier : 'Illegal';
 
-	if (table.flavor === 'natdex') return isModSpecies ? species.tier : species.natDexTier;
+	// Content that belongs to no mod and is not simply from another generation — CAP above all —
+	// is in none of these formats, so it is in none of these tables either.
+	const isOutsiderContent = (
+		!isModSpecies && species.isNonstandard &&
+		species.isNonstandard !== 'Past' && species.isNonstandard !== 'Future'
+	);
+
+	if (table.flavor === 'natdex') {
+		if (isModSpecies) return species.tier;
+		return isOutsiderContent ? 'Illegal' : species.natDexTier;
+	}
 
 	// VGC draws from the National Dex and groups by what counts against the restricted limit, so a
 	// mod Pokémon tagged Mythical or Restricted sorts with the others rather than into its own
 	// section.
+	if (isModSpecies) {
+		if (baseSpecies.tags.includes('Mythical')) return 'Mythical';
+		if (baseSpecies.tags.includes('Restricted Legendary')) return 'Restricted';
+		return species.tier;
+	}
+	if (isOutsiderContent) return 'Illegal';
+	if (species.natDexTier === 'Illegal' || species.natDexTier === 'Unreleased') return 'Illegal';
 	if (baseSpecies.tags.includes('Mythical')) return 'Mythical';
 	if (baseSpecies.tags.includes('Restricted Legendary')) return 'Restricted';
-	if (isModSpecies) return species.tier;
-	if (species.natDexTier === 'Illegal' || species.natDexTier === 'Unreleased') return 'Illegal';
 	if (species.natDexTier === 'NFE') return 'NFE';
 	if (species.natDexTier === 'LC') return 'LC';
 	return 'Regular';
@@ -93,6 +108,8 @@ function customModTierOrder(table) {
 
 /** Header text for one of a mod's own sections, or null if this isn't one. */
 function customModTierHeader(table, tier) {
+	// VGC calls fully evolved Pokémon "Regular", so the mod's section matches.
+	if (tier === table.tiers.fe) return table.flavor === 'vgc' ? `${table.label} Regular` : null;
 	if (tier === table.tiers.nfe) return `${table.label} NFEs`;
 	if (tier === table.tiers.lc) return `${table.label} LCs`;
 	return null;
@@ -138,7 +155,7 @@ function customModOverrideTier(table, species, currentTier) {
 	const { nfe, lc } = table.tiers;
 	if (species.tier === nfe) return 'NFE';
 	if (species.tier === lc) return 'LC';
-	return table.flavor === 'vgc' ? 'DOU' : 'OU';
+	return table.flavor === 'vgc' ? 'Regular' : 'OU';
 }
 
 /**
