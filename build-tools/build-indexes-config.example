@@ -1,0 +1,5 @@
+{
+	"_comment": "Copy this file to build-indexes-config (do not rename this file) and edit the copy, which is gitignored.",
+	"repo": "https://github.com/your-github-username/pokemon-showdown",
+	"branch": "master"
+}

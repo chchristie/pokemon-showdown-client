@@ -36,3 +36,6 @@ npm-debug.log
 /teams.pokemonshowdown.com/js/
 /teams.pokemonshowdown.com/caches/
 /teams.pokemonshowdown.com/ads.txt
+
+# DigiPen fork: local override of the server repo/branch build-indexes builds from
+/build-tools/build-indexes-config

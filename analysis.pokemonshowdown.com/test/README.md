@@ -14,10 +14,12 @@ This folder belongs to the DigiPen fork and isn't part of upstream. It has its o
    ```
 3. **The analysis API and client running**, built from the code you want to test:
    ```sh
+   npm run build           # in pokemon-showdown and/or pokemon-showdown-client, as needed
    cd pokemon-showdown
-   node start-analysis     # builds both repos; API on :8002, client on :8081
+   node start-analysis     # API on :8002, client on :8081 (it does not build)
    ```
-   Re-run `start-analysis` after changing code. The tests use whatever is currently built and running.
+   Rebuild and re-run `start-analysis` after changing code. The tests use whatever is currently built
+   and running.
 
 ## Running
 

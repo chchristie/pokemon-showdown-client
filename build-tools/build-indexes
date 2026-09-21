@@ -8,17 +8,18 @@ process.chdir(__dirname + '/..');
 
 fs.mkdirSync('play.pokemonshowdown.com/data', { recursive: true });
 
-// DigiPen fork: the client indexes the fork's server, not upstream's.
-// While working on a feature branch, point this at the matching server branch so the generated data
-// matches the client code being written against it — and set it back to 'master' before merging.
-const branch = 'master';
+// DigiPen fork: the client indexes the fork's server, not upstream's. The repo and branch come from
+// the gitignored build-tools/build-indexes-config (see build-indexes-config.example), so working
+// against a feature branch does not mean editing this file. That config is required: the loader
+// stops the build with instructions if it is missing.
+const { repo, branch } = require('./build-indexes-config.js').loadServerRepoConfig();
 const noUpdate = process.argv.includes('--no-update');
 if (!fs.existsSync('caches/pokemon-showdown')) {
 	if (noUpdate) {
 		console.error('Missing caches/pokemon-showdown. Check out the server before using --no-update.');
 		process.exit(1);
 	}
-	child_process.execSync(`git clone -b ${branch} https://github.com/chchristie/pokemon-showdown`, {
+	child_process.execSync(`git clone -b ${branch} ${repo} pokemon-showdown`, {
 		cwd: 'caches',
 	});
 }
